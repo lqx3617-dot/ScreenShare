@@ -54,7 +54,7 @@
         android:id="@+id/btnHost"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:text="📺 我要共享屏幕（生成二维码）"
+        android:text="📤 我要开始共享（分享我的屏幕）"
         android:textSize="16sp"
         android:textAllCaps="false"
         android:backgroundTint="#FF4CAF50"
@@ -65,7 +65,7 @@
         android:id="@+id/btnJoin"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:text="📷 扫码观看对方屏幕"
+        android:text="📥 我要扫码观看（看对方的屏幕）"
         android:textSize="16sp"
         android:textAllCaps="false"
         android:backgroundTint="#FF2196F3"
@@ -82,6 +82,16 @@
         android:backgroundTint="#FFFF5722"
         android:textColor="#FFFFFFFF"
         android:enabled="false"
+        android:visibility="gone" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnConfirm"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="🔗 对方已扫描？扫描对方二维码完成连接"
+        android:textSize="14sp"
+        android:textAllCaps="false"
+        android:backgroundTint="#FFFF9800"
+        android:textColor="#FFFFFFFF"
         android:visibility="gone" />
 
     <!-- 远程画面（加入方用） -->

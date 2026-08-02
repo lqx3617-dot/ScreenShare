@@ -46,6 +46,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var isHost = false
     private var hostSessionActive = false
 
+    // 扫码意图：明确区分两条独立扫码路径，杜绝动态分派导致的角色错配
+    // OFFER_ONLY  = 观看方扫码，只接受 Offer（btnJoin 触发）
+    // ANSWER_ONLY = 发起方扫码，只接受 Answer（btnConfirm 触发）
+    private enum class ScanIntent { OFFER_ONLY, ANSWER_ONLY }
+    private var scanIntent: ScanIntent? = null
+
     // ICE 候选缓存（等待所有候选收集完再编码进二维码）
     private val iceCandidates = mutableListOf<IceCandidate>()
     private var pendingOfferSdp: SessionDescription? = null
@@ -69,6 +75,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnHost.setOnClickListener { onHostClicked() }
         binding.btnJoin.setOnClickListener { onJoinClicked() }
         binding.btnStop.setOnClickListener { onStopClicked() }
+        binding.btnConfirm.setOnClickListener { onConfirmClicked() }
     }
 
     // ======================== 权限 ========================
@@ -100,9 +107,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun onHostClicked() {
         isHost = true
         hostSessionActive = true
-        updateUI("正在申请屏幕采集权限...")
         binding.btnHost.isEnabled = false
-        // Host 生成 Offer 后仍需扫码对方 Answer，故不禁用 btnJoin
+        binding.btnJoin.isEnabled = false
+        updateUI("正在申请屏幕采集权限...")
 
         // 先申请屏幕采集权限
         ScreenCapturerFactory.requestPermission(this)
@@ -173,7 +180,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun onJoinClicked() {
         isHost = false
         hostSessionActive = false
-        updateUI("请扫描对方的二维码...")
+        scanIntent = ScanIntent.OFFER_ONLY
+        updateUI("请扫描对方的二维码...（只接受【开始共享】方的码）")
 
         // 启动 ZXing 扫码界面
         val integrator = com.google.zxing.integration.android.IntentIntegrator(this)
@@ -218,7 +226,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // Answer 就绪后，等 ICE 收集完成（onIceGatheringComplete）再生成二维码
     }
 
-    // ======================== Host 端：扫码获取 Answer ========================
+    // ======================== 发起方：确认连接（回扫 Answer） ========================
+
+    /**
+     * 发起方在生成 Offer 码并看到「确认连接」按钮后点击，进入扫码，只接受 Answer。
+     * 与观看方的扫码路径完全独立，永不混淆——彻底消除"期望收到 Offer 但收到 ANSWER"。
+     */
+    private fun onConfirmClicked() {
+        scanIntent = ScanIntent.ANSWER_ONLY
+        updateUI("等待对方扫码后，请扫描对方屏幕上的二维码完成连接")
+        val integrator = com.google.zxing.integration.android.IntentIntegrator(this)
+        integrator.setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
+        integrator.setPrompt("扫描观看方屏幕上的二维码")
+        integrator.setCameraId(0)
+        integrator.setBeepEnabled(true)
+        integrator.setOrientationLocked(false)
+        integrator.initiateScan()
+    }
+
 
     private fun handleHostScannedQrCode(rawData: String) {
         val decoded = SignalManager.decode(rawData)
@@ -274,7 +299,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (qrBitmap != null) {
                 binding.ivQRCode.setImageBitmap(qrBitmap)
                 binding.ivQRCode.visibility = View.VISIBLE
-                updateUI(if (isHost) "二维码已生成，请让对方扫码" else "请让共享者扫描这个二维码")
+                if (isHost) {
+                    updateUI("📤 连接码已生成，请让对方点【扫码观看】扫这个码")
+                    binding.btnConfirm.visibility = View.VISIBLE
+                    binding.tvScanResult.text = "对方扫码后，请点下方橙色按钮扫描对方屏幕上的码"
+                    binding.tvScanResult.visibility = View.VISIBLE
+                } else {
+                    updateUI("✅ 已生成连接码，请让对方点【确认连接】扫这个码")
+                }
             } else {
                 updateUI("❌ 二维码生成失败（数据过长）")
             }
@@ -366,12 +398,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.text = "扫码结果: ${rawData.take(50)}..."
             binding.tvScanResult.visibility = View.VISIBLE
 
-            if (hostSessionActive) {
-                // Host 会话中扫码：吃对方 Answer
-                handleHostScannedQrCode(rawData)
-            } else {
-                // Join 场景：吃 Offer -> 生成 Answer
-                handleScannedQrCode(rawData)
+            when (scanIntent) {
+                ScanIntent.OFFER_ONLY -> handleScannedQrCode(rawData)   // 观看方：只吃 Offer
+                ScanIntent.ANSWER_ONLY -> handleHostScannedQrCode(rawData) // 发起方：只吃 Answer
+                else -> updateUI("❌ 未选择角色，请重新点击按钮")
             }
         }
     }
@@ -409,6 +439,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.ivQRCode.visibility = View.GONE
         binding.flRemoteVideo.visibility = View.GONE
         binding.tvScanResult.visibility = View.GONE
+        binding.btnConfirm.visibility = View.GONE
+        scanIntent = null
         iceCandidates.clear()
         pendingOfferSdp = null
         pendingAnswerSdp = null
