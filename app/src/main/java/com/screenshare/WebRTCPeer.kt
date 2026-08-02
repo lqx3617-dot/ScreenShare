@@ -88,6 +88,37 @@ class WebRTCPeer(
     }
 
     private val pendingCandidates = mutableListOf<IceCandidate>()
+    // v1.3: 统一等待 ICE gathering 完成再打包（修复观看方候选丢失导致 P2P 卡死）
+    private val gatheringLock = Object()
+    private var gatheringCallback: (() -> Unit)? = null
+    private var gatheringTimedOut = false
+    private fun waitForGatheringComplete(cb: () -> Unit) {
+        synchronized(gatheringLock) {
+            if (gatheringTimedOut) { cb(); return }
+            gatheringCallback = cb
+        }
+        // 8 秒兜底：若 gathering 迟迟不 COMPLETE（如无网口），强制放行防死等
+        Thread {
+            try { Thread.sleep(8000) } catch (t: Throwable) {}
+            var c: (() -> Unit)? = null
+            synchronized(gatheringLock) {
+                if (gatheringCallback != null) {
+                    gatheringTimedOut = true
+                    c = gatheringCallback
+                    gatheringCallback = null
+                }
+            }
+            c?.invoke()
+        }.start()
+    }
+    private fun notifyGatheringComplete() {
+        var c: (() -> Unit)? = null
+        synchronized(gatheringLock) {
+            c = gatheringCallback
+            gatheringCallback = null
+        }
+        c?.invoke()
+    }
 
     // 新版 API：ICE 服务器直接用 URL 列表（含 TURN 凭据用 ":user:pass" 或通过 url 携带）
     private val iceServers: List<PeerConnection.IceServer> by lazy {
@@ -118,6 +149,7 @@ class WebRTCPeer(
             Log.d(TAG, "ICE Gathering: $state")
             if (state == PeerConnection.IceGatheringState.COMPLETE) {
                 listener.onIceGatheringComplete()
+                notifyGatheringComplete()
             }
         }
         override fun onIceCandidate(candidate: IceCandidate) {
@@ -204,20 +236,11 @@ class WebRTCPeer(
                 Log.d(TAG, "Offer 创建成功")
                 pc.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
-                        // defensive: 不依赖 onIceGatheringComplete/onIceCandidate
-                        object : Thread("GenerateOfferQr") {
-                            override fun run() {
-                                try {
-                                    for (i in 0 until 12) {
-                                        val ld = pc.localDescription
-                                        if (ld != null && ld.description.contains("a=candidate:")) break
-                                        Thread.sleep(500)
-                                    }
-                                } catch (t: Throwable) { Log.e(TAG, "wait cand err: ${t.message}") }
-                                val ld = pc.localDescription
-                                if (ld != null) { listener.onOfferReady(ld) } else { listener.onOfferReady(sdp) }
-                            }
-                        }.start()
+                        // v1.3: 等待 ICE gathering 完成（含候选）再回传，避免候选丢失
+                        waitForGatheringComplete {
+                            val ld = pc.localDescription
+                            if (ld != null) listener.onOfferReady(ld) else listener.onOfferReady(sdp)
+                        }
                     }
                     override fun onSetFailure(error: String?) { Log.e(TAG, "setLocalDescription 失败: $error") }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
@@ -240,7 +263,13 @@ class WebRTCPeer(
             override fun onCreateSuccess(sdp: SessionDescription) {
                 Log.d(TAG, "Answer 创建成功")
                 pc.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() { listener.onAnswerReady(sdp) }
+                    override fun onSetSuccess() {
+                        // v1.3: 等 ICE gathering 完成再打包 Answer，否则观看方候选缺失
+                        waitForGatheringComplete {
+                            val ld = pc.localDescription
+                            listener.onAnswerReady(ld ?: sdp)
+                        }
+                    }
                     override fun onSetFailure(error: String?) { Log.e(TAG, "setLocalDescription 失败: $error") }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(p0: String?) {}
