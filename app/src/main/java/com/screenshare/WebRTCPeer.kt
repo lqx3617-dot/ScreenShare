@@ -204,7 +204,20 @@ class WebRTCPeer(
                 Log.d(TAG, "Offer 创建成功")
                 pc.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
-                        listener.onOfferReady(sdp)
+                        // defensive: 不依赖 onIceGatheringComplete/onIceCandidate
+                        object : Thread("GenerateOfferQr") {
+                            override fun run() {
+                                try {
+                                    for (i in 0 until 12) {
+                                        val ld = pc.localDescription
+                                        if (ld != null && ld.description.contains("a=candidate:")) break
+                                        Thread.sleep(500)
+                                    }
+                                } catch (t: Throwable) { Log.e(TAG, "wait cand err: ${t.message}") }
+                                val ld = pc.localDescription
+                                if (ld != null) { listener.onOfferReady(ld) } else { listener.onOfferReady(sdp) }
+                            }
+                        }.start()
                     }
                     override fun onSetFailure(error: String?) { Log.e(TAG, "setLocalDescription 失败: $error") }
                     override fun onCreateSuccess(p0: SessionDescription?) {}

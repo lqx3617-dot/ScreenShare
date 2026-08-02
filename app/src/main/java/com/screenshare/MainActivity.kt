@@ -213,17 +213,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // ======================== WebRTCPeer.Listener 回调 ========================
 
     override fun onOfferReady(sdp: SessionDescription) {
-        Log.d(TAG, "Offer 就绪，等待 ICE 收集完成再生成二维码")
+        // 防御性修复：不再依赖 onIceGatheringComplete 才生成二维码。
+        // setLocalDescription 成功后收到的 localDescription 已含内嵌 a=candidate，
+        // 直接打包进二维码即可，对端 setRemoteDescription 时 WebRTC 会自动消费内嵌候选。
+        Log.d(TAG, "Offer 就绪，立即生成二维码（含内嵌 ICE 候选）")
         pendingOfferSdp = sdp
+        generateAndShowQr()
     }
 
     override fun onAnswerReady(sdp: SessionDescription) {
-        Log.d(TAG, "Answer 就绪")
+        Log.d(TAG, "Answer 就绪，立即生成二维码（含内嵌 ICE 候选）")
         pendingAnswerSdp = sdp
+        generateAndShowQr()
     }
 
-    override fun onIceGatheringComplete() {
-        Log.d(TAG, "ICE 收集完成，共 " + iceCandidates.size + " 个候选，打包二维码")
+    private fun generateAndShowQr() {
         val qrData: String?
         if (pendingOfferSdp != null && isHost) {
             qrData = SignalManager.encodeOffer(pendingOfferSdp!!, iceCandidates.toList())
@@ -236,6 +240,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             runOnUiThread { updateUI("❌ 二维码生成失败（缺少 SDP 或数据过长）") }
             return
         }
+        Log.d(TAG, "Offer 二维码大小: " + qrData.length + " bytes")
         val qrBitmap = generateQRCode(qrData)
         runOnUiThread {
             if (qrBitmap != null) {
@@ -246,6 +251,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 updateUI("❌ 二维码生成失败（数据过长）")
             }
         }
+    }
+
+    override fun onIceGatheringComplete() {
+        // ICE 候选全部收集完成（或收集完成后又新增），刷新二维码以纳入最新候选
+        Log.d(TAG, "ICE 收集完成，共 " + iceCandidates.size + " 个候选，刷新二维码")
+        generateAndShowQr()
     }
 
     override fun onIceCandidate(candidate: IceCandidate) {
