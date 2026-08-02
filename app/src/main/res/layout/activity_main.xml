@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="32dp"
+    android:background="#FF181C24">
+
+    <!-- 标题 -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🖥️ 屏幕共享"
+        android:textSize="28sp"
+        android:textColor="#FFFFFFFF"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 状态文字 -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="准备就绪"
+        android:textSize="16sp"
+        android:textColor="#FFAAAAAA"
+        android:layout_marginBottom="40dp" />
+
+    <!-- 二维码图片 -->
+    <ImageView
+        android:id="@+id/ivQRCode"
+        android:layout_width="240dp"
+        android:layout_height="240dp"
+        android:visibility="gone"
+        android:layout_marginBottom="24dp"
+        android:background="#FFFFFFFF"
+        android:padding="12dp" />
+
+    <!-- 扫码结果显示 -->
+    <TextView
+        android:id="@+id/tvScanResult"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="12sp"
+        android:textColor="#FF888888"
+        android:visibility="gone"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 按钮区 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnHost"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="📺 我要共享屏幕（生成二维码）"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:backgroundTint="#FF4CAF50"
+        android:textColor="#FFFFFFFF"
+        android:layout_marginBottom="16dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnJoin"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="📷 扫码观看对方屏幕"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:backgroundTint="#FF2196F3"
+        android:textColor="#FFFFFFFF"
+        android:layout_marginBottom="16dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnStop"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:text="⏹ 停止共享"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:backgroundTint="#FFFF5722"
+        android:textColor="#FFFFFFFF"
+        android:enabled="false"
+        android:visibility="gone" />
+
+    <!-- 远程画面（加入方用） -->
+    <FrameLayout
+        android:id="@+id/flRemoteVideo"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:visibility="gone"
+        android:background="#FF000000" />
+
+</LinearLayout>
