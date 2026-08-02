@@ -32,39 +32,6 @@ jobs:
           restore-keys: gradle-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-      - name: Download WebRTC AAR
-        run: |
-          set +e
-          mkdir -p app/libs
-          echo "=== Downloading WebRTC AAR ==="
-          # Candidate URLs, in order of preference
-          URLs=(
-            "https://repo1.maven.org/maven2/dev/onvoid/webrtc/webrtc-android/108.2.2/webrtc-android-108.2.2.aar"
-            "https://repo1.maven.org/maven2/dev/onvoid/webrtc/webrtc-android/108.4.0/webrtc-android-108.4.0.aar"
-            "https://repo1.maven.org/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar"
-          )
-          ok=0
-          for url in "${URLs[@]}"; do
-            echo "Trying: $url"
-            rm -f app/libs/webrtc.aar
-            curl -sSL --fail -o app/libs/webrtc.aar "$url" 2>/dev/null
-            rc=$?
-            SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
-            echo "  curl rc=$rc, size=$SIZE"
-            if [ -f app/libs/webrtc.aar ] && [ "$SIZE" -gt 10000 ]; then
-              echo "  SUCCESS from $url"
-              ok=1
-              break
-            fi
-          done
-          if [ "$ok" -ne 1 ]; then
-            echo "ALL SOURCES FAILED"
-            ls -la app/libs/
-            exit 1
-          fi
-          echo "=== Verify AAR ==="
-          file app/libs/webrtc.aar
-          ls -la app/libs/
       - name: Build with Gradle
         run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
