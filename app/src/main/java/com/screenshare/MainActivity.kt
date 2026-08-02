@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var eglBaseContext: EglBase.Context? = null
     private var peer: WebRTCPeer? = null
     private var isHost = false
+    private var hostSessionActive = false
 
     // ICE 候选缓存（等待所有候选收集完再编码进二维码）
     private val iceCandidates = mutableListOf<IceCandidate>()
@@ -98,9 +99,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun onHostClicked() {
         isHost = true
+        hostSessionActive = true
         updateUI("正在申请屏幕采集权限...")
         binding.btnHost.isEnabled = false
-        binding.btnJoin.isEnabled = false
+        // Host 生成 Offer 后仍需扫码对方 Answer，故不禁用 btnJoin
 
         // Android 14: 提前启动 mediaProjection 前台服务，防止授权弹窗期间竞态
         ScreenProjectionService.start(this)
@@ -137,6 +139,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun onJoinClicked() {
         isHost = false
+        hostSessionActive = false
         updateUI("请扫描对方的二维码...")
 
         // 启动 ZXing 扫码界面
@@ -325,9 +328,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.text = "扫码结果: ${rawData.take(50)}..."
             binding.tvScanResult.visibility = View.VISIBLE
 
-            if (isHost) {
+            if (hostSessionActive) {
+                // Host 会话中扫码：吃对方 Answer
                 handleHostScannedQrCode(rawData)
             } else {
+                // Join 场景：吃 Offer -> 生成 Answer
                 handleScannedQrCode(rawData)
             }
         }
@@ -370,6 +375,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         pendingOfferSdp = null
         pendingAnswerSdp = null
         remoteVideoSink = null
+        hostSessionActive = false
     }
 
     override fun onDestroy() {
