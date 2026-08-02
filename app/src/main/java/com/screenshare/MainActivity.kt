@@ -136,8 +136,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         updateUI("请扫描对方的二维码...")
 
         // 启动 ZXing 扫码界面
-        val integrator = com.journeyapps.barcodescanner.IntentIntegrator(this)
-        integrator.setDesiredBarcodeFormats(com.journeyapps.barcodescanner.IntentIntegrator.QR_CODE)
+        val integrator = com.google.zxing.integration.android.IntentIntegrator(this)
+        integrator.setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
         integrator.setPrompt("扫描共享者的二维码")
         integrator.setCameraId(0)
         integrator.setBeepEnabled(true)
@@ -314,7 +314,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
 
         // ZXing 扫码结果
-        val result = com.journeyapps.barcodescanner.IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
+        val result = com.google.zxing.integration.android.IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
         if (result != null && result.contents != null) {
             val rawData = result.contents
             binding.tvScanResult.text = "扫码结果: ${rawData.take(50)}..."
