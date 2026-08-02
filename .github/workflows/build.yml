@@ -44,26 +44,28 @@ jobs:
       - name: Download WebRTC AAR
         run: |
           mkdir -p app/libs
-          echo "Downloading WebRTC AAR..."
-          curl -sL -o app/libs/webrtc.aar \
-            "https://github.com/nicedev0908/libwebrtc/releases/download/121.6167.0/libwebrtc-121.6167.0.aar" \
-            || curl -sL -o app/libs/webrtc.aar \
-            "https://jcenter.bintray.com/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar" \
-            || true
-          ls -la app/libs/webrtc.aar
-          file app/libs/webrtc.aar
-          # Check file size - if too small it's probably an error page
-          SIZE=$(stat -f%z app/libs/webrtc.aar 2>/dev/null || stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
-          echo "File size: $SIZE bytes"
+          echo "Downloading WebRTC AAR from multiple sources..."
+          # Source 1: Google Maven direct
+          curl -sL -o app/libs/webrtc.aar \ 
+            "https://dl.google.com/dl/android/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar"
+          SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
+          echo "Source 1 size: $SIZE bytes"
           if [ "$SIZE" -lt 10000 ]; then
-            echo "WARNING: AAR file too small ($SIZE bytes), likely not a real AAR"
-            echo "Trying alternative: Google Maven direct"
-            curl -sL -o app/libs/webrtc.aar \
-              "https://dl.google.com/dl/android/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar" \
-              || true
-            SIZE2=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
-            echo "File size after retry: $SIZE2 bytes"
+            echo "Source 1 failed, trying Source 2: GitHub proxy"
+            curl -sL -o app/libs/webrtc.aar \ 
+              "https://github.com/nicedev0908/libwebrtc/releases/download/121.6167.0/libwebrtc-121.6167.0.aar"
+            SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
+            echo "Source 2 size: $SIZE bytes"
           fi
+          if [ "$SIZE" -lt 10000 ]; then
+            echo "All sources failed, will use Maven dependency instead"
+            rm -f app/libs/webrtc.aar
+            # Uncomment the Maven dependency in build.gradle.kts
+            sed -i "s|implementation(files(\"libs/webrtc.aar\"))|implementation(\"org.webrtc:google-webrtc:1.0.32006\")|" app/build.gradle.kts
+            cat app/build.gradle.kts
+          fi
+          ls -la app/libs/ 2>/dev/null || echo "No libs dir"
+          file app/libs/webrtc.aar 2>/dev/null || echo "No AAR file"
 
       - name: Build with Gradle
         run: ./gradlew assembleDebug --stacktrace --no-daemon
