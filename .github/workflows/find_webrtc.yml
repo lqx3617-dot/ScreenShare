@@ -1,0 +1,16 @@
+name: Find WebRTC Version
+on: [workflow_dispatch]
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check devonvoid metadata
+        run: |
+          echo "=== dev.onvoid.webrtc metadata ==="
+          curl -sSL "https://repo1.maven.org/maven2/dev/onvoid/webrtc/webrtc-android/maven-metadata.xml" | tail -30
+          echo
+          echo "=== org.webrtc index ==="
+          curl -sSL "https://repo1.maven.org/maven2/org/webrtc/" | head -50
+          echo
+          echo "=== search google-webrtc ==="
+          curl -sSL "https://search.maven.org/solrsearch/select?q=a:google-webrtc&rows=10&wt=json" | head -40
