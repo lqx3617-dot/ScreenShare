@@ -37,7 +37,7 @@ android {
 
 dependencies {
     // WebRTC —— 核心依赖
-    implementation("com.infobip:google-webrtc:1.0.45036")
+    implementation("io.github.webrtc-sdk:android:144.7559.09")
 
     // ZXing —— 二维码扫描
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
