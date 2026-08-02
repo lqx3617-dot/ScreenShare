@@ -128,7 +128,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 启动屏幕采集（失败时明确提示，不再静默卡在"连接中"）
         val ok = peer!!.startScreenCapture()
         if (!ok) {
-            updateUI("❌ 屏幕采集启动失败：请重新点击"我要共享"并务必点击"允许"")
+            updateUI("❌ 屏幕采集启动失败，请重试并务必点击屏幕采集的【允许】按钮")
             ScreenProjectionService.stop(this)
             return
         }
