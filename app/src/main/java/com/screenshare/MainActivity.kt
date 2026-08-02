@@ -115,6 +115,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // Android 14: 必须先以 mediaProjection 类型启动前台服务，否则 getMediaProjection 抛 SecurityException
         ScreenProjectionService.start(this)
         updateUI("正在建立 WebRTC 连接...")
+        // 启用 WebRTC 原生日志，便于诊断采集/信令问题
+        ScreenCapturerFactory.enableDiagnosticLogging()
 
         peer = WebRTCPeer(this, eglBaseContext!!, this)
         val pc = peer!!.createPeerConnection()
@@ -123,8 +125,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
 
-        // 启动屏幕采集
-        peer!!.startScreenCapture(null)
+        // 启动屏幕采集（失败时明确提示，不再静默卡在"连接中"）
+        val ok = peer!!.startScreenCapture()
+        if (!ok) {
+            updateUI("❌ 屏幕采集启动失败：请重新点击"我要共享"并务必点击"允许"")
+            ScreenProjectionService.stop(this)
+            return
+        }
 
         // 等 ICE 收集一些候选后创建 Offer（给 ICE 一点时间收集）
         executor.execute {

@@ -155,10 +155,15 @@ class WebRTCPeer(
         return peerConnection
     }
 
-    fun startScreenCapture(mediaProjection: android.hardware.display.DisplayManager?) {
+    /**
+     * 启动屏幕采集。
+     * capturer 由 ScreenCapturerFactory 内部缓存提供（真源是授权后拿到的 MediaProjection Intent）。
+     * @return true 表示采集器创建并启动成功；false 表示失败（调用方应给 UI 提示）。
+     */
+    fun startScreenCapture(): Boolean {
         val capturer = ScreenCapturerFactory.createScreenCapturer(context) ?: run {
-            Log.e(TAG, "屏幕采集器创建失败")
-            return
+            Log.e(TAG, "屏幕采集器创建失败，请确认已授权屏幕采集权限")
+            return false
         }
         videoCapturer = capturer
         surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCapture", eglBaseContext)
@@ -185,6 +190,7 @@ class WebRTCPeer(
             }
         }
         Log.d(TAG, "屏幕采集已启动: 1280x720@30fps")
+        return true
     }
 
     fun createOffer() {
