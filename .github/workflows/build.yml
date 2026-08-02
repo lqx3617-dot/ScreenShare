@@ -33,14 +33,14 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
       - name: Build with Gradle
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
         env:
           JAVA_OPTS: '-Xmx2g'
           GRADLE_OPTS: '-Dorg.gradle.daemon=false'
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenShare-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: ScreenShare-release
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 5
           if-no-files-found: error

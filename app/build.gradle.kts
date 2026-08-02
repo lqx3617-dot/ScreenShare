@@ -15,9 +15,18 @@ android {
         versionName = "1.3"
     }
 
+    signingConfigs {
+        release {
+            storeFile = file("signing/release.keystore")
+            storePassword = "screenshare123"
+            keyAlias = "screenshare"
+            keyPassword = "screenshare123"
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
