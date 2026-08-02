@@ -48,12 +48,22 @@ class WebRTCPeer(
         // 单例 factory：整个进程共用
         @Volatile private var singletonFactory: PeerConnectionFactory? = null
 
-        fun getFactory(): PeerConnectionFactory {
-            return singletonFactory ?: synchronized(this) {
-                singletonFactory ?: PeerConnectionFactory.builder()
-                    .createPeerConnectionFactory()
-                    .also { singletonFactory = it }
-            }
+        @Volatile private var initialized = false
+        @Synchronized fun ensureInitialized(appContext: Context) {
+            if (initialized) return
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(appContext)
+                    .createInitializationOptions()
+            )
+            initialized = true
+        }
+    }
+
+    private fun getFactory(): PeerConnectionFactory {
+        return singletonFactory ?: synchronized(this) {
+            singletonFactory ?: PeerConnectionFactory.builder()
+                .createPeerConnectionFactory()
+                .also { singletonFactory = it }
         }
     }
 
@@ -71,6 +81,10 @@ class WebRTCPeer(
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+
+    init {
+        ensureInitialized(context.applicationContext)
+    }
 
     private val pendingCandidates = mutableListOf<IceCandidate>()
 
