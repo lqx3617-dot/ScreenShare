@@ -33,14 +33,23 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
       - name: Build with Gradle
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
           JAVA_OPTS: '-Xmx2g'
           GRADLE_OPTS: '-Dorg.gradle.daemon=false'
+      - name: Sign APK with fixed keystore
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk)
+          ZALIGNED="${APK%.apk}_aligned.apk"
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          "$BT/zipalign" -f 4 "$APK" "$ZALIGNED"
+          "$BT/apksigner" sign --ks signing/release.keystore --ks-pass pass:screenshare123 --key-pass pass:screenshare123 --ks-key-alias screenshare --out "$APK" "$ZALIGNED"
+          "$BT/apksigner" verify --verbose "$APK" | head -5
+          rm -f "$ZALIGNED"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenShare-release
-          path: app/build/outputs/apk/release/*.apk
+          name: ScreenShare-debug
+          path: app/build/outputs/apk/debug/*.apk
           retention-days: 5
           if-no-files-found: error
