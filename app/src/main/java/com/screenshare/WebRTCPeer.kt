@@ -75,9 +75,14 @@ class WebRTCPeer(
     private val pendingCandidates = mutableListOf<IceCandidate>()
 
     // 新版 API：ICE 服务器直接用 URL 列表（含 TURN 凭据用 ":user:pass" 或通过 url 携带）
-    private val iceServers: List<String> by lazy {
-        val turnWithCreds = TURN_URLS.map { "${it}&username=$TURN_USER&credential=$TURN_PASS" }
-        STUN_URLS + turnWithCreds
+    private val iceServers: List<PeerConnection.IceServer> by lazy {
+        STUN_URLS.map { PeerConnection.IceServer.builder(it).createIceServer() } +
+            TURN_URLS.map {
+                PeerConnection.IceServer.builder(it)
+                    .setUsername(TURN_USER)
+                    .setPassword(TURN_PASS)
+                    .createIceServer()
+            }
     }
 
     private val pcObserver = object : PeerConnection.Observer {
