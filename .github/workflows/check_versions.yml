@@ -1,0 +1,16 @@
+name: Check WebRTC Versions
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Google Maven for webrtc versions
+        run: |
+          echo "=== Checking maven.google.com ==="
+          curl -sL 'https://dl.google.com/dl/android/maven2/org/webrtc/google-webrtc/group-index.xml' || echo "404 on Google Maven"
+          echo ""
+          echo "=== Checking Maven Central ==="
+          curl -sL 'https://repo1.maven.org/maven2/org/webrtc/google-webrtc/maven-metadata.xml' || echo "404 on Maven Central"
+          echo ""
+          echo "=== Try search.maven.org ==="
+          curl -sL 'https://search.maven.org/solrsearch/select?q=g:org.webrtc&rows=10&wt=json' || echo "search failed"
