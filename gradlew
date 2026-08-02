@@ -7,7 +7,7 @@
 APP_NAME="Gradle"
 APP_BASE_NAME=`basename "$0"`
 
-DEFAULT_JVM_OPTS='--add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.prefs/java.util.prefs=ALL-UNNAMED --add-opens java.base/java.nio.charset=ALL-UNNAMED --add-opens java.base/java.net=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED'
+DEFAULT_JVM_OPTS='--add-opens java.base/java.util=ALL-UNNAMED" --add-opens java.base/java.lang=ALL-UNNAMED" --add-opens java.base/java.lang.invoke=ALL-UNNAMED" --add-opens java.base/java.util=ALL-UNNAMED" --add-opens java.prefs/java.util.prefs=ALL-UNNAMED" --add-opens java.base/java.nio.charset=ALL-UNNAMED" --add-opens java.base/java.net=ALL-UNNAMED" --add-opens java.base/java.io=ALL-UNNAMED" --add-opens java.base/java.util.concurrent.atomic=ALL-UNNAMED"'
 
 PRG="$0"
 while [ -h "$PRG" ] ; do
