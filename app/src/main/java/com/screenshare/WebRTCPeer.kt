@@ -74,6 +74,7 @@ class WebRTCPeer(
         fun onConnected()
         fun onDisconnected()
         fun onRemoteVideoTrack(videoTrack: VideoTrack)
+        fun onIceGatheringComplete() {}
     }
 
     private var peerConnection: PeerConnection? = null
@@ -115,6 +116,9 @@ class WebRTCPeer(
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
             Log.d(TAG, "ICE Gathering: $state")
+            if (state == PeerConnection.IceGatheringState.COMPLETE) {
+                listener.onIceGatheringComplete()
+            }
         }
         override fun onIceCandidate(candidate: IceCandidate) {
             Log.d(TAG, "onIceCandidate: ${candidate.sdp}")

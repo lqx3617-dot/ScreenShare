@@ -182,26 +182,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 添加 ICE 候选
         candidates.forEach { peer!!.addIceCandidate(it) }
 
-        // 等 Answer 创建完后，等待 ICE 收集，再生成二维码给 Host 扫
-        executor.execute {
-            Thread.sleep(3000) // 等 Answer + ICE 收集
-            val answerSdp = pendingAnswerSdp ?: run {
-                runOnUiThread { updateUI("❌ Answer 未生成") }
-                return@execute
-            }
-            val answerData = SignalManager.encodeAnswer(answerSdp, iceCandidates.toList())
-            val qrBitmap = generateQRCode(answerData)
-
-            runOnUiThread {
-                if (qrBitmap != null) {
-                    binding.ivQRCode.setImageBitmap(qrBitmap)
-                    binding.ivQRCode.visibility = View.VISIBLE
-                    updateUI("请让共享者扫描这个二维码")
-                } else {
-                    updateUI("❌ 二维码生成失败，数据过长")
-                }
-            }
-        }
+        // Answer 就绪后，等 ICE 收集完成（onIceGatheringComplete）再生成二维码
     }
 
     // ======================== Host 端：扫码获取 Answer ========================
@@ -227,26 +208,39 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // ======================== WebRTCPeer.Listener 回调 ========================
 
     override fun onOfferReady(sdp: SessionDescription) {
-        Log.d(TAG, "Offer 就绪，生成二维码")
+        Log.d(TAG, "Offer 就绪，等待 ICE 收集完成再生成二维码")
         pendingOfferSdp = sdp
-
-        val qrData = SignalManager.encodeOffer(sdp, iceCandidates.toList())
-        val qrBitmap = generateQRCode(qrData)
-
-        runOnUiThread {
-            if (qrBitmap != null) {
-                binding.ivQRCode.setImageBitmap(qrBitmap)
-                binding.ivQRCode.visibility = View.VISIBLE
-                updateUI("二维码已生成，请让对方扫码")
-            } else {
-                updateUI("❌ 二维码生成失败")
-            }
-        }
     }
 
     override fun onAnswerReady(sdp: SessionDescription) {
         Log.d(TAG, "Answer 就绪")
         pendingAnswerSdp = sdp
+    }
+
+    override fun onIceGatheringComplete() {
+        Log.d(TAG, "ICE 收集完成，共 " + iceCandidates.size + " 个候选，打包二维码")
+        val qrData: String?
+        if (pendingOfferSdp != null && isHost) {
+            qrData = SignalManager.encodeOffer(pendingOfferSdp!!, iceCandidates.toList())
+        } else if (pendingAnswerSdp != null) {
+            qrData = SignalManager.encodeAnswer(pendingAnswerSdp!!, iceCandidates.toList())
+        } else {
+            qrData = null
+        }
+        if (qrData == null) {
+            runOnUiThread { updateUI("❌ 二维码生成失败（缺少 SDP 或数据过长）") }
+            return
+        }
+        val qrBitmap = generateQRCode(qrData)
+        runOnUiThread {
+            if (qrBitmap != null) {
+                binding.ivQRCode.setImageBitmap(qrBitmap)
+                binding.ivQRCode.visibility = View.VISIBLE
+                updateUI(if (isHost) "二维码已生成，请让对方扫码" else "请让共享者扫描这个二维码")
+            } else {
+                updateUI("❌ 二维码生成失败（数据过长）")
+            }
+        }
     }
 
     override fun onIceCandidate(candidate: IceCandidate) {
