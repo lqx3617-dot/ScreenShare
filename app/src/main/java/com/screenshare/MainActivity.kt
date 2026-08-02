@@ -111,20 +111,48 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /**
      * Host 端：收到 MediaProjection 权限后，创建 PeerConnection、启动屏幕采集、创建 Offer
      */
+    // 保证 startSessionCore 只执行一次（onReady 回调与延迟兜底可能都会触发）
+    private var sessionCoreStarted = false
+
+    /**
+     * 启动 Host 屏幕会话。
+     *
+     * 关键时序修复（SecurityException）：Android 14 要求调用 getMediaProjection() 时
+     * 必须已有 foregroundServiceType="mediaProjection" 的前台服务在运行。而
+     * startForegroundService() 是异步的——onStartCommand 里的 startForeground 要等
+     * 主线程当前代码块返回后才执行。若启动服务后立即调用 getMediaProjection()，系统
+     * 仍认为没有 mediaProjection 前台服务，从而抛 SecurityException。
+     *
+     * 解决：启动服务后不立即采集，而是等 ScreenProjectionService 在 startForeground
+     * 完成时回调 onReady 通知“服务已就绪”，届时才真正创建 PeerConnection 并启动采集。
+     * 用 postDelayed 延迟作兜底，防止 onReady 因异常未触发导致卡死。
+     */
     private fun startHostSession() {
+        sessionCoreStarted = false
+        ScreenProjectionService.onReady = {
+            runOnUiThread { startSessionCore() }
+        }
         // Android 14: 必须先以 mediaProjection 类型启动前台服务，否则 getMediaProjection 抛 SecurityException
         ScreenProjectionService.start(this)
         updateUI("正在建立 WebRTC 连接...")
+        // 兜底：若 onReady 因异常未触发，延迟 600ms 后照样启动采集（此时 onStartCommand 必然已完成）
+        binding.root.postDelayed({ startSessionCore() }, 600)
+    }
+
+    /**
+     * 在 mediaProjection 前台服务就绪后执行实际的 PeerConnection 创建与屏幕采集。
+     */
+    private fun startSessionCore() {
+        if (sessionCoreStarted) return
+        sessionCoreStarted = true
         // 启用 WebRTC 原生日志，便于诊断采集/信令问题
         ScreenCapturerFactory.enableDiagnosticLogging()
-
         peer = WebRTCPeer(this, eglBaseContext!!, this)
         val pc = peer!!.createPeerConnection()
         if (pc == null) {
             updateUI("❌ PeerConnection 创建失败")
             return
         }
-
         // 启动屏幕采集（失败时明确提示，不再静默卡在"连接中"）
         val ok = peer!!.startScreenCapture()
         if (!ok) {
@@ -132,13 +160,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             ScreenProjectionService.stop(this)
             return
         }
-
         // 等 ICE 收集一些候选后创建 Offer（给 ICE 一点时间收集）
         executor.execute {
             Thread.sleep(2000) // 等 2 秒让 ICE 收集
             peer!!.createOffer()
         }
     }
+
 
     // ======================== Join 端逻辑 ========================
 

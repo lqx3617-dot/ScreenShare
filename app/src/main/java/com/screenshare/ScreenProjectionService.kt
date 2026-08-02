@@ -27,6 +27,14 @@ class ScreenProjectionService : Service() {
         private const val NOTIFICATION_ID = 1001
 
         /**
+         * 服务已进入 mediaProjection 前台（startForeground 完成）后的回调。
+         * 解决 getMediaProjection 与前台服务启动之间的时序竞态：
+         * 只有前台服务真正 startForeground 后，getMediaProjection 才不抛 SecurityException。
+         */
+        @Volatile
+        var onReady: (() -> Unit)? = null
+
+        /**
          * 启动前台服务。在获取到 MediaProjection 权限后、调用
          * getMediaProjection() 之前调用。
          */
@@ -75,6 +83,11 @@ class ScreenProjectionService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+        // 前台服务已就绪，通知 App 可安全调用 getMediaProjection 了（必须在 startForeground 之后触发）
+        onReady?.let { cb ->
+            onReady = null
+            try { cb() } catch (t: Throwable) { Log.w(TAG, "onReady 回调异常: ${t.message}") }
         }
         return START_STICKY
     }
