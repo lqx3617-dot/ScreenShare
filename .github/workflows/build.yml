@@ -1,34 +1,27 @@
 name: Build APK
-
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: temurin
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
         run: |
           sdkmanager --install 'platforms;android-34' 'build-tools;34.0.0'
-
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -37,42 +30,46 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-
-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-
       - name: Download WebRTC AAR
         run: |
+          set +e
           mkdir -p app/libs
-          echo "Downloading WebRTC AAR from multiple sources..."
-          # Source 1: Google Maven direct
-          curl -sL -o app/libs/webrtc.aar \ 
-            "https://dl.google.com/dl/android/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar"
-          SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
-          echo "Source 1 size: $SIZE bytes"
-          if [ "$SIZE" -lt 10000 ]; then
-            echo "Source 1 failed, trying Source 2: GitHub proxy"
-            curl -sL -o app/libs/webrtc.aar \ 
-              "https://github.com/nicedev0908/libwebrtc/releases/download/121.6167.0/libwebrtc-121.6167.0.aar"
-            SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
-            echo "Source 2 size: $SIZE bytes"
-          fi
-          if [ "$SIZE" -lt 10000 ]; then
-            echo "All sources failed, will use Maven dependency instead"
+          echo "=== Downloading WebRTC AAR ==="
+          # Candidate URLs, in order of preference
+          URLs=(
+            "https://repo1.maven.org/maven2/dev/onvoid/webrtc/webrtc-android/108.2.2/webrtc-android-108.2.2.aar"
+            "https://repo1.maven.org/maven2/dev/onvoid/webrtc/webrtc-android/108.4.0/webrtc-android-108.4.0.aar"
+            "https://repo1.maven.org/maven2/org/webrtc/google-webrtc/1.0.32006/google-webrtc-1.0.32006.aar"
+          )
+          ok=0
+          for url in "${URLs[@]}"; do
+            echo "Trying: $url"
             rm -f app/libs/webrtc.aar
-            # Uncomment the Maven dependency in build.gradle.kts
-            sed -i "s|implementation(files(\"libs/webrtc.aar\"))|implementation(\"org.webrtc:google-webrtc:1.0.32006\")|" app/build.gradle.kts
-            cat app/build.gradle.kts
+            curl -sSL --fail -o app/libs/webrtc.aar "$url" 2>/dev/null
+            rc=$?
+            SIZE=$(stat -c%s app/libs/webrtc.aar 2>/dev/null || echo 0)
+            echo "  curl rc=$rc, size=$SIZE"
+            if [ -f app/libs/webrtc.aar ] && [ "$SIZE" -gt 10000 ]; then
+              echo "  SUCCESS from $url"
+              ok=1
+              break
+            fi
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "ALL SOURCES FAILED"
+            ls -la app/libs/
+            exit 1
           fi
-          ls -la app/libs/ 2>/dev/null || echo "No libs dir"
-          file app/libs/webrtc.aar 2>/dev/null || echo "No AAR file"
-
+          echo "=== Verify AAR ==="
+          file app/libs/webrtc.aar
+          ls -la app/libs/
       - name: Build with Gradle
         run: ./gradlew assembleDebug --stacktrace --no-daemon
         env:
           JAVA_OPTS: '-Xmx2g'
           GRADLE_OPTS: '-Dorg.gradle.daemon=false'
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
