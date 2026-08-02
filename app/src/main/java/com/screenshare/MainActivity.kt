@@ -104,8 +104,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnHost.isEnabled = false
         // Host 生成 Offer 后仍需扫码对方 Answer，故不禁用 btnJoin
 
-        // Android 14: 提前启动 mediaProjection 前台服务，防止授权弹窗期间竞态
-        ScreenProjectionService.start(this)
         // 先申请屏幕采集权限
         ScreenCapturerFactory.requestPermission(this)
     }
