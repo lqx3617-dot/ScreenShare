@@ -102,6 +102,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnHost.isEnabled = false
         binding.btnJoin.isEnabled = false
 
+        // Android 14: 提前启动 mediaProjection 前台服务，防止授权弹窗期间竞态
+        ScreenProjectionService.start(this)
         // 先申请屏幕采集权限
         ScreenCapturerFactory.requestPermission(this)
     }
