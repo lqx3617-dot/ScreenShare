@@ -3,13 +3,11 @@ package com.screenshare
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.hardware.display.DisplayManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.util.Log
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.VideoCapturer
-import android.os.Build
 
 /**
  * 屏幕采集工厂。
@@ -59,19 +57,14 @@ object ScreenCapturerFactory {
      * 必须在调用 requestPermission 且系统弹窗用户点了"允许"之后才能调用
      */
     fun createScreenCapturer(context: Context): VideoCapturer? {
-        val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val data = pendingProjectionData ?: run {
             Log.e(TAG, "没有 MediaProjection 权限数据，先调用 requestPermission")
             return null
         }
 
-        val mediaProjection = projectionManager.getMediaProjection(pendingResultCode, data)
-        if (mediaProjection == null) {
-            Log.e(TAG, "MediaProjection 创建失败")
-            return null
-        }
-
-        return ScreenCapturerAndroid(mediaProjection, object : MediaProjection.Callback() {
+        // 新版 WebRTC (google-webrtc 1.0.45036) 的 ScreenCapturerAndroid
+        // 构造参数是 MediaProjection 权限 Intent，内部自己去 getMediaProjection。
+        return ScreenCapturerAndroid(data, object : MediaProjection.Callback() {
             override fun onStop() {
                 Log.d(TAG, "MediaProjection 被系统停止")
             }
