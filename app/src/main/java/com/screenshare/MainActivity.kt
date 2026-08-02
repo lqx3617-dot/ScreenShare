@@ -110,6 +110,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      * Host 端：收到 MediaProjection 权限后，创建 PeerConnection、启动屏幕采集、创建 Offer
      */
     private fun startHostSession() {
+        // Android 14: 必须先以 mediaProjection 类型启动前台服务，否则 getMediaProjection 抛 SecurityException
+        ScreenProjectionService.start(this)
         updateUI("正在建立 WebRTC 连接...")
 
         peer = WebRTCPeer(this, eglBaseContext!!, this)
@@ -296,6 +298,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun onStopClicked() {
         peer?.disconnect()
+        ScreenProjectionService.stop(this)
         ScreenCapturerFactory.clearPermission()
         resetUI()
         updateUI("已停止共享")
