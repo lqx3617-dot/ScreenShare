@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ScreenShare" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF181C24</item>
+        <item name="colorPrimaryVariant">#FF2C2F3A</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorSecondary">#FF4CAF50</item>
+        <item name="colorSecondaryVariant">#FF388E3C</item>
+        <item name="android:statusBarColor">#FF181C24</item>
+        <item name="android:windowBackground">#FF181C24</item>
+    </style>
+</resources>
