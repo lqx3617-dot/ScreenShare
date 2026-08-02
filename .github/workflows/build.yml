@@ -25,6 +25,10 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager --install 'platforms;android-34' 'build-tools;34.0.0'
+
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -34,11 +38,13 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace --no-daemon
+        env:
+          JAVA_OPTS: '-Xmx2g'
+          GRADLE_OPTS: '-Dorg.gradle.daemon=false'
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
