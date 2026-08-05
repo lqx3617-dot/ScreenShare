@@ -11,6 +11,12 @@ const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
 const GRADLE = "/workspace/app/build.gradle.kts";
 
+// 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
+const RELEASE_CONFIG = {
+  changelog: "更新提示优化：显示版本对比与更新说明，支持强制更新\n下载优化：通知栏进度、后台下载可取消、4线程加速、失败自动重试\n文件复用：下载过的安装包校验通过后直接安装\n启动自动静默检查（12小时内不重复）",
+  forced: false,
+};
+
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
 let cachedVersion = null;
 let cachedMtime = 0;
@@ -30,7 +36,9 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "共享方可看到本地画面预览（与观看方相同，支持缩放/全屏/铺满）",
+    note: "检查更新优化：通知栏下载、强制更新、自动检查、下载加速",
+    forced: RELEASE_CONFIG.forced,
+    changelog: RELEASE_CONFIG.changelog,
   };
   cachedMtime = mtime;
   return cachedVersion;
