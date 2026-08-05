@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.Manifest
 import android.app.Activity
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -10,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -19,8 +21,11 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.WindowManager
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -503,49 +508,57 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         meetingCodeDialog = null
     }
 
-    /** 加入会议：弹窗输入 4 位会议号后加入 */
+    /** 加入会议：弹出美化后的自定义输入弹窗，输入 4 位会议号后加入 */
     private fun onSignalJoinClicked() {
-        // 弹出会议号输入框（类似腾讯会议）
-        val input = EditText(this)
-        input.hint = "输入 4 位会议号"
-        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        input.maxLines = 1
-        input.setTextColor(Color.BLACK)
-        input.setHintTextColor(Color.parseColor("#FF9CA3AF"))
-        input.setBackgroundColor(Color.WHITE)
-        val lp = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
-        input.layoutParams = lp
-        val padding = (16 * resources.displayMetrics.density).toInt()
-        input.setPadding(padding, padding, padding, padding)
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(R.layout.dialog_join_meeting)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
 
-        AlertDialog.Builder(this)
-            .setTitle("加入会议")
-            .setMessage("输入会议创建方提供的 4 位会议号")
-            .setView(input)
-            .setPositiveButton("加入", { _, _ ->
-                val code = input.text.toString().trim()
-                if (!validateSignalCode(code)) return@setPositiveButton
-                signalCode = code
-                signalMode = true
-                isHost = false
-                hostSessionActive = false
+        val input = dialog.findViewById<EditText>(R.id.etMeetingCode)
+        // 键盘「完成」键等同于点击加入
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                dialog.findViewById<Button>(R.id.btnJoinSubmit).performClick()
+                true
+            } else false
+        }
+
+        dialog.findViewById<Button>(R.id.btnJoinSubmit).setOnClickListener {
+            val code = input.text.toString().trim()
+            if (!validateSignalCode(code)) {
+                // 会议号非法：震一下提示，保持弹窗继续输入
+                input.requestFocus()
+                input.selectAll()
+                return@setOnClickListener
+            }
+            dialog.dismiss()
+            joinMeetingWithCode(code)
+        }
+        dialog.findViewById<TextView>(R.id.btnJoinCancel).setOnClickListener { dialog.dismiss() }
+
+        dialog.show()
+        input.postDelayed({ input.requestFocus() }, 200)
+    }
+
+    /** 携带会议号执行加入会议流程（Host 视角为 false） */
+    private fun joinMeetingWithCode(code: String) {
+        signalCode = code
+        signalMode = true
+        isHost = false
+        hostSessionActive = false
         signalPeerReady = false
         signalPendingOfferData = null
         signalPendingCandidates.clear()
         signalSdpSent = false
         authorizationRequested = false
 
-                binding.btnSignalHost.isEnabled = false
-                binding.btnSignalJoin.isEnabled = false
+        binding.btnSignalHost.isEnabled = false
+        binding.btnSignalJoin.isEnabled = false
 
-                updateUI("正在加入会议（$code）...")
-                connectSignal(code, asHost = false)
-            })
-            .setNegativeButton("取消", null)
-            .show()
+        updateUI("正在加入会议（$code）...")
+        connectSignal(code, asHost = false)
     }
 
     /** 生成 4 位数字会议号（不重复，忽略极小概率碰撞） */

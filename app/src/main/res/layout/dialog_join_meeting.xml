@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:minWidth="300dp"
+    android:padding="24dp"
+    android:background="@drawable/bg_glass">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="加入会议"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#FF111827" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="输入会议创建方提供的 4 位会议号"
+        android:textSize="13sp"
+        android:textColor="#FF6B7280"
+        android:layout_marginTop="4dp" />
+
+    <EditText
+        android:id="@+id/etMeetingCode"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/bg_input"
+        android:gravity="center"
+        android:textSize="38sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFFFF"
+        android:textColorHint="#FF6B7280"
+        android:hint="0000"
+        android:inputType="number"
+        android:maxLength="4"
+        android:letterSpacing="0.3"
+        android:imeOptions="actionDone"
+        android:importantForAutofill="no" />
+
+    <Button
+        android:id="@+id/btnJoinSubmit"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="20dp"
+        android:text="加入"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFFFF"
+        android:background="@drawable/bg_btn_green" />
+
+    <TextView
+        android:id="@+id/btnJoinCancel"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:text="取消"
+        android:textSize="14sp"
+        android:textColor="#FF6B7280" />
+
+</LinearLayout>

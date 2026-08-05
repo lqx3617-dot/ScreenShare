@@ -224,7 +224,6 @@ object UpdateChecker {
 
     /** 降级方案：无通知权限时使用 Activity 内进度条弹窗下载 */
     private fun downloadWithDialog(context: Context, info: JSONObject, target: File, apkUrl: String, expectedMd5: String) {
-        val versionName = info.optString("versionName", "new")
         val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
         }
