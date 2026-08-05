@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复通知栏下载失败问题：下载改为后台线程执行\nv1.67 起通知栏下载在点击「立即更新」后立即报「下载失败，请重试」的缺陷已修复",
+  changelog: "移除主界面顶部标题文字（屏幕共享 / 远程观看你的手机屏幕）",
   forced: false,
 };
 
