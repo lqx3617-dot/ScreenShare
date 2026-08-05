@@ -30,7 +30,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "新增会议内麦克风语音（双向对讲，与系统音频叠加），连接后状态栏出现麦克风按钮",
+    note: "共享方可看到本地画面预览（与观看方相同，支持缩放/全屏/铺满）",
   };
   cachedMtime = mtime;
   return cachedVersion;

@@ -831,7 +831,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.btnMic.visibility = View.VISIBLE
             updateMicButton()
 
-            if (!isHost) {
+            if (isHost) {
+                // 共享方本地预览：将本地采集轨道绑定到画面区（与观看方同一渲染链路）
+                peer?.getLocalVideoTrack()?.let { setupVideoPreview(it) }
+            } else {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
@@ -848,91 +851,98 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     override fun onRemoteVideoTrack(videoTrack: VideoTrack) {
-        runOnUiThread {
-            binding.flRemoteVideo.visibility = View.VISIBLE
-            remoteVideoTrack = videoTrack
+        runOnUiThread { setupVideoPreview(videoTrack) }
+    }
 
-            // 移除旧的 renderer 和 sink
-            remoteVideoSink?.let { oldSink ->
-                videoTrack.removeSink(oldSink)
-            }
-            videoRenderer?.let { old ->
-                if (old.parent == binding.flRemoteVideo) {
-                    binding.flRemoteVideo.removeView(old)
-                }
-            }
+    /**
+     * 通用视频预览渲染：观看方绑定远程轨道、共享方绑定本地轨道，两路径复用同一套逻辑。
+     * 包含 renderer 创建/销毁、sink 绑定、缩放/双击复位、完整/铺满切换、全屏、方向适配。
+     */
+    private fun setupVideoPreview(track: VideoTrack) {
+        binding.flRemoteVideo.visibility = View.VISIBLE
 
-            val renderer = SurfaceViewRenderer(this)
-            renderer.init(eglBaseContext, null)
-            // 默认完整显示（等比，不裁切），用户可点右上角按钮切铺满
-            renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-            renderer.layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            binding.flRemoteVideo.addView(renderer, 0)
-            videoRenderer = renderer
-            currentVideoScale = 1f
-
-            // 双指捏合缩放 + 双击复位
-            val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                override fun onScale(detector: ScaleGestureDetector): Boolean {
-                    val newScale = (currentVideoScale * detector.scaleFactor).coerceIn(minVideoScale, maxVideoScale)
-                    applyVideoScale(renderer, newScale, detector.focusX, detector.focusY)
-                    return true
-                }
-
-                override fun onScaleEnd(detector: ScaleGestureDetector) {
-                    currentVideoScale = renderer.scaleX
-                }
-            })
-            scaleDetector.isQuickScaleEnabled = true
-            videoScaleDetector = scaleDetector
-
-            renderer.setOnTouchListener { v, event ->
-                scaleDetector.onTouchEvent(event)
-                if (event.action == MotionEvent.ACTION_UP && scaleDetector.scaleFactor == 1f) {
-                    // 单击/双击复位
-                    if (event.eventTime - event.downTime < 300) {
-                        currentVideoScale = 1f
-                        renderer.animate().scaleX(1f).scaleY(1f).setDuration(200).start()
-                    }
-                }
-                true
-            }
-
-            binding.tvZoomHint.visibility = View.VISIBLE
-            binding.btnFullscreen.visibility = View.VISIBLE
-            binding.btnAspectToggle.visibility = View.VISIBLE
-            applyAspectMode()
-
-            remoteVideoSink = VideoSink { frame ->
-                renderer.onFrame(frame)
-                val fw = frame.rotatedWidth
-                val fh = frame.rotatedHeight
-                if (fw != lastFrameW || fh != lastFrameH) {
-                    lastFrameW = fw
-                    lastFrameH = fh
-                    runOnUiThread { applyModeScale() }
-                }
-            }
-            videoTrack.addSink(remoteVideoSink!!)
-            Log.d(TAG, "远程视频轨道已绑定到 SurfaceViewRenderer")
-
-            // 容器尺寸变化（平板旋转/布局变化）时重新按比例适配画面
-            if (!layoutListenerAdded) {
-                layoutListenerAdded = true
-                binding.flRemoteVideo.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    if (lastFrameW > 0) applyModeScale()
-                }
-                binding.flFullscreen.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    if (lastFrameW > 0) applyModeScale()
-                }
-            }
-
-            // 预创建常驻全屏 renderer（隐藏状态下保留 surface），点全屏时瞬间显示
-            prepareFullscreenRenderer()
+        // 移除旧的 renderer 和 sink（重连/切换预览时复用同一容器）
+        val oldTrack = remoteVideoTrack
+        remoteVideoSink?.let { oldSink ->
+            oldTrack?.removeSink(oldSink)
         }
+        remoteVideoTrack = track
+        videoRenderer?.let { old ->
+            if (old.parent == binding.flRemoteVideo) {
+                binding.flRemoteVideo.removeView(old)
+            }
+        }
+
+        val renderer = SurfaceViewRenderer(this)
+        renderer.init(eglBaseContext, null)
+        // 默认完整显示（等比，不裁切），用户可点右上角按钮切铺满
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+        renderer.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        binding.flRemoteVideo.addView(renderer, 0)
+        videoRenderer = renderer
+        currentVideoScale = 1f
+
+        // 双指捏合缩放 + 双击复位
+        val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                val newScale = (currentVideoScale * detector.scaleFactor).coerceIn(minVideoScale, maxVideoScale)
+                applyVideoScale(renderer, newScale, detector.focusX, detector.focusY)
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                currentVideoScale = renderer.scaleX
+            }
+        })
+        scaleDetector.isQuickScaleEnabled = true
+        videoScaleDetector = scaleDetector
+
+        renderer.setOnTouchListener { v, event ->
+            scaleDetector.onTouchEvent(event)
+            if (event.action == MotionEvent.ACTION_UP && scaleDetector.scaleFactor == 1f) {
+                // 单击/双击复位
+                if (event.eventTime - event.downTime < 300) {
+                    currentVideoScale = 1f
+                    renderer.animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+                }
+            }
+            true
+        }
+
+        binding.tvZoomHint.visibility = View.VISIBLE
+        binding.btnFullscreen.visibility = View.VISIBLE
+        binding.btnAspectToggle.visibility = View.VISIBLE
+        applyAspectMode()
+
+        remoteVideoSink = VideoSink { frame ->
+            renderer.onFrame(frame)
+            val fw = frame.rotatedWidth
+            val fh = frame.rotatedHeight
+            if (fw != lastFrameW || fh != lastFrameH) {
+                lastFrameW = fw
+                lastFrameH = fh
+                runOnUiThread { applyModeScale() }
+            }
+        }
+        track.addSink(remoteVideoSink!!)
+        Log.d(TAG, "视频轨道已绑定到 SurfaceViewRenderer (本地预览=${track == peer?.getLocalVideoTrack()})")
+
+        // 容器尺寸变化（平板旋转/布局变化）时重新按比例适配画面
+        if (!layoutListenerAdded) {
+            layoutListenerAdded = true
+            binding.flRemoteVideo.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (lastFrameW > 0) applyModeScale()
+            }
+            binding.flFullscreen.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                if (lastFrameW > 0) applyModeScale()
+            }
+        }
+
+        // 预创建常驻全屏 renderer（隐藏状态下保留 surface），点全屏时瞬间显示
+        prepareFullscreenRenderer()
     }
 
     // ======================== 全屏观看 ========================

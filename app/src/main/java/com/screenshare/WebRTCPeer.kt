@@ -509,6 +509,14 @@ class WebRTCPeer(
     }
 
     /**
+     * 获取本机屏幕采集的本地视频轨道（供共享方本地预览渲染）。
+     * 仅共享方调用；观看方通过远程轨道回调获取画面，不受影响。
+     */
+    fun getLocalVideoTrack(): VideoTrack? {
+        return localVideoTrack
+    }
+
+    /**
      * 获取采集使用的 MediaProjection 实例（供系统音频内录 AudioPlaybackCapture 复用）。
      * 该实例由 ScreenCapturerAndroid.startCapture 内部创建，全应用仅此一份，
      * 避免同一投影 token 被 getMediaProjection 重复获取导致部分设备 createVirtualDisplay 卡死。
