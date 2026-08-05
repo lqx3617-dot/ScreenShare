@@ -201,18 +201,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
         binding.btnCtrlText.visibility = if (isControlMode) View.VISIBLE else View.GONE
         if (!isControlMode) ctrlDownSent = false
-        if (isControlMode && !RemoteControlService.isAccessibilityOn()) {
-            Toast.makeText(this, "提示：需对方开启无障碍服务才能远程控制", Toast.LENGTH_LONG).show()
-        }
     }
 
-    /** 观看方：发送系统按键指令 */
+    /** 观看方：发送系统按键指令（对方服务是否可用由共享方回执反馈） */
     private fun onCtrlKeyClicked(value: String) {
         val p = peer ?: return
-        if (!RemoteControlService.isAccessibilityOn()) {
-            Toast.makeText(this, "对方未开启无障碍服务", Toast.LENGTH_SHORT).show()
-            return
-        }
         p.sendControl("""{"type":"key","value":"$value"}""")
     }
 
