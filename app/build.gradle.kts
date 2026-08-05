@@ -11,8 +11,39 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.3"
+        versionCode = 66
+        versionName = "1.65"
+        // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
+        // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        // 从 gradle.properties 读取 TURN 配置，通过 BuildConfig 注入代码
+        buildConfigField(
+            "String",
+            "TURN_URLS",
+            "\"${(project.findProperty("screenshare.turn.urls") as String? ?: "")}\""
+        )
+        buildConfigField(
+            "String",
+            "TURN_USERNAME",
+            "\"${project.findProperty("screenshare.turn.username") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "TURN_PASSWORD",
+            "\"${project.findProperty("screenshare.turn.password") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "SIGNAL_URL",
+            "\"${project.findProperty("screenshare.signal.url") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "UPDATE_URL",
+            "\"${project.findProperty("screenshare.update.url") as String? ?: ""}\""
+        )
     }
 
     buildTypes {
@@ -32,15 +63,13 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
 dependencies {
     // WebRTC —— 核心依赖
     implementation("io.github.webrtc-sdk:android:144.7559.09")
-
-    // ZXing —— 二维码扫描
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     // AndroidX
     implementation("androidx.core:core-ktx:1.12.0")
@@ -50,4 +79,7 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // OkHttp —— 口令模式 WebSocket 信令
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

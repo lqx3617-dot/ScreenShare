@@ -1,107 +1,298 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="32dp"
-    android:background="#FF181C24">
+    android:background="@drawable/bg_gradient">
 
-    <!-- 标题 -->
-    <TextView
-        android:id="@+id/tvTitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="🖥️ 屏幕共享"
-        android:textSize="28sp"
-        android:textColor="#FFFFFFFF"
-        android:textStyle="bold"
-        android:layout_marginBottom="16dp" />
-
-    <!-- 状态文字 -->
-    <TextView
-        android:id="@+id/tvStatus"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="准备就绪"
-        android:textSize="16sp"
-        android:textColor="#FFAAAAAA"
-        android:layout_marginBottom="40dp" />
-
-    <!-- 二维码图片 -->
-    <ImageView
-        android:id="@+id/ivQRCode"
-        android:layout_width="240dp"
-        android:layout_height="240dp"
-        android:visibility="gone"
-        android:layout_marginBottom="24dp"
-        android:background="#FFFFFFFF"
-        android:padding="12dp" />
-
-    <!-- 扫码结果显示 -->
-    <TextView
-        android:id="@+id/tvScanResult"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="12sp"
-        android:textColor="#FF888888"
-        android:visibility="gone"
-        android:layout_marginBottom="16dp" />
-
-    <!-- 按钮区 -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnHost"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="📤 我要开始共享（分享我的屏幕）"
-        android:textSize="16sp"
-        android:textAllCaps="false"
-        android:backgroundTint="#FF4CAF50"
-        android:textColor="#FFFFFFFF"
-        android:layout_marginBottom="16dp" />
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnJoin"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="📥 我要扫码观看（看对方的屏幕）"
-        android:textSize="16sp"
-        android:textAllCaps="false"
-        android:backgroundTint="#FF2196F3"
-        android:textColor="#FFFFFFFF"
-        android:layout_marginBottom="16dp" />
+        <!-- 顶部渐变标题区 -->
+        <LinearLayout
+            android:id="@+id/llTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="48dp"
+            android:paddingBottom="20dp">
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnStop"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="⏹ 停止共享"
-        android:textSize="16sp"
-        android:textAllCaps="false"
-        android:backgroundTint="#FFFF5722"
-        android:textColor="#FFFFFFFF"
-        android:enabled="false"
-        android:visibility="gone" />
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnConfirm"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:text="🔗 对方已扫描？扫描对方二维码完成连接"
-        android:textSize="14sp"
-        android:textAllCaps="false"
-        android:backgroundTint="#FFFF9800"
-        android:textColor="#FFFFFFFF"
-        android:visibility="gone" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-    <!-- 远程画面（加入方用） -->
+                <TextView
+                    android:id="@+id/tvTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="屏幕共享"
+                    android:textSize="30sp"
+                    android:textColor="@color/text_primary"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvSubtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="远程观看你的手机屏幕"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvCheckUpdate"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="检查更新"
+                android:textSize="14sp"
+                android:textColor="@color/accent"
+                android:padding="8dp" />
+        </LinearLayout>
+
+        <!-- 状态卡片（液态玻璃） -->
+        <LinearLayout
+            android:id="@+id/llStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="16dp"
+            android:background="@drawable/bg_glass">
+
+            <View
+                android:layout_width="10dp"
+                android:layout_height="10dp"
+                android:background="@drawable/dot_status"
+                android:layout_marginEnd="12dp" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="准备就绪"
+                android:textSize="15sp"
+                android:textColor="#FF111827"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnFpsToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="60帧"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#FF111827"
+                android:gravity="center"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:background="@drawable/bg_glass"
+                android:layout_marginStart="8dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnMic"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="麦克风"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#FF111827"
+                android:gravity="center"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:background="@drawable/bg_glass"
+                android:layout_marginStart="8dp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- 远程画面（观看方），置顶显示，双指可缩放 -->
+        <FrameLayout
+            android:id="@+id/flRemoteVideo"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:visibility="gone"
+            android:background="#FF000000"
+            android:clipChildren="false">
+
+            <LinearLayout
+                android:id="@+id/llVideoBtns"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="10dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/btnAspectToggle"
+                    android:layout_width="52dp"
+                    android:layout_height="44dp"
+                    android:gravity="center"
+                    android:text="完整"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFFFF"
+                    android:background="@drawable/bg_fullscreen_btn"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/btnFullscreen"
+                    android:layout_width="52dp"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="全屏"
+                    android:textSize="12sp"
+                    android:textColor="#FFFFFFFF"
+                    android:background="@drawable/bg_fullscreen_btn"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- 视频控制提示 -->
+        <TextView
+            android:id="@+id/tvZoomHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="双指捏合可缩放画面"
+            android:textSize="12sp"
+            android:textColor="@color/text_hint"
+            android:visibility="gone"
+            android:layout_gravity="center_horizontal"
+            android:padding="6dp" />
+
+        <!-- 会议号连接区（置于下方，液态玻璃） -->
+        <LinearLayout
+            android:id="@+id/llSignal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@drawable/bg_glass"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="快速会议"
+                android:textSize="13sp"
+                android:textColor="#FF374151"
+                android:textStyle="bold"
+                android:layout_marginBottom="12dp" />
+
+            <Button
+                android:id="@+id/btnSignalHost"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="快速会议 · 创建房间"
+                android:textSize="15sp"
+                android:textAllCaps="false"
+                android:textStyle="bold"
+                android:background="@drawable/bg_glass"
+                android:textColor="#FF12865C" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#1A000000"
+                android:layout_marginTop="12dp"
+                android:layout_marginBottom="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="加入会议"
+                android:textSize="13sp"
+                android:textColor="#FF374151"
+                android:textStyle="bold"
+                android:layout_marginBottom="12dp" />
+
+            <Button
+                android:id="@+id/btnSignalJoin"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:text="加入会议 · 输入会议号"
+                android:textSize="15sp"
+                android:textAllCaps="false"
+                android:textStyle="bold"
+                android:background="@drawable/bg_glass"
+                android:textColor="#FF1A5FC7" />
+        </LinearLayout>
+
+        <!-- 会议号提示 / 诊断信息 -->
+        <TextView
+            android:id="@+id/tvScanResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="@color/text_hint"
+            android:visibility="gone"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="24dp"
+            android:text="停止共享"
+            android:textSize="16sp"
+            android:textAllCaps="false"
+            android:textStyle="bold"
+            android:background="@drawable/bg_glass"
+            android:textColor="#FFD13232"
+            android:enabled="false"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- 全屏叠加层：在 FrameLayout 最外层，覆盖所有内容 -->
     <FrameLayout
-        android:id="@+id/flRemoteVideo"
+        android:id="@+id/flFullscreen"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="16dp"
+        android:layout_height="match_parent"
         android:visibility="gone"
-        android:background="#FF000000" />
+        android:background="#FF000000"
+        android:elevation="10dp">
 
-</LinearLayout>
+        <TextView
+            android:id="@+id/btnExitFullscreen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="12dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:gravity="center"
+            android:text="退出全屏"
+            android:textSize="14sp"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn" />
+    </FrameLayout>
+
+</FrameLayout>
