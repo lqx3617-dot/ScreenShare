@@ -1,12 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.ScreenShare" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#FF181C24</item>
-        <item name="colorPrimaryVariant">#FF2C2F3A</item>
-        <item name="colorOnPrimary">#FFFFFFFF</item>
-        <item name="colorSecondary">#FF4CAF50</item>
-        <item name="colorSecondaryVariant">#FF388E3C</item>
-        <item name="android:statusBarColor">#FF181C24</item>
-        <item name="android:windowBackground">#FF181C24</item>
+        <item name="colorPrimary">@color/primary_green</item>
+        <item name="colorPrimaryVariant">@color/bg_dark</item>
+        <item name="colorOnPrimary">@color/text_primary</item>
+        <item name="colorSecondary">@color/primary_blue</item>
+        <item name="colorSecondaryVariant">@color/bg_dark</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="colorSurface">@color/bg_card</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+    </style>
+
+    <!-- 圆角卡片背景 -->
+    <style name="CardBg" parent="">
+        <item name="android:background">@drawable/bg_card</item>
+    </style>
+
+    <!-- 主按钮圆角 -->
+    <style name="BtnRounded" parent="">
+        <item name="cornerRadius">16dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
     </style>
 </resources>

@@ -74,6 +74,36 @@ object SignalManager {
     }
 
     /**
+     * Trickle ICE：将单个候选编码为独立消息（SDP 之后增量发送）
+     */
+    fun encodeCandidate(c: IceCandidate): String {
+        return JSONObject().apply {
+            put("type", "candidate")
+            put("id", c.sdpMid)
+            put("label", c.sdpMLineIndex)
+            put("candidate", c.sdp)
+        }.toString()
+    }
+
+    /**
+     * 解码增量候选消息；非候选消息返回 null
+     */
+    fun decodeCandidate(raw: String): IceCandidate? {
+        return try {
+            val json = JSONObject(raw)
+            if (json.optString("type") != "candidate") return null
+            IceCandidate(
+                json.getString("id"),
+                json.getInt("label"),
+                json.getString("candidate")
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "候选解码失败: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * 解码二维码内容，返回 Pair<SessionDescription, List<IceCandidate>>
      * 或 null（数据无效）
      */

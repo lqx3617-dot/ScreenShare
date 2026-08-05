@@ -27,11 +27,12 @@ object ScreenCapturerFactory {
 
     /**
      * 启用 WebRTC native 日志（默认不打进 logcat，必须显式打开才能诊断）
+     * 诊断期间临时用 LS_INFO 查看 ICE 候选与连接状态；定位问题后可改回 LS_WARNING。
      */
     fun enableDiagnosticLogging() {
         try {
             Logging.enableLogToDebugOutput(Logging.Severity.LS_INFO)
-            Log.d(TAG, "WebRTC 日志已启用 (LS_INFO)")
+            Log.d(TAG, "WebRTC 日志已启用 (LS_INFO 诊断模式)")
         } catch (t: Throwable) {
             Log.w(TAG, "启用 WebRTC 日志失败: ${t.message}")
         }
@@ -56,7 +57,7 @@ object ScreenCapturerFactory {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 pendingProjectionData = data
                 pendingResultCode = resultCode
-                Log.d(TAG, "MediaProjection 权限已获取 (resultCode=$resultCode, data.uri=${data.data})")
+                Log.d(TAG, "MediaProjection 权限已获取 (resultCode=$resultCode)")
                 return true
             } else {
                 pendingProjectionData = null
@@ -71,8 +72,13 @@ object ScreenCapturerFactory {
     /**
      * 创建屏幕采集器（WebRTC 的 VideoCapturer）
      * 必须在调用 requestPermission 且系统弹窗用户点了"允许"之后才能调用
+     *
+     * 注意：这里只创建 ScreenCapturerAndroid，不预先 getMediaProjection。
+     * MediaProjection 由 ScreenCapturerAndroid.startCapture 内部获取（全应用唯一一次），
+     * 音频内录等其他功能通过 WebRTCPeer.mediaProjection() 复用同一个实例，
+     * 避免同一投影 token 二次 getMediaProjection 导致部分设备 createVirtualDisplay 卡死。
      */
-    fun createScreenCapturer(context: Context): VideoCapturer? {
+    fun createScreenCapturer(@Suppress("UNUSED_PARAMETER") context: Context): VideoCapturer? {
         val data = pendingProjectionData ?: run {
             Log.e(TAG, "没有 MediaProjection 权限数据，先调用 requestPermission")
             return null

@@ -51,16 +51,15 @@ class ScreenProjectionService : Service() {
 
         /**
          * 停止前台服务。WebRTC 断开后调用。
+         *
+         * 用 stopService 而不是 startService(ACTION_STOP)：Android 8+ 在应用处于后台时
+         * 调用 startService 会抛 IllegalStateException，而 stopService 无此限制，且会
+         * 同步移除前台通知。
          */
         @JvmStatic
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, ScreenProjectionService::class.java)
-                    .setAction(ACTION_STOP)
-            )
+            context.stopService(Intent(context, ScreenProjectionService::class.java))
         }
-
-        private const val ACTION_STOP = "com.screenshare.action.STOP"
     }
 
     override fun onCreate() {
@@ -69,12 +68,6 @@ class ScreenProjectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(

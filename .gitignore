@@ -8,3 +8,12 @@
 /captures
 .externalNativeBuild
 .cxx
+
+# 签名产物与临时构建目录
+/ScreenShare-allarch-signed.apk
+/ScreenShare-allarch-signed.apk.aligned
+/ScreenShare-allarch-signed.apk.idsig
+/build-tmp/
+
+# 服务器依赖
+/server/node_modules/
