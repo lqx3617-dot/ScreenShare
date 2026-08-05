@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "移除主界面顶部标题文字（屏幕共享 / 远程观看你的手机屏幕）",
+  changelog: "新增观看方远程控制共享方：\n开启「远程控制」后可在共享画面上单指操控对方手机（点按/滑动/长按）、返回/主页/最近任务按键、发送文本\n共享方需在系统无障碍设置中开启「屏幕共享远程控制」服务，支持一键跳转与停止控制开关",
   forced: false,
 };
 

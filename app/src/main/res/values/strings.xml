@@ -1,3 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ScreenShare</string>
+    <string name="accessibility_service_desc">用于「屏幕共享」观看方远程控制共享方：执行触摸、系统按键与文本输入指令。本服务仅执行已建立的安全数据通道下发的指令，不读取也不上传任何屏幕内容、剪贴板或账号信息。</string>
 </resources>

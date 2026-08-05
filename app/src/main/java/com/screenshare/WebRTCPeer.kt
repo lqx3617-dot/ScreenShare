@@ -358,9 +358,11 @@ class WebRTCPeer(
         }
     }
 
+    /** 控制数据通道是否已打开（观看方启用控制模式前检查） */
+    fun controlChannelOpen(): Boolean = controlChannel?.state() == DataChannel.State.OPEN
+
     /** 观看方：经控制通道向共享方发送指令（如 {"type":"fps","value":30}） */
-    fun sendControl(message: String) {
-        val dc = controlChannel ?: return
+    fun sendControl(message: String) {        val dc = controlChannel ?: return
         if (dc.state() == DataChannel.State.OPEN) {
             try {
                 dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(message.toByteArray()), false))

@@ -14,6 +14,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -117,6 +118,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 麦克风（会议内双向对讲）：false=已开启且未静音，true=已开启但静音
     private var micMuted = false
 
+    // 远程控制（观看方控制共享方）：true=控制模式（单指触摸下发控制指令）
+    private var isControlMode = false
+
+    // 控制模式下是否已发送 down（用于过滤黑边区域的 move/up）
+    private var ctrlDownSent = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -147,6 +154,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnFpsToggle.setOnClickListener { onFpsToggleClicked() }
         binding.btnAspectToggle.setOnClickListener { onAspectToggleClicked() }
         binding.btnMic.setOnClickListener { onMicClicked() }
+        binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
+        binding.btnCtrlBack.setOnClickListener { onCtrlKeyClicked("back") }
+        binding.btnCtrlHome.setOnClickListener { onCtrlKeyClicked("home") }
+        binding.btnCtrlRecents.setOnClickListener { onCtrlKeyClicked("recents") }
+        binding.btnCtrlText.setOnClickListener { onCtrlTextClicked() }
+        binding.btnCtrlSetup.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        binding.btnCtrlLock.setOnClickListener { onCtrlLockClicked() }
     }
 
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
@@ -167,6 +183,141 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         applyAspectMode()
         binding.btnAspectToggle.text = if (isFitMode) "完整" else "铺满"
         Toast.makeText(this, if (isFitMode) "完整显示（等比，可能有黑边）" else "铺满屏幕（无黑边，边缘裁切）", Toast.LENGTH_SHORT).show()
+    }
+
+    // ==================== 远程控制（观看方控制共享方） ====================
+
+    /** 观看方：切换控制模式。控制模式下单指触摸下发控制指令，双指仍本地缩放 */
+    private fun onRemoteControlToggle() {
+        if (isHost) return
+        val p = peer ?: return
+        if (p.controlChannelOpen().not()) {
+            Toast.makeText(this, "控制通道未就绪", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isControlMode = !isControlMode
+        binding.btnRemoteControl.text = if (isControlMode) "控制中" else "远程控制"
+        binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF2BD98F.toInt() else 0xFFFFFFFF.toInt())
+        binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
+        binding.btnCtrlText.visibility = if (isControlMode) View.VISIBLE else View.GONE
+        if (!isControlMode) ctrlDownSent = false
+        if (isControlMode && !RemoteControlService.isAccessibilityOn()) {
+            Toast.makeText(this, "提示：需对方开启无障碍服务才能远程控制", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** 观看方：发送系统按键指令 */
+    private fun onCtrlKeyClicked(value: String) {
+        val p = peer ?: return
+        if (!RemoteControlService.isAccessibilityOn()) {
+            Toast.makeText(this, "对方未开启无障碍服务", Toast.LENGTH_SHORT).show()
+            return
+        }
+        p.sendControl("""{"type":"key","value":"$value"}""")
+    }
+
+    /** 观看方：弹输入框，发送文本到共享方当前聚焦输入框 */
+    private fun onCtrlTextClicked() {
+        val p = peer ?: return
+        val input = android.widget.EditText(this).apply {
+            hint = "输入要发送到对方输入框的文字"
+            setSingleLine(true)
+            setPadding(40, 20, 40, 20)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("发送文本")
+            .setView(input)
+            .setPositiveButton("发送") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) return@setPositiveButton
+                try {
+                    p.sendControl(org.json.JSONObject()
+                        .put("type", "text")
+                        .put("value", text)
+                        .toString())
+                } catch (t: Throwable) {
+                    Log.e(TAG, "发送文本指令失败: ${t.message}")
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 观看方：控制模式下单指触摸 → 归一化坐标 → 控制通道下发 */
+    private fun handleControlTouch(event: MotionEvent) {
+        val p = peer ?: return
+        val renderer = videoRenderer ?: return
+        if (lastFrameW <= 0 || lastFrameH <= 0) return
+        val action = when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> "down"
+            MotionEvent.ACTION_MOVE -> "move"
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> "up"
+            else -> return
+        }
+        // isFitMode=true(完整) → fit 有黑边；false(铺满) → crop 无黑边
+        val norm = CoordinateMapper.normalizeTouch(
+            event.x, event.y,
+            renderer.width.toFloat(), renderer.height.toFloat(),
+            lastFrameW, lastFrameH,
+            crop = !isFitMode
+        )
+        if (norm == null) {
+            // 黑边区域：down 不产生指令，已有 down 提前结束（up）
+            if (action == "down") ctrlDownSent = false
+            return
+        }
+        if (action == "move" && !ctrlDownSent) return
+        if (action == "down") ctrlDownSent = true
+        if (action == "up") ctrlDownSent = false
+        try {
+            p.sendControl(org.json.JSONObject()
+                .put("type", "touch")
+                .put("action", action)
+                .put("nx", norm[0])
+                .put("ny", norm[1])
+                .toString())
+        } catch (t: Throwable) {
+            Log.e(TAG, "发送触摸指令失败: ${t.message}")
+        }
+    }
+
+    /** 观看方：接收共享方回发的控制状态提示 */
+    private fun handleControlReply(msg: String) {
+        try {
+            val obj = org.json.JSONObject(msg)
+            if (obj.optString("type") != "status-error") return
+            val tip = when (obj.optString("code")) {
+                "no-accessibility" -> "对方未开启无障碍服务，无法控制"
+                "no-focused-input" -> "对方当前没有可输入的输入框"
+                "text-failed" -> "文本输入失败"
+                else -> "控制指令执行失败"
+            }
+            runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
+        } catch (t: Throwable) {
+            Log.e(TAG, "解析控制回执失败: ${t.message}")
+        }
+    }
+
+    /** 共享方：刷新远程控制状态卡片（无障碍服务开启状态） */
+    private fun updateRemoteControlStatus() {
+        val on = RemoteControlService.isAccessibilityOn()
+        binding.tvCtrlStatus.text = if (on) "远程控制已就绪" else "未开启无障碍服务，观看方无法控制"
+        binding.tvCtrlStatus.setTextColor(if (on) 0xFF7CFC9C.toInt() else 0xFFFFC107.toInt())
+        binding.btnCtrlSetup.visibility = if (on) View.GONE else View.VISIBLE
+    }
+
+    /** 共享方：停止/恢复远程控制开关 */
+    private fun onCtrlLockClicked() {
+        RemoteControlService.controlEnabled = !RemoteControlService.controlEnabled
+        binding.btnCtrlLock.text = if (RemoteControlService.controlEnabled) "停止控制" else "已锁定"
+        binding.btnCtrlLock.setTextColor(
+            if (RemoteControlService.controlEnabled) 0xFFFFC107.toInt() else 0xFFFF5252.toInt()
+        )
+        Toast.makeText(
+            this,
+            if (RemoteControlService.controlEnabled) "远程控制已恢复" else "已停止远程控制，指令将被忽略",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     /**
@@ -409,18 +560,25 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 系统音频内录：创建 DataChannel + 启动内录（复用 MediaProjection 授权）
         p.createSystemAudioChannel()
         p.createControlChannel()
-        // 接收观看方的帧率切换指令
+        // 接收观看方指令：fps 帧率切换走原有逻辑，其余控制指令交给无障碍服务执行
         p.setControlListener { msg ->
             try {
                 val obj = org.json.JSONObject(msg)
-                if (obj.optString("type") == "fps") {
-                    val fps = obj.optInt("value", 60)
-                    p.setFramerate(fps)
+                when (obj.optString("type")) {
+                    "fps" -> p.setFramerate(obj.optInt("value", 60))
+                    else -> {
+                        // 无障碍服务未开启或被共享方停止控制时回发提示
+                        if (!RemoteControlService.handle(obj)) {
+                            p.sendControl("""{"type":"status-error","code":"no-accessibility"}""")
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "解析控制指令失败: ${t.message}")
             }
         }
+        // 指令执行失败（如无聚焦输入框）回发观看方
+        RemoteControlService.execResultCallback = { errMsg -> p.sendControl(errMsg) }
         val audioOk = SystemAudioBridge.startCapture(p.mediaProjection()) { data ->
             p.sendSystemAudio(data)
         }
@@ -716,6 +874,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     p.setSystemAudioListener { data ->
                         SystemAudioBridge.writePcm(data)
                     }
+                    // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
+                    p.setControlListener { msg ->
+                        handleControlReply(msg)
+                    }
                 }
                 val p = peer!!
                 p.setRemoteDescription(sdp)
@@ -847,9 +1009,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (isHost) {
                 // 共享方本地预览：将本地采集轨道绑定到画面区（与观看方同一渲染链路）
                 peer?.getLocalVideoTrack()?.let { setupVideoPreview(it) }
+                binding.llCtrlStatus.visibility = View.VISIBLE
+                updateRemoteControlStatus()
             } else {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
+                binding.btnRemoteControl.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }
@@ -914,15 +1079,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         videoScaleDetector = scaleDetector
 
         renderer.setOnTouchListener { v, event ->
-            scaleDetector.onTouchEvent(event)
-            if (event.action == MotionEvent.ACTION_UP && scaleDetector.scaleFactor == 1f) {
-                // 单击/双击复位
-                if (event.eventTime - event.downTime < 300) {
-                    currentVideoScale = 1f
-                    renderer.animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+            if (isControlMode && !isHost && event.pointerCount == 1) {
+                handleControlTouch(event)
+                true
+            } else {
+                scaleDetector.onTouchEvent(event)
+                if (event.action == MotionEvent.ACTION_UP && scaleDetector.scaleFactor == 1f) {
+                    // 单击/双击复位
+                    if (event.eventTime - event.downTime < 300) {
+                        currentVideoScale = 1f
+                        renderer.animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+                    }
                 }
+                true
             }
-            true
         }
 
         binding.tvZoomHint.visibility = View.VISIBLE
@@ -1197,6 +1367,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnFullscreen.visibility = View.GONE
         binding.btnAspectToggle.visibility = View.GONE
         binding.btnFpsToggle.visibility = View.GONE
+        binding.btnRemoteControl.visibility = View.GONE
+        binding.llCtrlKeys.visibility = View.GONE
+        binding.btnCtrlText.visibility = View.GONE
+        binding.llCtrlStatus.visibility = View.GONE
+        isControlMode = false
+        ctrlDownSent = false
         currentFps = 60
         micMuted = false
         binding.btnMic.visibility = View.GONE

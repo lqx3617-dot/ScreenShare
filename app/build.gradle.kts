@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 71
-        versionName = "1.70"
+        versionCode = 72
+        versionName = "1.71"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         ndk {
@@ -82,4 +82,7 @@ dependencies {
 
     // OkHttp —— 口令模式 WebSocket 信令
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // 单元测试（CoordinateMapper 纯函数）
+    testImplementation("junit:junit:4.13.2")
 }
