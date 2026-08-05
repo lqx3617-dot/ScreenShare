@@ -186,40 +186,46 @@ object UpdateChecker {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "取消", cancelPi)
         nm.notify(NOTIFICATION_ID, builder.build())
 
-        var lastBytes = 0L
-        val lastReport = AtomicLong(0)
-        val ok = downloadToFile(apkUrl, target, cancelled) { total, totalBytes ->
-            val now = System.currentTimeMillis()
-            var speedText = ""
-            val delta = now - lastReport.get()
-            if (delta >= 500) {
-                speedText = "${formatSize((total - lastBytes) * 1000 / delta)}/s"
-                lastBytes = total
-                lastReport.set(now)
+        Thread {
+            var lastBytes = 0L
+            val lastReport = AtomicLong(0)
+            val ok = downloadToFile(apkUrl, target, cancelled) { total, totalBytes ->
+                val now = System.currentTimeMillis()
+                var speedText = ""
+                val delta = now - lastReport.get()
+                if (delta >= 500) {
+                    speedText = "${formatSize((total - lastBytes) * 1000 / delta)}/s"
+                    lastBytes = total
+                    lastReport.set(now)
+                }
+                builder.setProgress(100, (total * 100 / totalBytes).toInt(), false)
+                    .setContentText("${formatSize(total)}/${formatSize(totalBytes)} $speedText")
+                nm.notify(NOTIFICATION_ID, builder.build())
             }
-            builder.setProgress(100, (total * 100 / totalBytes).toInt(), false)
-                .setContentText("${formatSize(total)}/${formatSize(totalBytes)} $speedText")
-            nm.notify(NOTIFICATION_ID, builder.build())
-        }
 
-        nm.cancel(NOTIFICATION_ID)
-        try { appCtx.unregisterReceiver(receiver) } catch (_: Throwable) {}
+            nm.cancel(NOTIFICATION_ID)
+            try { appCtx.unregisterReceiver(receiver) } catch (_: Throwable) {}
 
-        if (cancelled.get()) {
-            target.delete()
-            return
-        }
-        if (!ok) {
-            target.delete()
-            Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
-            return
-        }
-        if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
-            target.delete()
-            Toast.makeText(context, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
-            return
-        }
-        (context as? android.app.Activity)?.runOnUiThread { installApk(context, target) }
+            if (cancelled.get()) {
+                target.delete()
+                return@Thread
+            }
+            if (!ok) {
+                target.delete()
+                (context as? android.app.Activity)?.runOnUiThread {
+                    Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                }
+                return@Thread
+            }
+            if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
+                target.delete()
+                (context as? android.app.Activity)?.runOnUiThread {
+                    Toast.makeText(context, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
+                }
+                return@Thread
+            }
+            (context as? android.app.Activity)?.runOnUiThread { installApk(context, target) }
+        }.start()
     }
 
     /** 降级方案：无通知权限时使用 Activity 内进度条弹窗下载 */
