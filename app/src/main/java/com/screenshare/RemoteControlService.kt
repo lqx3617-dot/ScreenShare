@@ -85,41 +85,46 @@ class RemoteControlService : AccessibilityService() {
     }
 
     private fun execTouch(json: JSONObject) {
-        val nx = json.optDouble("nx", 0.5).toFloat()
-        val ny = json.optDouble("ny", 0.5).toFloat()
-        if (screenW <= 0 || screenH <= 0) return
-        val (px, py) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
-        val x = px.toFloat()
-        val y = py.toFloat()
         val action = json.optString("action", "up")
         when (action) {
             "down" -> {
-                lastTouchX = x
-                lastTouchY = y
+                val nx = json.optDouble("nx", 0.5).toFloat()
+                val ny = json.optDouble("ny", 0.5).toFloat()
+                if (screenW <= 0 || screenH <= 0) return
+                val (px, py) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
+                lastTouchX = px.toFloat()
+                lastTouchY = py.toFloat()
                 touching = true
-                // 手指按下并持续保持（长 stroke，被后续 move 替换时不会提前抬起）
-                dispatchStroke(pathTo(x, y), 2000L)
+                // 手指按下并保持（被 swipe 替换时不会提前抬起）
+                dispatchStroke(pathTo(lastTouchX, lastTouchY), 2000L)
             }
-            "move" -> {
-                if (!touching) return
-                // 增量路径：从上一点到当前点，保持手指按下连续滑动
-                dispatchStroke(pathTo(lastTouchX, lastTouchY, x, y), 2000L)
-                lastTouchX = x
-                lastTouchY = y
+            "swipe" -> {
+                // 完整滑动路径：一次性注入 down→move…→up，滑动可被系统正确识别
+                val arr = json.optJSONArray("points") ?: return
+                if (arr.length() == 0) return
+                val path = Path()
+                var first = true
+                for (i in 0 until arr.length()) {
+                    val pt = arr.optJSONArray(i) ?: continue
+                    val px = (pt.optDouble(0, 0.0) * screenW).toFloat()
+                    val py = (pt.optDouble(1, 0.0) * screenH).toFloat()
+                    if (first) {
+                        path.moveTo(px, py)
+                        first = false
+                    } else {
+                        path.lineTo(px, py)
+                    }
+                }
+                dispatchStroke(path, 400L)
+                touching = false
             }
             "up" -> {
-                if (!touching) return
-                // 增量移动到终点后自然抬起
-                dispatchStroke(pathTo(lastTouchX, lastTouchY, x, y), 2000L)
                 touching = false
             }
         }
     }
 
     private fun pathTo(x: Float, y: Float): Path = Path().apply { moveTo(x, y) }
-
-    private fun pathTo(x1: Float, y1: Float, x2: Float, y2: Float): Path =
-        Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
 
     private fun dispatchStroke(path: Path, duration: Long) {
         val stroke = GestureDescription.StrokeDescription(path, 0, duration)

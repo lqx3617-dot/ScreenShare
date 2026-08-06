@@ -124,6 +124,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 控制模式下是否已发送 down（用于过滤黑边区域的 move/up）
     private var ctrlDownSent = false
 
+    // 控制模式触摸轨迹累积（down 起点 → 各 move 点），抬手时打包为完整滑动指令
+    private val ctrlPoints = ArrayList<FloatArray>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -236,7 +239,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .show()
     }
 
-    /** 观看方：控制模式下单指触摸 → 归一化坐标 → 控制通道下发 */
+    /** 观看方：控制模式下单指触摸。down 发送按下，MOVE 本地累积轨迹，抬手时一次性发送完整滑动路径 */
     private fun handleControlTouch(event: MotionEvent, renderer: SurfaceViewRenderer) {
         val p = peer ?: return
         if (lastFrameW <= 0 || lastFrameH <= 0) return
@@ -265,16 +268,45 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val x = event.x
         val y = event.y
         if (x < left || x > right || y < top || y > bottom) {
-            // 黑边区域：down 不产生指令，已有 down 提前结束（up）
-            if (action == "down") ctrlDownSent = false
+            // 黑边区域：down 不产生指令，已有会话直接结束
+            if (action == "down") {
+                ctrlDownSent = false
+                ctrlPoints.clear()
+            }
             return
         }
-        if (action == "move" && !ctrlDownSent) return
-        if (action == "down") ctrlDownSent = true
-        if (action == "up") ctrlDownSent = false
         val nx = ((x - left) / (right - left)).coerceIn(0f, 1f)
         val ny = ((y - top) / (bottom - top)).coerceIn(0f, 1f)
-        p.sendControl("{\"type\":\"touch\",\"action\":\"$action\",\"nx\":$nx,\"ny\":$ny}")
+        when (action) {
+            "down" -> {
+                ctrlPoints.clear()
+                ctrlPoints.add(floatArrayOf(nx, ny))
+                ctrlDownSent = true
+                p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$nx,\"ny\":$ny}")
+            }
+            "move" -> {
+                if (!ctrlDownSent) return
+                ctrlPoints.add(floatArrayOf(nx, ny))
+            }
+            "up" -> {
+                if (!ctrlDownSent) return
+                ctrlPoints.add(floatArrayOf(nx, ny))
+                ctrlDownSent = false
+                p.sendControl(buildSwipe())
+            }
+        }
+    }
+
+    /** 由累积轨迹构建完整滑动指令（共享方一次性注入完整 down→move→up） */
+    private fun buildSwipe(): String {
+        val sb = StringBuilder()
+        sb.append("{\"type\":\"touch\",\"action\":\"swipe\",\"points\":[")
+        for (i in ctrlPoints.indices) {
+            if (i > 0) sb.append(',')
+            sb.append('[').append(ctrlPoints[i][0]).append(',').append(ctrlPoints[i][1]).append(']')
+        }
+        sb.append("]}")
+        return sb.toString()
     }
 
     /** 观看方：接收共享方回发的控制状态提示 */
