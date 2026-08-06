@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "远程控制跟手性优化 + 修复点击变长按：\n滑动改为 MOVE 阶段 50ms 节流实时注入完整路径，抬手补充最终轨迹，滑动实时跟随\n手势时长下调（按下 600ms / 滑动 80ms），快速点击恢复正常、按住 600ms 才触发长按",
+  changelog: "修复远程控制点击打不开应用：\n点击不再经过按下长手势，改为按下后延迟判定手势类型——快速抬起发送干净的单次点击（50ms）、按住 500ms 触发长按、有移动才进入滑动\n应用图标/按钮点击可靠生效",
   forced: false,
 };
 

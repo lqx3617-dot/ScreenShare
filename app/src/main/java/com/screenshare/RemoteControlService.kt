@@ -87,6 +87,16 @@ class RemoteControlService : AccessibilityService() {
     private fun execTouch(json: JSONObject) {
         val action = json.optString("action", "up")
         when (action) {
+            "tap" -> {
+                // 干净的单次快速点击：50ms 内按下抬起，可靠触发 click
+                val (x, y) = pointOf(json)
+                dispatchStroke(pathTo(x, y), 50L)
+            }
+            "longpress" -> {
+                // 长按：单点保持 500ms
+                val (x, y) = pointOf(json)
+                dispatchStroke(pathTo(x, y), 500L)
+            }
             "down" -> {
                 val nx = json.optDouble("nx", 0.5).toFloat()
                 val ny = json.optDouble("ny", 0.5).toFloat()
@@ -126,6 +136,15 @@ class RemoteControlService : AccessibilityService() {
     }
 
     private fun pathTo(x: Float, y: Float): Path = Path().apply { moveTo(x, y) }
+
+    /** 读取指令中的归一化坐标并还原为屏幕像素 */
+    private fun pointOf(json: JSONObject): Pair<Float, Float> {
+        val nx = json.optDouble("nx", 0.5).toFloat()
+        val ny = json.optDouble("ny", 0.5).toFloat()
+        if (screenW <= 0 || screenH <= 0) return 0f to 0f
+        val (px, py) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
+        return px.toFloat() to py.toFloat()
+    }
 
     private fun dispatchStroke(path: Path, duration: Long) {
         val stroke = GestureDescription.StrokeDescription(path, 0, duration)

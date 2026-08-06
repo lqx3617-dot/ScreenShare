@@ -131,6 +131,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 滑动实时跟手节流：MOVE 阶段每 50ms 发送一次完整路径
     private var lastCtrlSend = 0L
 
+    // 触摸会话判定：是否已进入滑动、按下时间与起点（区分点击/长按/滑动）
+    private var ctrlMoveStarted = false
+    private var ctrlDownTime = 0L
+    private var ctrlDownNX = 0f
+    private var ctrlDownNY = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -285,14 +291,22 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             "down" -> {
                 ctrlPoints.clear()
                 ctrlPoints.add(floatArrayOf(nx, ny))
+                ctrlDownNX = nx
+                ctrlDownNY = ny
+                ctrlDownTime = SystemClock.uptimeMillis()
                 ctrlDownSent = true
-                lastCtrlSend = SystemClock.uptimeMillis()
-                p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$nx,\"ny\":$ny}")
+                ctrlMoveStarted = false
+                // 不立即发指令：由 MOVE（滑动）或 UP（点击/长按）判定手势类型
             }
             "move" -> {
                 if (!ctrlDownSent) return
                 ctrlPoints.add(floatArrayOf(nx, ny))
-                // 50ms 节流发送完整路径，实时跟手（抬手时还有最终一次）
+                // 首次 MOVE 确定为滑动，先发按下再实时跟手
+                if (!ctrlMoveStarted) {
+                    ctrlMoveStarted = true
+                    p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
+                    lastCtrlSend = SystemClock.uptimeMillis()
+                }
                 val now = SystemClock.uptimeMillis()
                 if (now - lastCtrlSend >= 50) {
                     lastCtrlSend = now
@@ -301,9 +315,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             "up" -> {
                 if (!ctrlDownSent) return
-                ctrlPoints.add(floatArrayOf(nx, ny))
                 ctrlDownSent = false
-                p.sendControl(buildSwipe())
+                val held = SystemClock.uptimeMillis() - ctrlDownTime
+                if (!ctrlMoveStarted) {
+                    // 无移动：快速抬起=点击，按住≥500ms=长按
+                    if (held >= 500) {
+                        p.sendControl("{\"type\":\"touch\",\"action\":\"longpress\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
+                    } else {
+                        p.sendControl("{\"type\":\"touch\",\"action\":\"tap\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
+                    }
+                } else {
+                    ctrlPoints.add(floatArrayOf(nx, ny))
+                    p.sendControl(buildSwipe())
+                }
+                ctrlMoveStarted = false
+                ctrlPoints.clear()
             }
         }
     }
