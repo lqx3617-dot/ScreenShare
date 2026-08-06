@@ -176,6 +176,32 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         binding.btnCtrlLock.setOnClickListener { onCtrlLockClicked() }
+
+        // 分享链接唤起：冷启动时解析 screenshare://join?code=XXXX
+        handleShareLink(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleShareLink(intent)
+    }
+
+    /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
+    private fun handleShareLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme != "screenshare" || uri.host != "join") return
+        val code = uri.getQueryParameter("code")?.trim() ?: ""
+        if (!Regex("^[0-9]{4}$").matches(code)) {
+            Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 当前已在共享或连接中：不打断现有会话
+        if (hostSessionActive || signalMode) {
+            Toast.makeText(this, "当前会话进行中，无法加入", Toast.LENGTH_SHORT).show()
+            return
+        }
+        joinMeetingWithCode(code)
     }
 
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
@@ -724,11 +750,34 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 clipboard.setPrimaryClip(ClipData.newPlainText("会议号", code))
                 Toast.makeText(this, "会议号已复制：$code", Toast.LENGTH_LONG).show()
             })
+            .setNeutralButton("分享链接", { _, _ ->
+                shareMeetingLink(code)
+            })
             .setNegativeButton("知道了", null)
             .setCancelable(true)
             .create()
         meetingCodeDialog = dialog
         dialog.show()
+    }
+
+    /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号） */
+    private fun buildShareText(code: String): String {
+        val base = "https://8090-6d639d2de20eb686.monkeycode-ai.online"
+        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
+    }
+
+    /** 调起系统分享面板发送会议链接 */
+    private fun shareMeetingLink(code: String) {
+        try {
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, buildShareText(code))
+            }
+            startActivity(Intent.createChooser(send, "分享会议链接"))
+        } catch (t: Throwable) {
+            Log.w(TAG, "分享失败: ${t.message}")
+            Toast.makeText(this, "分享失败，请使用复制会议号", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** 关闭会议号弹窗（对方加入/出错/断开时调用，避免遮挡后续界面） */
