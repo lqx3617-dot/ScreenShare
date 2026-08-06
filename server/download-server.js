@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复分享链接不唤起 App：\n网页改为 intent:// 官方唤起方式并加备用链接，提升 Android 唤起成功率\nApp 端兼容多种浏览器解析方式，链接唤起更可靠",
+  changelog: "优化屏幕共享流畅度（保持 1080p 画质）：\n码率上限提升到 25Mbps，动态内容（打开应用/滚动）编码预算充足，不再因预算不足临时降帧率\n初始带宽直接给足 15Mbps，跳过码率爬坡期，画面更快稳定",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复分享链接唤起",
+    note: "屏幕共享流畅度优化",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

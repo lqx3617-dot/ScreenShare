@@ -400,13 +400,11 @@ class WebRTCPeer(
     }
 
     /** 采集分辨率匹配屏幕比例（虚拟显示比例与屏幕不一致时系统会放大裁切屏幕内容，导致上下被切）。
-     *  最大边限制 2400 防超高。 */
+     *  最大边限制 1920（1080p）：保持原画面清晰度。 */
     private fun captureSizeForScreen(): Pair<Int, Int> {
         val dm = context.resources.displayMetrics
         val w = dm.widthPixels
         val h = dm.heightPixels
-        // 1920 上限：绝大多数设备的 H.264 硬件编码器原生支持 1080p 高度，
-        // 2400 高度在部分设备（尤其平板）上编码器初始化会卡住或失败
         val maxDim = 1920
         val scale = minOf(1f, maxDim.toFloat() / maxOf(w, h))
         val cw = (w * scale).toInt()
@@ -474,8 +472,8 @@ class WebRTCPeer(
                 videoSender = rtp
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
-                    // 高清屏幕共享：25Mbps 上限保障清晰度，弱网时拥塞控制自动降速
-                    // minBitrate 4M：留出拥塞控制下降余量，避免强撑高清导致排队延迟升高
+                    // 1080p 屏幕共享：25Mbps 上限保障动态内容（打开应用/滚动）编码预算充足，
+                    // 避免 MAINTAIN_RESOLUTION 在预算不足时临时降帧率导致卡顿；min 4M 留弱网余量
                     enc.maxBitrateBps = 25_000_000
                     enc.minBitrateBps = 4_000_000
                     enc.maxFramerate = 30
@@ -483,17 +481,17 @@ class WebRTCPeer(
                     enc.networkPriority = 4
                     enc.bitratePriority = 4.0
                 }
-                // 码率不足时优先保分辨率（降帧率而非降清晰度），适配 2K 屏幕采集
+                // 码率不足时优先保分辨率（降帧率而非降清晰度），用户要求不降画质
                 try {
                     params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
                 } catch (t: Throwable) {
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 低延迟：初始带宽直接给足（12M），跳过从低码率爬坡的过程（爬坡期画面模糊且延迟偏高）
+                // 低延迟：初始带宽给足（15M），跳过从低码率爬坡的过程（爬坡期画面模糊且延迟偏高）
                 try {
-                    peerConnection?.setBitrate(4_000_000, 12_000_000, 25_000_000)
-                    Log.d(TAG, "已设置初始带宽 4/12/25 Mbps")
+                    peerConnection?.setBitrate(4_000_000, 15_000_000, 25_000_000)
+                    Log.d(TAG, "已设置初始带宽 4/15/25 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
