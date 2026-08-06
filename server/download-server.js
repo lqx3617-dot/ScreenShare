@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "图标改版：\n独家 logo 居中——两块手机屏幕以斜向对称构图，中间发光光束连接，屏幕共享主题更鲜明突出",
+  changelog: "UI 科技感改版：\n深空黑蓝紫渐变背景 + 霓虹青主色\n卡片改为深色半透明 + 青色发光描边；创建房间/加入会议按钮改为霓虹渐变发光\n状态点带光晕，整体更有科技氛围",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "图标改版（居中独家 logo）",
+    note: "UI 科技感改版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

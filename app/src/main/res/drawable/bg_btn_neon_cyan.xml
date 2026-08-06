@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 霓虹青渐变主按钮（创建房间）：青色渐变 + 外发光 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 外发光光圈 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="18dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#3300E5FF"
+                android:endColor="#0000E5FF" />
+        </shape>
+    </item>
+    <!-- 主体渐变，内缩形成光边 -->
+    <item
+        android:left="2dp"
+        android:top="2dp"
+        android:right="2dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#FF00E5FF"
+                android:endColor="#FF4D9EFF" />
+        </shape>
+    </item>
+</layer-list>

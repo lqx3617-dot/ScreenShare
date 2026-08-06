@@ -34,7 +34,7 @@
                 android:layout_height="wrap_content"
                 android:text="检查更新"
                 android:textSize="14sp"
-                android:textColor="@color/accent"
+                android:textColor="@color/neon_cyan"
                 android:padding="8dp" />
         </LinearLayout>
 
@@ -64,7 +64,7 @@
                 android:layout_weight="1"
                 android:text="准备就绪"
                 android:textSize="15sp"
-                android:textColor="#FF111827"
+                android:textColor="@color/text_primary"
                 android:textStyle="bold" />
 
             <TextView
@@ -74,13 +74,13 @@
                 android:text="60帧"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                android:textColor="#FF111827"
+                android:textColor="@color/text_primary"
                 android:gravity="center"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
                 android:paddingTop="6dp"
                 android:paddingBottom="6dp"
-                android:background="@drawable/bg_glass"
+                android:background="@drawable/bg_fullscreen_btn"
                 android:layout_marginStart="8dp"
                 android:visibility="gone" />
 
@@ -91,13 +91,13 @@
                 android:text="麦克风"
                 android:textSize="13sp"
                 android:textStyle="bold"
-                android:textColor="#FF111827"
+                android:textColor="@color/text_primary"
                 android:gravity="center"
                 android:paddingStart="14dp"
                 android:paddingEnd="14dp"
                 android:paddingTop="6dp"
                 android:paddingBottom="6dp"
-                android:background="@drawable/bg_glass"
+                android:background="@drawable/bg_fullscreen_btn"
                 android:layout_marginStart="8dp"
                 android:visibility="gone" />
         </LinearLayout>
@@ -111,7 +111,7 @@
             android:layout_marginStart="20dp"
             android:layout_marginEnd="20dp"
             android:visibility="gone"
-            android:background="#FF000000"
+            android:background="@drawable/bg_video_frame"
             android:clipChildren="false">
 
         </FrameLayout>
@@ -193,7 +193,7 @@
                 android:layout_height="wrap_content"
                 android:text="快速会议"
                 android:textSize="13sp"
-                android:textColor="#FF374151"
+                android:textColor="@color/neon_cyan"
                 android:textStyle="bold"
                 android:layout_marginBottom="12dp" />
 
@@ -205,13 +205,13 @@
                 android:textSize="15sp"
                 android:textAllCaps="false"
                 android:textStyle="bold"
-                android:background="@drawable/bg_glass"
-                android:textColor="#FF12865C" />
+                android:background="@drawable/bg_btn_neon_cyan"
+                android:textColor="#FF07202B" />
 
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#1A000000"
+                android:background="@color/divider_neon"
                 android:layout_marginTop="12dp"
                 android:layout_marginBottom="12dp" />
 
@@ -220,7 +220,7 @@
                 android:layout_height="wrap_content"
                 android:text="加入会议"
                 android:textSize="13sp"
-                android:textColor="#FF374151"
+                android:textColor="@color/neon_blue"
                 android:textStyle="bold"
                 android:layout_marginBottom="12dp" />
 
@@ -232,8 +232,8 @@
                 android:textSize="15sp"
                 android:textAllCaps="false"
                 android:textStyle="bold"
-                android:background="@drawable/bg_glass"
-                android:textColor="#FF1A5FC7" />
+                android:background="@drawable/bg_btn_neon_violet"
+                android:textColor="#FF0A0D26" />
         </LinearLayout>
 
         <!-- 会议号提示 / 诊断信息 -->
@@ -260,8 +260,8 @@
             android:textSize="16sp"
             android:textAllCaps="false"
             android:textStyle="bold"
-            android:background="@drawable/bg_glass"
-            android:textColor="#FFD13232"
+            android:background="@drawable/bg_btn_neon_red"
+            android:textColor="#FFFFE4E4"
             android:enabled="false"
             android:visibility="gone" />
 
@@ -373,7 +373,6 @@
         android:visibility="gone"
         android:background="#FF000000"
         android:elevation="10dp">
-
         <TextView
             android:id="@+id/btnExitFullscreen"
             android:layout_width="wrap_content"

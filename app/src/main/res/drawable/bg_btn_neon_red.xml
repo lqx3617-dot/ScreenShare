@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 霓虹红渐变按钮（停止共享）：红色渐变 + 外发光 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 外发光光圈 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="18dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#33FF6B6B"
+                android:endColor="#00FF6B6B" />
+        </shape>
+    </item>
+    <!-- 主体渐变，内缩形成光边 -->
+    <item
+        android:left="2dp"
+        android:top="2dp"
+        android:right="2dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#FFFF6B8A"
+                android:endColor="#FFE64545" />
+        </shape>
+    </item>
+</layer-list>
