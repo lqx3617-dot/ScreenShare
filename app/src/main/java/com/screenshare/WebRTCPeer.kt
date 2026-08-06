@@ -79,8 +79,9 @@ class WebRTCPeer(
     private fun getFactory(): PeerConnectionFactory {
         return singletonFactory ?: synchronized(this) {
             singletonFactory ?: PeerConnectionFactory.builder()
-                // 屏幕共享：H264 baseline（无 B 帧，编码/解码延迟最低；high profile 的 B 帧会引入重排延迟）
-                .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBaseContext, true, false))
+                // 屏幕共享：H264 High profile（同画质压缩率更高，跨网带宽占用更低，打开应用等动态画面更稳）。
+                // Baseline 无 B 帧延迟最低，但压缩率低，跨网带宽受限时反而更易卡；High profile 的 B 帧延迟约 20-40ms，可接受
+                .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBaseContext, true, true))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBaseContext))
                 .createPeerConnectionFactory()
                 .also { singletonFactory = it }

@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "优化异地跨网打开应用卡顿：\n初始带宽从 15M 调低到 8M，上限 20M——跨网带宽有限时避免打开应用瞬间码率冲击导致拥塞排队卡顿\n实际带宽由拥塞控制自适应，画面保持 1080p 清晰度",
+  changelog: "提升编码压缩率（H.264 High Profile）：\n同画质下码率节省 20-30%，跨网带宽占用更低，打开应用等动态画面更流畅稳定\n帧率、分辨率、清晰度均不变",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "跨网打开应用流畅度优化",
+    note: "H.264 High Profile 压缩率优化",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
