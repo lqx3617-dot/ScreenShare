@@ -472,9 +472,9 @@ class WebRTCPeer(
                 videoSender = rtp
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
-                    // 1080p 屏幕共享：25Mbps 上限保障动态内容（打开应用/滚动）编码预算充足，
-                    // 避免 MAINTAIN_RESOLUTION 在预算不足时临时降帧率导致卡顿；min 4M 留弱网余量
-                    enc.maxBitrateBps = 25_000_000
+                    // 1080p 屏幕共享：20Mbps 上限覆盖动态内容编码预算，minBitrate 4M 兜底。
+                    // 上限不过高可让拥塞控制在跨网场景更快稳定，避免打开应用瞬间码率冲击导致排队卡顿
+                    enc.maxBitrateBps = 20_000_000
                     enc.minBitrateBps = 4_000_000
                     enc.maxFramerate = 30
                     // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
@@ -488,10 +488,11 @@ class WebRTCPeer(
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 低延迟：初始带宽给足（15M），跳过从低码率爬坡的过程（爬坡期画面模糊且延迟偏高）
+                // 低延迟：初始带宽 8M——跨网场景下给足而非冒进，避免打开应用时瞬间拥塞导致卡顿；
+                // 实际带宽由拥塞控制自适应调整
                 try {
-                    peerConnection?.setBitrate(4_000_000, 15_000_000, 25_000_000)
-                    Log.d(TAG, "已设置初始带宽 4/15/25 Mbps")
+                    peerConnection?.setBitrate(4_000_000, 8_000_000, 20_000_000)
+                    Log.d(TAG, "已设置初始带宽 4/8/20 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
