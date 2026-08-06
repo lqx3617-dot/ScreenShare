@@ -1266,6 +1266,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         // 常驻 renderer 已就绪，只切换可见性，切换几乎瞬时
         binding.flFullscreen.visibility = View.VISIBLE
+        // 全屏时才接收视频帧（避免与主预览双 renderer 同时渲染导致卡顿）
+        bindFullscreenSink()
 
         // 隐藏所有其他 UI
         binding.llTitle.visibility = View.GONE
@@ -1354,8 +1356,27 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 runOnUiThread { applyModeScale() }
             }
         }
-        track.addSink(fullscreenSink!!)
-        Log.d(TAG, "全屏 renderer 已常驻就绪")
+        // 不预先 addSink：主预览与全屏两个 renderer 同时渲染会双倍消耗解码/渲染资源导致卡顿。
+        // 全屏进入时才 addSink 接收帧（enterFullscreen），退出全屏时 removeSink。
+        fullscreenSinkReady = true
+        Log.d(TAG, "全屏 renderer 已常驻就绪（待全屏时接收帧）")
+    }
+
+    /** 全屏 renderer 是否已绑定视频流（进入全屏时绑定，退出时解绑） */
+    private var fullscreenSinkReady = false
+
+    private fun bindFullscreenSink() {
+        val track = remoteVideoTrack ?: return
+        if (fullscreenSinkReady && fullscreenSink != null) {
+            track.addSink(fullscreenSink!!)
+        }
+    }
+
+    private fun unbindFullscreenSink() {
+        val track = remoteVideoTrack ?: return
+        fullscreenSink?.let { sink ->
+            track.removeSink(sink)
+        }
     }
 
     /** 退出全屏：恢复 UI 和竖屏（renderer 保持常驻，仅隐藏叠加层） */
@@ -1367,6 +1388,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         // 隐藏但不销毁 renderer（INVISIBLE 保留 surface，再次进入全屏瞬时切换）
         binding.flFullscreen.visibility = View.INVISIBLE
+        // 退出全屏即停止全屏 renderer 接收帧，主预览恢复单 renderer 渲染
+        unbindFullscreenSink()
 
         // 恢复 UI（根据当前状态显示应显示的）
         binding.llTitle.visibility = View.VISIBLE

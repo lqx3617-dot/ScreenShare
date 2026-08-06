@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "优化屏幕共享流畅度（保持 1080p 画质）：\n码率上限提升到 25Mbps，动态内容（打开应用/滚动）编码预算充足，不再因预算不足临时降帧率\n初始带宽直接给足 15Mbps，跳过码率爬坡期，画面更快稳定",
+  changelog: "修复画面不流畅（观看端双渲染问题）：\n全屏观看 renderer 此前常驻接收视频帧，与主画面形成双路同时渲染，双倍消耗解码/渲染资源导致卡顿\n现在仅在进入全屏时才接收帧，退出后恢复单路渲染，画面更流畅",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "屏幕共享流畅度优化",
+    note: "修复画面不流畅（双渲染）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
