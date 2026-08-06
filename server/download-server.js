@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "提升编码压缩率（H.264 High Profile）：\n同画质下码率节省 20-30%，跨网带宽占用更低，打开应用等动态画面更流畅稳定\n帧率、分辨率、清晰度均不变",
+  changelog: "新增应用图标：\n设计贴合屏幕共享主题（两块手机屏幕 + 连接光束），替换系统默认图标\nAndroid 8+ 使用自适应图标，更美观统一",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "H.264 High Profile 压缩率优化",
+    note: "新增应用图标",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

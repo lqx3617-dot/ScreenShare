@@ -19,4 +19,7 @@
 
     <!-- 分割线/边框 -->
     <color name="divider">#FF2E3442</color>
+
+    <!-- 应用图标背景 -->
+    <color name="ic_launcher_background">#4F46E5</color>
 </resources>
