@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复远程控制点击打不开应用：\n点击不再经过按下长手势，改为按下后延迟判定手势类型——快速抬起发送干净的单次点击（50ms）、按住 500ms 触发长按、有移动才进入滑动\n应用图标/按钮点击可靠生效",
+  changelog: "优化远程控制流畅度与跟手性：\n滑动注入频率降至约15fps、手势时长加大到120ms减少替换抖动，缓解打开应用时画面卡顿\n滑动轨迹自动抽稀到最多20个关键点，报文变小、手势注入更平稳",
   forced: false,
 };
 
@@ -36,7 +36,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "美化加入会议弹窗（液态玻璃风格）",
+    note: "远程控制流畅度与跟手性优化",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

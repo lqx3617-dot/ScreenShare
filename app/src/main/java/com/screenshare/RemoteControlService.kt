@@ -110,7 +110,7 @@ class RemoteControlService : AccessibilityService() {
             }
             "swipe" -> {
                 // 完整滑动路径：一次性注入 down→move…→up。
-                // 80ms 短时长：快速点击不触长按；MOVE 阶段 50ms 节流高频替换实现实时跟手
+                // 120ms 时长 + 观看方 66ms 节流：手势持续更久、替换间隙更少，动画更平稳不卡屏
                 val arr = json.optJSONArray("points") ?: return
                 if (arr.length() == 0) return
                 val path = Path()
@@ -126,7 +126,7 @@ class RemoteControlService : AccessibilityService() {
                         path.lineTo(px, py)
                     }
                 }
-                dispatchStroke(path, 80L)
+                dispatchStroke(path, 120L)
                 touching = false
             }
             "up" -> {

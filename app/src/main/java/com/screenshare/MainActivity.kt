@@ -307,8 +307,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
                     lastCtrlSend = SystemClock.uptimeMillis()
                 }
+                // 66ms 节流（约 15fps 注入）：降频避免高频手势替换导致动画卡顿
                 val now = SystemClock.uptimeMillis()
-                if (now - lastCtrlSend >= 50) {
+                if (now - lastCtrlSend >= 66) {
                     lastCtrlSend = now
                     p.sendControl(buildSwipe())
                 }
@@ -334,13 +335,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
-    /** 由累积轨迹构建完整滑动指令（共享方一次性注入完整 down→move→up） */
+    /** 由累积轨迹构建完整滑动指令；抽稀到最多 20 个关键点（保留起点/终点）以减小报文并让手势注入更平稳 */
     private fun buildSwipe(): String {
+        val src = ctrlPoints
+        val pts: List<FloatArray> = if (src.size <= 20) src else {
+            val step = src.size - 1
+            ArrayList<FloatArray>(21).apply {
+                for (i in 0..20) add(src[(i * step / 20).coerceIn(0, src.size - 1)])
+            }
+        }
         val sb = StringBuilder()
         sb.append("{\"type\":\"touch\",\"action\":\"swipe\",\"points\":[")
-        for (i in ctrlPoints.indices) {
+        for (i in pts.indices) {
             if (i > 0) sb.append(',')
-            sb.append('[').append(ctrlPoints[i][0]).append(',').append(ctrlPoints[i][1]).append(']')
+            sb.append('[').append(pts[i][0]).append(',').append(pts[i][1]).append(']')
         }
         sb.append("]}")
         return sb.toString()
