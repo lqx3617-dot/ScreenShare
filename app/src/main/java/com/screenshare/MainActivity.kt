@@ -14,6 +14,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.graphics.RenderEffect
@@ -126,6 +127,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // 控制模式触摸轨迹累积（down 起点 → 各 move 点），抬手时打包为完整滑动指令
     private val ctrlPoints = ArrayList<FloatArray>()
+
+    // 滑动实时跟手节流：MOVE 阶段每 50ms 发送一次完整路径
+    private var lastCtrlSend = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -282,11 +286,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 ctrlPoints.clear()
                 ctrlPoints.add(floatArrayOf(nx, ny))
                 ctrlDownSent = true
+                lastCtrlSend = SystemClock.uptimeMillis()
                 p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$nx,\"ny\":$ny}")
             }
             "move" -> {
                 if (!ctrlDownSent) return
                 ctrlPoints.add(floatArrayOf(nx, ny))
+                // 50ms 节流发送完整路径，实时跟手（抬手时还有最终一次）
+                val now = SystemClock.uptimeMillis()
+                if (now - lastCtrlSend >= 50) {
+                    lastCtrlSend = now
+                    p.sendControl(buildSwipe())
+                }
             }
             "up" -> {
                 if (!ctrlDownSent) return
