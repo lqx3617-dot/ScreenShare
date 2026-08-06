@@ -49,6 +49,11 @@ class RemoteControlService : AccessibilityService() {
 
     private var screenW = 0
     private var screenH = 0
+
+    // 触摸会话状态：上次手势坐标 + 手指是否按下
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var touching = false
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -83,14 +88,44 @@ class RemoteControlService : AccessibilityService() {
         val nx = json.optDouble("nx", 0.5).toFloat()
         val ny = json.optDouble("ny", 0.5).toFloat()
         if (screenW <= 0 || screenH <= 0) return
-        val (x, y) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
+        val (px, py) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
+        val x = px.toFloat()
+        val y = py.toFloat()
         val action = json.optString("action", "up")
-        val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
-        // 所有动作都用极短时长：触点位置由观看方高频 MOVE 驱动连续跳变，比长时手势更跟手
-        val stroke = GestureDescription.StrokeDescription(path, 0, 1L)
+        when (action) {
+            "down" -> {
+                lastTouchX = x
+                lastTouchY = y
+                touching = true
+                // 手指按下并持续保持（长 stroke，被后续 move 替换时不会提前抬起）
+                dispatchStroke(pathTo(x, y), 2000L)
+            }
+            "move" -> {
+                if (!touching) return
+                // 增量路径：从上一点到当前点，保持手指按下连续滑动
+                dispatchStroke(pathTo(lastTouchX, lastTouchY, x, y), 2000L)
+                lastTouchX = x
+                lastTouchY = y
+            }
+            "up" -> {
+                if (!touching) return
+                // 增量移动到终点后自然抬起
+                dispatchStroke(pathTo(lastTouchX, lastTouchY, x, y), 2000L)
+                touching = false
+            }
+        }
+    }
+
+    private fun pathTo(x: Float, y: Float): Path = Path().apply { moveTo(x, y) }
+
+    private fun pathTo(x1: Float, y1: Float, x2: Float, y2: Float): Path =
+        Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
+
+    private fun dispatchStroke(path: Path, duration: Long) {
+        val stroke = GestureDescription.StrokeDescription(path, 0, duration)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         if (!dispatchGesture(gesture, null, null)) {
-            Log.w(TAG, "dispatchGesture 失败: action=$action x=$x y=$y")
+            Log.w(TAG, "dispatchGesture 失败")
         }
     }
 

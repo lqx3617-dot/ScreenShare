@@ -114,101 +114,6 @@
             android:background="#FF000000"
             android:clipChildren="false">
 
-            <LinearLayout
-                android:id="@+id/llVideoBtns"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="top|end"
-                android:layout_margin="10dp"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/btnRemoteControl"
-                    android:layout_width="52dp"
-                    android:layout_height="44dp"
-                    android:gravity="center"
-                    android:text="远程控制"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:background="@drawable/bg_fullscreen_btn"
-                    android:visibility="gone" />
-
-                <LinearLayout
-                    android:id="@+id/llCtrlKeys"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:background="@drawable/bg_fullscreen_btn"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:id="@+id/btnCtrlBack"
-                        android:layout_width="wrap_content"
-                        android:layout_height="44dp"
-                        android:gravity="center"
-                        android:text="返回"
-                        android:textSize="12sp"
-                        android:textColor="#FFFFFFFF"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp" />
-
-                    <TextView
-                        android:id="@+id/btnCtrlHome"
-                        android:layout_width="wrap_content"
-                        android:layout_height="44dp"
-                        android:gravity="center"
-                        android:text="主页"
-                        android:textSize="12sp"
-                        android:textColor="#FFFFFFFF"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp" />
-
-                    <TextView
-                        android:id="@+id/btnCtrlRecents"
-                        android:layout_width="wrap_content"
-                        android:layout_height="44dp"
-                        android:gravity="center"
-                        android:text="最近"
-                        android:textSize="12sp"
-                        android:textColor="#FFFFFFFF"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/btnCtrlText"
-                    android:layout_width="52dp"
-                    android:layout_height="44dp"
-                    android:gravity="center"
-                    android:text="文本"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:background="@drawable/bg_fullscreen_btn"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/btnAspectToggle"
-                    android:layout_width="52dp"
-                    android:layout_height="44dp"
-                    android:gravity="center"
-                    android:text="完整"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:background="@drawable/bg_fullscreen_btn"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/btnFullscreen"
-                    android:layout_width="52dp"
-                    android:layout_height="44dp"
-                    android:layout_marginTop="8dp"
-                    android:gravity="center"
-                    android:text="全屏"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:background="@drawable/bg_fullscreen_btn"
-                    android:visibility="gone" />
-            </LinearLayout>
         </FrameLayout>
 
         <!-- 共享方远程控制状态（仅共享方显示） -->
@@ -360,6 +265,104 @@
             android:enabled="false"
             android:visibility="gone" />
 
+    </LinearLayout>
+
+    <!-- 视频控制按钮（观看方）：置于根层，全屏时仍可见 -->
+    <LinearLayout
+        android:id="@+id/llVideoBtns"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="10dp"
+        android:elevation="20dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/btnRemoteControl"
+            android:layout_width="52dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="远程控制"
+            android:textSize="12sp"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/llCtrlKeys"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_fullscreen_btn"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/btnCtrlBack"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:gravity="center"
+                android:text="返回"
+                android:textSize="12sp"
+                android:textColor="#FFFFFFFF"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp" />
+
+            <TextView
+                android:id="@+id/btnCtrlHome"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:gravity="center"
+                android:text="主页"
+                android:textSize="12sp"
+                android:textColor="#FFFFFFFF"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp" />
+
+            <TextView
+                android:id="@+id/btnCtrlRecents"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:gravity="center"
+                android:text="最近"
+                android:textSize="12sp"
+                android:textColor="#FFFFFFFF"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/btnCtrlText"
+            android:layout_width="52dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="文本"
+            android:textSize="12sp"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/btnAspectToggle"
+            android:layout_width="52dp"
+            android:layout_height="44dp"
+            android:gravity="center"
+            android:text="完整"
+            android:textSize="12sp"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/btnFullscreen"
+            android:layout_width="52dp"
+            android:layout_height="44dp"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="全屏"
+            android:textSize="12sp"
+            android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn"
+            android:visibility="gone" />
     </LinearLayout>
 
     <!-- 全屏叠加层：在 FrameLayout 最外层，覆盖所有内容 -->

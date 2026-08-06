@@ -237,9 +237,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     /** 观看方：控制模式下单指触摸 → 归一化坐标 → 控制通道下发 */
-    private fun handleControlTouch(event: MotionEvent) {
+    private fun handleControlTouch(event: MotionEvent, renderer: SurfaceViewRenderer) {
         val p = peer ?: return
-        val renderer = videoRenderer ?: return
         if (lastFrameW <= 0 || lastFrameH <= 0) return
         val action = when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> "down"
@@ -1077,7 +1076,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         renderer.setOnTouchListener { v, event ->
             if (isControlMode && !isHost && event.pointerCount == 1) {
-                handleControlTouch(event)
+                handleControlTouch(event, renderer)
                 true
             } else {
                 scaleDetector.onTouchEvent(event)
@@ -1147,6 +1146,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llSignal.visibility = View.GONE
         binding.tvScanResult.visibility = View.GONE
         binding.btnStop.visibility = View.GONE
+        binding.btnFullscreen.visibility = View.GONE
 
         // 全屏跟随屏幕方向：竖屏竖着看、横屏横着看（不再强制横屏）
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
@@ -1206,8 +1206,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         fullscreenScaleDetector = scaleDetector
 
         renderer.setOnTouchListener { _, event ->
-            scaleDetector.onTouchEvent(event)
-            true
+            if (isControlMode && !isHost && event.pointerCount == 1) {
+                handleControlTouch(event, renderer)
+                true
+            } else {
+                scaleDetector.onTouchEvent(event)
+                true
+            }
         }
 
         fullscreenSink = VideoSink { frame ->
@@ -1240,6 +1245,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (remoteVideoTrack != null) {
             binding.flRemoteVideo.visibility = View.VISIBLE
             binding.tvZoomHint.visibility = View.VISIBLE
+            binding.btnFullscreen.visibility = View.VISIBLE
         }
         binding.llSignal.visibility = View.VISIBLE
         if (peer != null) {

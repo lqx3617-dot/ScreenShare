@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "优化远程控制触控延迟：\n观看方触摸指令改为内联坐标计算+紧凑报文，消除每帧 JSON 对象开销\n共享方去除主线程排队，直接在数据通道线程执行手势注入，触控更跟手",
+  changelog: "修复远程控制无法滑动 + 全屏模式支持控制：\n触摸改为增量路径手势（按下→连续滑动→抬起），滑动/拖动可正常识别\n控制按钮移至全屏层之上，全屏观看时仍可远程控制与切换系统键",
   forced: false,
 };
 
