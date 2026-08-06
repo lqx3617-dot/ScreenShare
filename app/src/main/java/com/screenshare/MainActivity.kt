@@ -190,8 +190,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
-        if (uri.scheme != "screenshare" || uri.host != "join") return
-        val code = uri.getQueryParameter("code")?.trim() ?: ""
+        if (uri.scheme != "screenshare") return
+        // 兼容不同浏览器解析：intent:// 唤起时部分解析会把 query 并入 host，
+        // 因此先从 query 取，取不到再从完整字符串兜底提取
+        val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: Regex("code=([0-9]{4})").find(uri.toString())?.groupValues?.get(1) ?: ""
         if (!Regex("^[0-9]{4}$").matches(code)) {
             Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
             return

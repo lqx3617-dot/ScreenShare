@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "新增分享链接加入会议：\n共享方创建会议后点【分享链接】，通过系统分享面板发送含会议号的链接\n观看方点击链接自动唤起 App 并加入，无需手动输入会议号；未安装 App 时打开链接可看到会议号并下载",
+  changelog: "修复分享链接不唤起 App：\n网页改为 intent:// 官方唤起方式并加备用链接，提升 Android 唤起成功率\nApp 端兼容多种浏览器解析方式，链接唤起更可靠",
   forced: false,
 };
 
@@ -34,10 +34,11 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 .btn{display:block;background:#4f46e5;color:#fff;text-decoration:none;font-size:16px;font-weight:600;border-radius:12px;padding:14px 0;margin-bottom:12px}
 .btn.ghost{background:#fff;color:#4f46e5;border:1px solid #e5e7eb}
 .hint{color:#9ca3af;font-size:12px;line-height:1.6;margin-top:16px}
-</style></head><body><div class="card"><div class="logo">🖥️</div><div class="title">ScreenShare 屏幕共享</div><div class="sub">对方邀请你观看屏幕</div><div class="code">${code}</div>
-<a class="btn" href="screenshare://join?code=${code}">打开 App 加入</a>
+</style></head><body><div class="card"><div class="logo">🖥</div><div class="title">ScreenShare 屏幕共享</div><div class="sub">对方邀请你观看屏幕</div><div class="code">${code}</div>
+<a class="btn" href="intent://join?code=${code}#Intent;scheme=screenshare;package=com.screenshare;end">打开 App 加入</a>
+<a class="btn ghost" href="screenshare://join?code=${code}">备用：直接用链接唤起</a>
 <a class="btn ghost" href="./ScreenShare-allarch-signed.apk">下载 ScreenShare App</a>
-<div class="hint">已安装：点击上方「打开 App 加入」自动进入<br>未安装：先下载安装，再回来点击「打开 App 加入」</div></div></body></html>`;
+<div class="hint">建议使用系统浏览器（Chrome）打开本页，点击「打开 App 加入」自动唤起<br>若未唤起：请确认已安装最新版 App；也可以记住上方会议号，在 App 内手动输入加入</div></div></body></html>`;
 }
 
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
@@ -59,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "分享链接加入会议",
+    note: "修复分享链接唤起",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
