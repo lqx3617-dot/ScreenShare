@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复远程控制「对方未开启无障碍」误报：观看方不再检查本机无障碍状态，改为依赖共享方回执判定\n共享方已开启无障碍服务后，观看方控制操作将正常下发",
+  changelog: "优化远程控制触控延迟：\n观看方触摸指令改为内联坐标计算+紧凑报文，消除每帧 JSON 对象开销\n共享方去除主线程排队，直接在数据通道线程执行手势注入，触控更跟手",
   forced: false,
 };
 

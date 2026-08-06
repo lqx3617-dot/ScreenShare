@@ -247,14 +247,25 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> "up"
             else -> return
         }
-        // isFitMode=true(完整) → fit 有黑边；false(铺满) → crop 无黑边
-        val norm = CoordinateMapper.normalizeTouch(
-            event.x, event.y,
-            renderer.width.toFloat(), renderer.height.toFloat(),
-            lastFrameW, lastFrameH,
-            crop = !isFitMode
-        )
-        if (norm == null) {
+        // 内联坐标映射（避免每帧 JSONObject/FloatArray 分配，降低触摸延迟）
+        val crop = !isFitMode
+        val rw = renderer.width.toFloat()
+        val rh = renderer.height.toFloat()
+        val vw = lastFrameW.toFloat()
+        val vh = lastFrameH.toFloat()
+        var left = 0f; var top = 0f; var right = rw; var bottom = rh
+        if (!crop) {
+            val scale = minOf(rw / vw, rh / vh)
+            val cw = vw * scale
+            val ch = vh * scale
+            left = (rw - cw) / 2f
+            top = (rh - ch) / 2f
+            right = left + cw
+            bottom = top + ch
+        }
+        val x = event.x
+        val y = event.y
+        if (x < left || x > right || y < top || y > bottom) {
             // 黑边区域：down 不产生指令，已有 down 提前结束（up）
             if (action == "down") ctrlDownSent = false
             return
@@ -262,16 +273,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (action == "move" && !ctrlDownSent) return
         if (action == "down") ctrlDownSent = true
         if (action == "up") ctrlDownSent = false
-        try {
-            p.sendControl(org.json.JSONObject()
-                .put("type", "touch")
-                .put("action", action)
-                .put("nx", norm[0])
-                .put("ny", norm[1])
-                .toString())
-        } catch (t: Throwable) {
-            Log.e(TAG, "发送触摸指令失败: ${t.message}")
-        }
+        val nx = ((x - left) / (right - left)).coerceIn(0f, 1f)
+        val ny = ((y - top) / (bottom - top)).coerceIn(0f, 1f)
+        p.sendControl("{\"type\":\"touch\",\"action\":\"$action\",\"nx\":$nx,\"ny\":$ny}")
     }
 
     /** 观看方：接收共享方回发的控制状态提示 */

@@ -4,8 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -43,15 +41,14 @@ class RemoteControlService : AccessibilityService() {
         fun handle(json: JSONObject): Boolean {
             val svc = instance ?: return false
             if (!controlEnabled) return false
-            svc.mainHandler.post { svc.dispatch(json) }
+            // dispatchGesture 不要求主线程，直接在当前线程执行以降低触摸延迟
+            svc.dispatch(json)
             return true
         }
     }
 
-    private val mainHandler = Handler(Looper.getMainLooper())
     private var screenW = 0
     private var screenH = 0
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -89,8 +86,8 @@ class RemoteControlService : AccessibilityService() {
         val (x, y) = CoordinateMapper.toScreenPx(nx, ny, screenW, screenH)
         val action = json.optString("action", "up")
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
-        val duration = if (action == "move") 16L else 1L
-        val stroke = GestureDescription.StrokeDescription(path, 0, duration)
+        // 所有动作都用极短时长：触点位置由观看方高频 MOVE 驱动连续跳变，比长时手势更跟手
+        val stroke = GestureDescription.StrokeDescription(path, 0, 1L)
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         if (!dispatchGesture(gesture, null, null)) {
             Log.w(TAG, "dispatchGesture 失败: action=$action x=$x y=$y")
