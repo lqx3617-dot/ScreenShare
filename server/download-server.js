@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "优化远程控制流畅度与跟手性：\n滑动注入频率降至约15fps、手势时长加大到120ms减少替换抖动，缓解打开应用时画面卡顿\n滑动轨迹自动抽稀到最多20个关键点，报文变小、手势注入更平稳",
+  changelog: "优化视频延迟与跟手性：\n接收端启用低延迟 jitter buffer（WebRTC-JitterBufferTargetDelay），画面帧送达更快\n控制通道改为部分可靠传输（无序+最多重传1次），网络抖动时手势指令不再排队阻塞，实时跟手\n码率下限降至4Mbps，弱网时拥塞控制有下降余量，避免强撑高清导致排队延迟升高",
   forced: false,
 };
 
@@ -36,7 +36,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "远程控制流畅度与跟手性优化",
+    note: "视频低延迟与跟手性优化",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

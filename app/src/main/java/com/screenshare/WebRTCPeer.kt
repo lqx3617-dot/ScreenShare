@@ -67,7 +67,8 @@ class WebRTCPeer(
                     .setFieldTrials(
                         "WebRTC-MinimizeResamplingOnMobileVideoBitrateChange/Enabled/" +
                             "WebRTC-VideoHwDecoding/Enabled/" +
-                            "WebRTC-FrameDropper/Enabled/"
+                            "WebRTC-FrameDropper/Enabled/" +
+                            "WebRTC-JitterBufferTargetDelay/Enabled/"
                     )
                     .createInitializationOptions()
             )
@@ -78,7 +79,7 @@ class WebRTCPeer(
     private fun getFactory(): PeerConnectionFactory {
         return singletonFactory ?: synchronized(this) {
             singletonFactory ?: PeerConnectionFactory.builder()
-                // 屏幕共享：H264 high profile 提升压缩效率（同码率画质更好）
+                // 屏幕共享：H264 baseline（无 B 帧，编码/解码延迟最低；high profile 的 B 帧会引入重排延迟）
                 .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBaseContext, true, false))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBaseContext))
                 .createPeerConnectionFactory()
@@ -346,7 +347,12 @@ class WebRTCPeer(
     fun createControlChannel(): DataChannel? {
         val pc = peerConnection ?: return null
         try {
-            val init = DataChannel.Init().apply { ordered = true }
+            // 部分可靠：无序 + 最多重传1次。丢包不阻塞后续手势指令（swipe 为完整路径，丢失可由下一指令覆盖），
+            // 网络抖动时依然保持跟手；tap/key 等低频指令丢失概率极低
+            val init = DataChannel.Init().apply {
+                ordered = false
+                maxRetransmits = 1
+            }
             val dc = pc.createDataChannel(CONTROL_LABEL, init)
             controlChannel = dc
             registerControlObserver(dc)
@@ -469,8 +475,9 @@ class WebRTCPeer(
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
                     // 高清屏幕共享：25Mbps 上限保障清晰度，弱网时拥塞控制自动降速
+                    // minBitrate 4M：留出拥塞控制下降余量，避免强撑高清导致排队延迟升高
                     enc.maxBitrateBps = 25_000_000
-                    enc.minBitrateBps = 6_000_000
+                    enc.minBitrateBps = 4_000_000
                     enc.maxFramerate = 30
                     // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
                     enc.networkPriority = 4
@@ -485,8 +492,8 @@ class WebRTCPeer(
                 rtp.parameters = params
                 // 低延迟：初始带宽直接给足（12M），跳过从低码率爬坡的过程（爬坡期画面模糊且延迟偏高）
                 try {
-                    peerConnection?.setBitrate(6_000_000, 12_000_000, 25_000_000)
-                    Log.d(TAG, "已设置初始带宽 6/12/25 Mbps")
+                    peerConnection?.setBitrate(4_000_000, 12_000_000, 25_000_000)
+                    Log.d(TAG, "已设置初始带宽 4/12/25 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
