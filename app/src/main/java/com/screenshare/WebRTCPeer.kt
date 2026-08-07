@@ -63,17 +63,17 @@ class WebRTCPeer(
             if (initialized) return
             PeerConnectionFactory.initialize(
                 PeerConnectionFactory.InitializationOptions.builder(appContext)
-                    // 低延迟 field trials：禁用延迟影响大的特性，加快帧送达
+                    // 低延迟 field trials（对照 SDK 144 源码逐一核验，只保留真实存在的配置）：
                     .setFieldTrials(
-                        "WebRTC-MinimizeResamplingOnMobileVideoBitrateChange/Enabled/" +
-                            "WebRTC-VideoHwDecoding/Enabled/" +
-                            "WebRTC-FrameDropper/Enabled/" +
-                            "WebRTC-JitterBufferTargetDelay/Enabled/" +
-                            // 基于丢包的拥塞控制：打开应用画面剧变时按丢包率快速降码率，
-                            // 比纯延迟估计收敛更快，减少丢包风暴（相比重传等待，直接降速更稳）
-                            "WebRTC-BweLossBasedControl/Enabled/" +
-                            // 平滑码率变化，避免丢包-降速-回升的抖动循环
-                            "WebRTC-BweLatencySmoothing/Enabled/"
+                        // jitter buffer 目标延迟控制：丢包重传会让接收端 jitter 估计膨胀，
+                        // 导致播放缓冲增大、画面滞后（"共享方动了观看方还卡住"）。
+                        // nack_limit 默认 3、nack_count_timeout 默认 60s：短时间内重传 3 帧就
+                        // 在 jitter 上加 RTT 惩罚放大缓冲。提高阈值（15/5s）让轻微丢包不放大缓冲，
+                        // 严重丢包仍触发惩罚降速保流畅
+                        "WebRTC-JitterEstimatorConfig/nack_limit:15,nack_count_timeout:5s/" +
+                            // 零播放延迟渲染：到达即渲染，配合低延迟渲染路径进一步压播放缓冲。
+                            // min_pacing 为解码最小帧间隔，默认 8ms 足够，显式声明避免默认值漂移
+                            "WebRTC-ZeroPlayoutDelay/min_pacing:8ms/"
                     )
                     .createInitializationOptions()
             )
