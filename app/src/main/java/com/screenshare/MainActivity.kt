@@ -1271,9 +1271,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // ======================== 全屏观看 ========================
 
+    /** 把子 View 安全地从一个父容器移动到另一个父容器（先移除再添加，避免 addView 抛 IllegalStateException） */
+    private fun moveView(view: View, target: ViewGroup, params: ViewGroup.LayoutParams) {
+        (view.parent as? ViewGroup)?.removeView(view)
+        target.addView(view, params)
+    }
+
     /** 进入全屏观看（切换到 flFullscreen 叠加层，跟随屏幕方向） */
-    private fun enterFullscreen() {
-        if (isFullscreen) return
+    private fun enterFullscreen() {        if (isFullscreen) return
         // 常驻 renderer 未就绪时现场补建
         if (fullscreenRenderer == null) prepareFullscreenRenderer()
         if (fullscreenRenderer == null) return
@@ -1303,7 +1308,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         )
         lp.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.START
         lp.setMargins(20, 0, 0, 30)
-        binding.flFullscreen.addView(binding.llVideoBtns, lp)
+        moveView(binding.llVideoBtns, binding.flFullscreen, lp)
         binding.llVideoBtns.visibility = View.VISIBLE
 
         // 全屏层按钮加大，便于操作（进入时放大，退出时恢复）
@@ -1317,7 +1322,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         )
         rlp.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
         rlp.setMargins(0, 0, 20, 30)
-        binding.flFullscreen.addView(binding.btnAspectToggle, rlp)
+        moveView(binding.btnAspectToggle, binding.flFullscreen, rlp)
 
         // 全屏跟随屏幕方向：竖屏竖着看、横屏横着看（不再强制横屏）
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
@@ -1450,7 +1455,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             )
             lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
             lp.setMargins(0, 0, 0, 0)
-            binding.flRemoteVideo.addView(binding.llVideoBtns, lp)
+            moveView(binding.llVideoBtns, binding.flRemoteVideo, lp)
 
             // 完整/铺满按钮移回视频框右上角
             binding.btnAspectToggle.visibility = View.VISIBLE
@@ -1460,7 +1465,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             )
             rlp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
             rlp.setMargins(0, 10, 10, 0)
-            binding.flRemoteVideo.addView(binding.btnAspectToggle, rlp)
+            moveView(binding.btnAspectToggle, binding.flRemoteVideo, rlp)
 
             // 恢复控制按钮原始尺寸
             restoreFullscreenButtons()

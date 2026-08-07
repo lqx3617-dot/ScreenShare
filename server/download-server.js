@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "全屏按钮放大并对齐：\n全屏下所有控制按钮加大（约 96×56dp、文字15sp），不再显得细小\n完整/铺满按钮在全屏下移入右下角，与左下控制按钮对齐，可随时切换画面比例\n退出全屏自动恢复原始尺寸",
+  changelog: "修复点击全屏闪退：\n进入/退出全屏移动控制按钮时改为先移除再添加，不再抛 IllegalStateException\n全屏按钮放大、完整/铺满按钮右下角切换等特性保留",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "全屏按钮放大对齐",
+    note: "修复全屏闪退",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
