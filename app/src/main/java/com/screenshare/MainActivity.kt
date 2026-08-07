@@ -1632,11 +1632,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
                             if (w > 0) "$w×$h" else "--"
                         }
-                        // 腾讯会议式弱网自适应：共享方按发送增量丢包率自动降质保流畅（v1.102）
+                        // 腾讯会议式弱网自适应：共享方按远端回报的发送丢包率自动降质保流畅（v1.103）
+                        // fractionLost 由 remote-inbound-rtp 直接给出（0~100），未上报为 -1 时走增量兜底
                         val outLost = json.optLong("outLost", 0)
                         val outSent = json.optLong("outSent", 0)
+                        val outLossPct = json.optDouble("outLossPct", -1.0)
                         if (isHostView) {
-                            peer?.adaptToNetwork(outSent, outLost)
+                            peer?.adaptToNetwork(outLossPct, outSent, outLost)
                         }
                         // 观看方丢包率：增量计算（上次统计到本次的新丢包 / 新接收总量），避免累计值不敏感
                         val lost = json.optLong("lost", 0)
@@ -1650,7 +1652,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             if (dLost > 0) " 丢包 $dLost (${"%.1f".format(lostPct)}%)" else " 丢包 0"
                         } else ""
                         lastStatsTime = now
-                        val text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$lostText"
+                        // 编码诊断（共享方）：SW=软件编码(CPU瓶颈) HW=硬件编码；瓶颈 cpu=编码跟不上 bandwidth=带宽受限 none=正常
+                        var encText = ""
+                        if (isHostView) {
+                            val impl = json.optString("encImpl", "")
+                            val limit = json.optString("qualityLimit", "")
+                            val encKind = if (impl.contains("SW", true) || impl.contains("OpenH264", true)) "软编" else if (impl.isNotEmpty()) "硬编" else ""
+                            val limitMap = mapOf("cpu" to "CPU瓶颈", "bandwidth" to "带宽受限", "none" to "正常")
+                            val limitText = limitMap[limit] ?: ""
+                            if (encKind.isNotEmpty() || limitText.isNotEmpty()) {
+                                encText = " 编码${encKind}${if (limitText.isNotEmpty()) "/$limitText" else ""}"
+                            }
+                        }
+                        val text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$encText$lostText"
                         val warn = !isHostView && lostPct >= 1.0
                         // UI 更新回主线程
                         binding.root.post {

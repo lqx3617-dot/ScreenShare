@@ -84,9 +84,10 @@ class WebRTCPeer(
     private fun getFactory(): PeerConnectionFactory {
         return singletonFactory ?: synchronized(this) {
             singletonFactory ?: PeerConnectionFactory.builder()
-                // 屏幕共享：H264 High profile（同画质压缩率更高，跨网带宽占用更低，打开应用等动态画面更稳）。
-                // Baseline 无 B 帧延迟最低，但压缩率低，跨网带宽受限时反而更易卡；High profile 的 B 帧延迟约 20-40ms，可接受
-                .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBaseContext, true, true))
+                // 屏幕共享：H264 硬件编码。v1.103 改 Baseline profile：部分中低端机型硬编不支持 High profile，
+                // 若协商失败会静默回退软件编码(1080p30 软编极吃 CPU，表现为"不管几个人都一直卡")，
+                // 用 Baseline 保证硬编可用；同画质码率略高但由弱网自适应补偿
+                .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBaseContext, true, false))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBaseContext))
                 .createPeerConnectionFactory()
                 .also { singletonFactory = it }
@@ -658,8 +659,13 @@ class WebRTCPeer(
                         var lost = 0L
                         var lostTotal = 0L
                         var nackCount = 0L
-                        var outLost = 0L
+                        // 共享方视角的发送丢包：SDK144 中 outbound-rtp 无 packetsLost 字段，
+                        // 必须从 remote-inbound-rtp（RTCP receiver report 回传）读取
                         var outSent = 0L
+                        var outLost = 0L
+                        var outLossPct = -1.0 // fractionLost：远端直接报告的丢包率 0~1，未上报时为 -1
+                        var outEncImpl = ""    // 编码器实现（判断软编/硬编：如 HWEncoder/H264 / SWEncoder）
+                        var outQualityLimit = "" // 编码瓶颈：cpu/bandwidth/none
                         val stats = report.statsMap
                         for ((_, s) in stats) {
                             when (s.type) {
@@ -677,9 +683,15 @@ class WebRTCPeer(
                                     outBytes += ((s.members["bytesSent"] as? Number)?.toDouble() ?: 0.0)
                                     outW = (s.members["frameWidth"] as? Number)?.toInt() ?: 0
                                     outH = (s.members["frameHeight"] as? Number)?.toInt() ?: 0
-                                    // 发送端丢包：outbound-rtp 的 packetsLost/packetsSent
-                                    outLost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
                                     outSent += (s.members["packetsSent"] as? Number)?.toLong() ?: 0L
+                                    outEncImpl = (s.members["encoderImplementation"] as? String) ?: ""
+                                    outQualityLimit = (s.members["qualityLimitationReason"] as? String) ?: ""
+                                }
+                                "remote-inbound-rtp" -> {
+                                    // 接收方经 RTCP 回报的丢包：packetsLost 累计值 + fractionLost 比例
+                                    outLost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
+                                    val frac = (s.members["fractionLost"] as? Number)?.toDouble()
+                                    if (frac != null && frac >= 0) outLossPct = frac * 100.0
                                 }
                                 "candidate-pair" -> {
                                     val active = s.members["nominated"]
@@ -707,6 +719,9 @@ class WebRTCPeer(
                             put("nack", nackCount)
                             put("outLost", outLost)
                             put("outSent", outSent)
+                            put("outLossPct", outLossPct)
+                            put("encImpl", outEncImpl)
+                            put("qualityLimit", outQualityLimit)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")
@@ -728,30 +743,34 @@ class WebRTCPeer(
     private var recoverTimer = 0
     private var lastAdaptDegradation: RtpParameters.DegradationPreference? = null
     private val adaptBitrateCaps = intArrayOf(15_000_000, 10_000_000, 7_000_000, 5_000_000, 3_000_000)
-    // 增量丢包统计（outbound-rtp 累计值做差，避免长期运行后弱网检测失效）
+    // 增量丢包统计兜底（fractionLost 未上报时用累计值做差估算）
     private var lastOutSentCum = 0L
     private var lastOutLostCum = 0L
     private var lastAdaptBitrateCap = 0
 
     /**
-     * 腾讯会议式弱网自适应（v1.101）：按发送增量丢包率动态调节码率上限与分辨率策略。
+     * 腾讯会议式弱网自适应（v1.103）：按远端回报的发送丢包率动态调节码率与分辨率策略。
      * - 丢包高（>=3%）：逐级降码率 + 切 MAINTAIN_FRAMERATE（保帧率降分辨率，画面流畅不卡顿）
      * - 丢包恢复（<1% 持续）：缓步回升码率 + 回 MAINTAIN_RESOLUTION（恢复高清晰度）
      * 由 MainActivity 统计线程周期调用（约 1.5s 一次）。
      *
+     * @param fractionLossPct remote-inbound-rtp.fractionLost 直接报告的丢包率 0~100，-1 表示未上报
      * @param outSentCum outbound-rtp packetsSent 累计值
-     * @param outLostCum outbound-rtp packetsLost 累计值
+     * @param outLostCum remote-inbound-rtp packetsLost 累计值
      */
-    fun adaptToNetwork(outSentCum: Long, outLostCum: Long) {
+    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
         val pc = peerConnection ?: return
         if (disposed) return
-        // 本采样周期新增丢包/发送量（做差），首个周期无差值则跳过
-        val dSent = outSentCum - lastOutSentCum
-        val dLost = outLostCum - lastOutLostCum
-        val sendLossPct = if (lastOutSentCum > 0 && dSent > 0) dLost * 100.0 / dSent else 0.0
+        // 丢包率：优先用 fractionLost（远端 RTCP 直接回报，实时准确）；未上报时用增量累计做差兜底
+        var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
+        if (fractionLossPct < 0 && lastOutSentCum > 0) {
+            val dSent = outSentCum - lastOutSentCum
+            val dLost = outLostCum - lastOutLostCum
+            if (dSent > 0) sendLossPct = dLost * 100.0 / dSent
+        }
         lastOutSentCum = outSentCum
         lastOutLostCum = outLostCum
-        // 阈值：周期丢包率 >=3% 视为弱网需降质，<1% 视为已恢复
+        // 阈值：丢包率 >=3% 视为弱网需降质，<1% 视为已恢复
         val level = when {
             sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1 // 最高档降质
             sendLossPct >= 3.0 -> 2
@@ -791,7 +810,7 @@ class WebRTCPeer(
                     val params = rtp.parameters
                     params.degradationPreference = degradation
                     rtp.parameters = params
-                    Log.d(TAG, "弱网自适应: 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
+                    Log.d(TAG, "弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "自适应切分辨率策略失败: ${t.message}")

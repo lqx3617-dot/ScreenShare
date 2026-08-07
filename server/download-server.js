@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "打开/加入应用时丢包严重、卡顿闪退：\n① 修复闪退——统计轮询从主线程移到后台线程：原实现在主线程同步等待 getStats 回调(最多阻塞500ms/次)，打开软件时编码负载高导致 UI 周期性卡死触发 ANR 闪退；现改为后台线程采集+主线程刷新，不再阻塞\n② 丢包率改增量计算——原用累计丢包数计算比例，运行越久越不敏感，弱网降质不触发；现按每个采样周期新增丢包/发送量计算，实时准确\n③ 弱网自动降质保流畅(腾讯会议模式)——共享方按发送增量丢包率自动调码率上限(15M→10M→7M→5M→3M)并优先保帧率降分辨率；网络恢复后逐步回升并恢复高清\n④ 新增崩溃日志采集——闪退堆栈自动上报信令服务器，便于持续定位真机问题",
+  changelog: "定位丢包严重、卡顿闪退：\n① 修复弱网降质从未触发的 Bug——SDK144 中 outbound-rtp 无 packetsLost 字段(源码核验)，旧代码读到的一直是 0；现改为从 remote-inbound-rtp 读取远端 RTCP 直接回报的丢包率 fractionLost，实时准确，弱网自动降质真正生效\n② H264 改 Baseline profile——部分中低端机型硬编不支持 High profile 会静默回退软件编码(1080p30 软编极吃 CPU，表现为不管人数多少都一直卡)；Baseline 保证硬编可用，画质由弱网自适应补偿\n③ 新增编码诊断——状态条显示'编码硬编/软编 + CPU瓶颈/带宽受限/正常'，可直接判断卡顿是编码跟不上还是网络不够",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复卡顿闪退，弱网自动降质保流畅",
+    note: "修复弱网降质失效+H264改Baseline防软编卡顿",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
