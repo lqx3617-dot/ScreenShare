@@ -480,9 +480,9 @@ class WebRTCPeer(
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
                     // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
-                    // 用 15M 上限 + 初始 6M：既覆盖 1080p 动态内容的编码预算，又避免冲击跨网带宽。
-                    enc.maxBitrateBps = 15_000_000
-                    enc.minBitrateBps = 3_000_000
+                    // 12M 上限 + 初始 5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
+                    enc.maxBitrateBps = 12_000_000
+                    enc.minBitrateBps = 1_500_000
                     enc.maxFramerate = 30
                     // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
                     enc.networkPriority = 4
@@ -495,11 +495,11 @@ class WebRTCPeer(
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 打开应用瞬间丢包高：初始带宽 6M 保守起步，由拥塞控制按丢包率自适应爬升，
+                // 打开应用瞬间丢包高：初始带宽 5M 保守起步，由拥塞控制按丢包率自适应爬升，
                 // 避免启动即冲击导致瞬间拥塞卡顿
                 try {
-                    peerConnection?.setBitrate(3_000_000, 6_000_000, 15_000_000)
-                    Log.d(TAG, "已设置初始带宽 3/6/15 Mbps")
+                    peerConnection?.setBitrate(1_500_000, 5_000_000, 12_000_000)
+                    Log.d(TAG, "已设置初始带宽 1.5/5/12 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
@@ -742,7 +742,7 @@ class WebRTCPeer(
     private var curAdaptLevel = 0
     private var recoverTimer = 0
     private var lastAdaptDegradation: RtpParameters.DegradationPreference? = null
-    private val adaptBitrateCaps = intArrayOf(15_000_000, 10_000_000, 7_000_000, 5_000_000, 3_000_000)
+    private val adaptBitrateCaps = intArrayOf(12_000_000, 9_000_000, 6_000_000, 4_000_000, 2_500_000)
     // 增量丢包统计兜底（fractionLost 未上报时用累计值做差估算）
     private var lastOutSentCum = 0L
     private var lastOutLostCum = 0L

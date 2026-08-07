@@ -9,6 +9,11 @@
 .externalNativeBuild
 .cxx
 
+# Android 签名保护：防止 release 密钥上传
+*.jks
+*.keystore
+keystore.properties
+
 # 签名产物与临时构建目录
 /ScreenShare-allarch-signed.apk
 /ScreenShare-allarch-signed.apk.aligned
