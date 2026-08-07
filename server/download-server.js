@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复按键重叠：\n共享方「远程控制状态」条上移到停止按钮上方，不再与停止按钮重叠\n观看方控制按钮列统一宽度（64dp），文字显示更完整",
+  changelog: "控制按钮移入视频框：\n远程控制/返回/主页/最近/文本置于视频画面内左侧\n完整/全屏置于视频画面内右侧\n只在视频显示时出现，界面更整洁",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复按键重叠",
+    note: "控制按钮移入视频框",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
