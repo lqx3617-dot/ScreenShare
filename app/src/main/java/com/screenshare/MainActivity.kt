@@ -103,6 +103,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var fullscreenScaleDetector: ScaleGestureDetector? = null
     private var fullscreenScale = 1f
     private var isFullscreen = false
+    // 全屏悬浮信息条：周期拉取 WebRTC 统计并刷新显示
+    private var statsTimer: android.os.Handler? = null
+    private var statsRunnable: Runnable? = null
+    private var lastStatsBytesIn = 0L
+    private var lastStatsBytesOut = 0L
+    private var lastStatsTime = 0L
 
     // 显示模式：true=完整显示(等比，可能有黑边)，false=铺满(无黑边，边缘裁切)
     private var isFitMode = true
@@ -152,6 +158,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.btnSignalJoin,
             binding.btnStop
         )
+
+        // 科技感入场动画：标题区/状态卡/会议区错峰淡入上滑
+        val fadeIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide)
+        binding.llTitle.startAnimation(android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide))
+        binding.llStatus.startAnimation(fadeIn)
+        binding.llSignal.startAnimation(android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide))
 
         checkPermissions()
 
@@ -1126,6 +1138,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onConnected() {
         runOnUiThread {
             updateUI("✅ 已连接！屏幕共享进行中...")
+            // 状态点呼吸发光，增强已连接的科技感反馈
+            startStatusBreathing()
             binding.btnStop.visibility = View.VISIBLE
             binding.btnStop.isEnabled = true
             binding.btnMic.visibility = View.VISIBLE
@@ -1148,6 +1162,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onDisconnected() {
         runOnUiThread {
             updateUI("连接已断开")
+            stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
             resetUI()
         }
@@ -1297,6 +1312,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                     or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         }
+
+        // 启动全屏统计刷新
+        startFullscreenStats()
     }
 
     /**
@@ -1383,6 +1401,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun exitFullscreen() {
         if (!isFullscreen) return
         isFullscreen = false
+        // 停止全屏统计刷新
+        stopFullscreenStats()
         fullscreenScale = 1f
         fullscreenScaleDetector = null
 
@@ -1432,8 +1452,47 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flFullscreen.visibility = View.GONE
     }
 
-    // ======================== 停止 ========================
+    // ======================== 全屏实时统计 ========================
 
+    /** 全屏时每 1.5s 拉取一次 WebRTC 统计，刷新悬浮信息条 */
+    private fun startFullscreenStats() {
+        stopFullscreenStats()
+        lastStatsBytesIn = 0L
+        lastStatsBytesOut = 0L
+        lastStatsTime = 0L
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val runnable = object : Runnable {
+            override fun run() {
+                if (!isFullscreen) return
+                try {
+                    peer?.collectStats()?.let { raw ->
+                        val json = org.json.JSONObject(raw)
+                        val now = System.currentTimeMillis()
+                        val fpsText = if (isHost) "发送 ${json.optInt("outFps", 0)}fps" else "接收 ${json.optInt("inFps", 0)}fps"
+                        val rttText = if (json.optInt("rtt", 0) > 0) "延迟 ${json.optInt("rtt", 0)}ms" else "延迟 --"
+                        binding.tvFullscreenStats.text = "状态 $fpsText | $rttText"
+                    }
+                } catch (t: Throwable) {
+                    binding.tvFullscreenStats.text = "统计暂不可用"
+                }
+                handler.postDelayed(this, 1500)
+            }
+        }
+        statsTimer = handler
+        statsRunnable = runnable
+        handler.postDelayed(runnable, 300)
+    }
+
+    private fun stopFullscreenStats() {
+        statsRunnable?.let { statsTimer?.removeCallbacks(it) }
+        statsTimer = null
+        statsRunnable = null
+        lastStatsBytesIn = 0L
+        lastStatsBytesOut = 0L
+        lastStatsTime = 0L
+    }
+
+    // ======================== 停止 ========================
     private fun onStopClicked() {
         peer?.disconnect()
         peer = null
@@ -1508,6 +1567,29 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateUI(status: String) {
         binding.tvStatus.text = status
         Log.d(TAG, status)
+    }
+
+    /** 状态点呼吸发光（已连接时持续，alpha 循环） */
+    private var statusBreathing: android.animation.ValueAnimator? = null
+
+    private fun startStatusBreathing() {
+        if (statusBreathing != null) return
+        val anim = android.animation.ValueAnimator.ofFloat(0.4f, 1f)
+        anim.duration = 900
+        anim.repeatCount = android.animation.ValueAnimator.INFINITE
+        anim.repeatMode = android.animation.ValueAnimator.REVERSE
+        anim.addUpdateListener { v ->
+            val dot = binding.dotStatus ?: return@addUpdateListener
+            dot.alpha = v.animatedValue as Float
+        }
+        anim.start()
+        statusBreathing = anim
+    }
+
+    private fun stopStatusBreathing() {
+        statusBreathing?.cancel()
+        statusBreathing = null
+        binding.dotStatus?.alpha = 1f
     }
 
     private fun resetUI() {

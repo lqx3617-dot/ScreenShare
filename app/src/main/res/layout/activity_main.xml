@@ -70,6 +70,7 @@
             android:background="@drawable/bg_glass">
 
             <View
+                android:id="@+id/dotStatus"
                 android:layout_width="10dp"
                 android:layout_height="10dp"
                 android:background="@drawable/dot_status"
@@ -319,7 +320,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
                 android:gravity="center"
-                android:text="返回"
+                android:text="← 返回"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="8dp"
@@ -330,7 +331,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
                 android:gravity="center"
-                android:text="主页"
+                android:text="⌂ 主页"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="8dp"
@@ -341,7 +342,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
                 android:gravity="center"
-                android:text="最近"
+                android:text="▤ 最近"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="8dp"
@@ -372,11 +373,11 @@
 
         <TextView
             android:id="@+id/btnFullscreen"
-            android:layout_width="52dp"
+            android:layout_width="wrap_content"
             android:layout_height="44dp"
             android:layout_marginTop="8dp"
             android:gravity="center"
-            android:text="全屏"
+            android:text="⛶ 全屏"
             android:textSize="12sp"
             android:textColor="#FFFFFFFF"
             android:background="@drawable/bg_fullscreen_btn"
@@ -405,6 +406,23 @@
             android:text="退出全屏"
             android:textSize="14sp"
             android:textColor="#FFFFFFFF"
+            android:background="@drawable/bg_fullscreen_btn" />
+
+        <TextView
+            android:id="@+id/tvFullscreenStats"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="14dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:gravity="center"
+            android:text=""
+            android:textSize="12sp"
+            android:textColor="#FF00E5FF"
+            android:typeface="monospace"
             android:background="@drawable/bg_fullscreen_btn" />
     </FrameLayout>
 

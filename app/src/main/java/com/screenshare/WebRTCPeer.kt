@@ -628,6 +628,66 @@ class WebRTCPeer(
         Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@60")
     }
 
+    /**
+     * 拉取 WebRTC 实时统计（帧率/码率/往返延迟），供全屏悬浮信息条展示。
+     * 返回 JSON 字符串摘要；失败返回 null。
+     */
+    fun collectStats(): String? {
+        val pc = peerConnection ?: return null
+        var result: String? = null
+        val lock = Object()
+        try {
+            // 新版 API：RTCStatsCollectorCallback（webrtc 124+）；旧版 StatsObserver 已过时
+            pc.getStats(object : org.webrtc.RTCStatsCollectorCallback {
+                override fun onStatsDelivered(report: org.webrtc.RTCStatsReport) {
+                    try {
+                        var inFps = 0.0
+                        var outFps = 0.0
+                        var inBitrate = 0.0
+                        var outBitrate = 0.0
+                        var rtt = -1.0
+                        val stats = report.statsMap
+                        for ((_, s) in stats) {
+                            when (s.type) {
+                                "inbound-rtp" -> {
+                                    inFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
+                                    inBitrate += ((s.members["bytesReceived"] as? Number)?.toDouble() ?: 0.0)
+                                }
+                                "outbound-rtp" -> {
+                                    outFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
+                                    outBitrate += ((s.members["bytesSent"] as? Number)?.toDouble() ?: 0.0)
+                                }
+                                "candidate-pair" -> {
+                                    val active = s.members["nominated"]
+                                    if (active == true || active?.toString() == "true") {
+                                        val r = (s.members["currentRoundTripTime"] as? Number)?.toDouble()
+                                        if (r != null && r > 0) rtt = r * 1000.0
+                                    }
+                                }
+                                else -> {}
+                            }
+                        }
+                        // bytesReceived 是累计值，这里换算需与采样间隔配合；此处先返回瞬时 fps/rtt 与累计字节
+                        result = org.json.JSONObject().apply {
+                            put("inFps", inFps.toInt())
+                            put("outFps", outFps.toInt())
+                            put("rtt", rtt.toInt())
+                        }.toString()
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "统计解析失败: ${t.message}")
+                    } finally {
+                        synchronized(lock) { lock.notifyAll() }
+                    }
+                }
+            })
+            synchronized(lock) { lock.wait(500) }
+        } catch (t: Throwable) {
+            Log.w(TAG, "getStats 不可用（可能 API 版本差异）: ${t.message}")
+            return null
+        }
+        return result
+    }
+
     fun disconnect() {
         if (disposed) return
         disposed = true

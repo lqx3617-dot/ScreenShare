@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "UI 细节补全：\n标题区新增 ScreenShare 品牌标识\n加入会议弹窗、会议号弹窗升级为霓虹风格（深色玻璃 + 青色描边 + 发光按钮）\n输入框霓虹高亮，整体风格统一",
+  changelog: "UI 科技感增强：\n进入动画（标题/状态卡/会议区错峰淡入上滑）\n连接成功后状态点呼吸发光\n全屏观看新增悬浮信息条（实时帧率/延迟）\n控制按钮图标化（返回/主页/最近/全屏）",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "UI 细节补全（弹窗/品牌标识）",
+    note: "UI 科技感增强（动画/统计/图标）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
