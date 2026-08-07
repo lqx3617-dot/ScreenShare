@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "码率优化：\n编码上限 15M→12M、最低 3M→1.5M、初始带宽 6M→5M，弱网降质档位同步下移——WiFi 下保持高清，弱网/低端机降低卡顿与发热，减轻跨网瞬时拥塞丢包",
+  changelog: "V3.1 连接与弱网优化：\n① WebRTC 连接状态管理——CONNECTING/CONNECTED/RECONNECTING/FAILED 状态机，断网检测 DISCONNECTED/FAILED 时自动发起 ICE restart 重新建立通道，共享断网自动恢复\n② 动态采集分辨率——弱网时自动降低采集分辨率(1080p→720p→480p)减轻采集+编码双端负载，网络恢复自动回升；与原有降码率/编码降分辨率互补，弱网更流畅\n③ 信令应用层心跳——10s 周期 ping 保持 WebSocket 活跃，防止移动网络假断开\n④ 新增统一日志 AppLogger(WEBRTC/NETWORK/CAPTURE)——排查时按模块过滤\n⑤ 编码上限12M/弱网降质档位 12M→2.5M 五档",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "码率优化，降低卡顿与发热",
+    note: "V3.1 自动重连+动态分辨率+心跳",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

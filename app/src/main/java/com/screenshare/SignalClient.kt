@@ -49,6 +49,8 @@ class SignalClient(
         // 自动重连：最多重试次数与基础间隔（1s、2s、3s...）
         const val MAX_ATTEMPTS = 4
         const val RETRY_BASE_MS = 1000L
+        // V3.1: 应用层心跳间隔（保持 WS 活跃，防止移动网络假断开）
+        const val HEARTBEAT_INTERVAL_MS = 10000L
     }
 
     private var webSocket: WebSocket? = null
@@ -56,6 +58,15 @@ class SignalClient(
     private var code = ""
     private var asHost = false
     private var attempt = 0
+    // V3.1: 应用层心跳——10s 周期 ping 保持连接活跃，防止移动网络假断开
+    private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (closedByUs) return
+            webSocket?.send("""{"type":"ping"}""")
+            heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+        }
+    }
 
     /** 创建房间（共享方）或加入房间（观看方）。code 为 4-12 位口令。 */
     fun connect(code: String, asHost: Boolean) {
@@ -79,6 +90,9 @@ class SignalClient(
                     put("code", code)
                 }
                 webSocket.send(msg.toString())
+                // V3.1: 连接成功后启动应用层心跳
+                heartbeatHandler.removeCallbacksAndMessages(null)
+                heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -86,12 +100,14 @@ class SignalClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                heartbeatHandler.removeCallbacksAndMessages(null)
                 if (closedByUs) return
                 Log.e(TAG, "WS 连接失败: ${t.message}")
                 scheduleRetry("无法连接信令服务器: ${t.message}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                heartbeatHandler.removeCallbacksAndMessages(null)
                 if (closedByUs) return
                 Log.w(TAG, "WS 已关闭 code=$code reason=$reason")
                 scheduleRetry("信令连接已断开，自动重连中...")
@@ -134,6 +150,7 @@ class SignalClient(
 
     fun disconnect() {
         closedByUs = true
+        heartbeatHandler.removeCallbacksAndMessages(null)
         webSocket?.close(1000, "bye")
         webSocket = null
     }

@@ -128,6 +128,17 @@ class WebRTCPeer(
     private var micAudioSource: AudioSource? = null
     private var micSender: org.webrtc.RtpSender? = null
 
+    // ===== V3.1: WebRTC 连接状态管理 =====
+    enum class ConnectionStatus { CONNECTING, CONNECTED, RECONNECTING, FAILED }
+
+    /** 当前连接状态（观察方可用 getConnectionStatus() 读取，ICE 状态变化时更新） */
+    @Volatile private var connectionStatus = ConnectionStatus.CONNECTING
+
+    /** ICE restart 进行中标志，防止并发多次触发 */
+    @Volatile private var restartInFlight = false
+
+    fun getConnectionStatus(): ConnectionStatus = connectionStatus
+
     init {
         ensureInitialized(context.applicationContext)
     }
@@ -156,13 +167,40 @@ class WebRTCPeer(
             Log.d(TAG, "ICE Connection: $state")
             listener.onIceState("ICE: $state")
             when (state) {
-                PeerConnection.IceConnectionState.CONNECTED -> listener.onConnected()
-                PeerConnection.IceConnectionState.DISCONNECTED,
-                PeerConnection.IceConnectionState.FAILED -> listener.onDisconnected()
+                PeerConnection.IceConnectionState.CHECKING -> {
+                    connectionStatus = ConnectionStatus.CONNECTING
+                }
+                PeerConnection.IceConnectionState.CONNECTED,
+                PeerConnection.IceConnectionState.COMPLETED -> {
+                    connectionStatus = ConnectionStatus.CONNECTED
+                    listener.onConnected()
+                }
+                PeerConnection.IceConnectionState.DISCONNECTED -> {
+                    connectionStatus = ConnectionStatus.RECONNECTING
+                    listener.onDisconnected()
+                    // V3.1: 断网自动恢复——发起 ICE restart 重新建立数据通道
+                    // 注意: DISCONNECTED 时 WebRTC 会先自行尝试恢复，收到 FAILED 再强制 restart
+                    AppLogger.network("ICE DISCONNECTED, awaiting auto recovery")
+                }
+                PeerConnection.IceConnectionState.FAILED -> {
+                    connectionStatus = ConnectionStatus.FAILED
+                    listener.onDisconnected()
+                    Log.w(TAG, "ICE FAILED，发起 ICE restart 尝试自动恢复")
+                    iceRestart()
+                }
                 else -> {}
             }
         }
-        override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+        override fun onIceConnectionReceivingChange(receiving: Boolean) {
+            if (!receiving) {
+                AppLogger.network("ICE receiving stopped, restarting")
+                // 长时间收不到数据视为连接假死，尝试 ICE restart 恢复
+                if (connectionStatus == ConnectionStatus.CONNECTED) {
+                    connectionStatus = ConnectionStatus.RECONNECTING
+                    iceRestart()
+                }
+            }
+        }
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
             Log.d(TAG, "ICE Gathering: $state")
             listener.onIceState("Gathering: $state")
@@ -311,6 +349,50 @@ class WebRTCPeer(
         createOffer()
     }
 
+    /** V3.1: ICE restart——重新生成 Offer（IceRestart=true）尝试在断网后自动恢复连接 */
+    fun iceRestart() {
+        if (disposed) return
+        val pc = peerConnection ?: return
+        // 防止并发多次 restart（DISCONNECTED/FAILED/receiving 停止可能同时触发）
+        if (restartInFlight) return
+        restartInFlight = true
+        Log.w(TAG, "ICE restart 发起...")
+        try {
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            }
+            pc.createOffer(object : SdpObserver {
+                override fun onCreateSuccess(sdp: SessionDescription) {
+                    pc.setLocalDescription(object : SdpObserver {
+                        override fun onSetSuccess() {
+                            restartInFlight = false
+                            val ld = pc.localDescription
+                            if (ld != null) listener.onOfferReady(ld) else listener.onOfferReady(sdp)
+                            AppLogger.network("ICE restart offer sent")
+                        }
+                        override fun onSetFailure(error: String?) {
+                            restartInFlight = false
+                            Log.e(TAG, "restart setLocalDescription 失败: $error")
+                        }
+                        override fun onCreateSuccess(p0: SessionDescription?) {}
+                        override fun onCreateFailure(p0: String?) {}
+                    }, sdp)
+                }
+                override fun onCreateFailure(error: String?) {
+                    restartInFlight = false
+                    Log.e(TAG, "restart createOffer 失败: $error")
+                }
+                override fun onSetSuccess() {}
+                override fun onSetFailure(error: String?) {}
+            }, constraints)
+        } catch (t: Throwable) {
+            restartInFlight = false
+            Log.e(TAG, "ICE restart 异常: ${t.message}")
+        }
+    }
+
     // ==================== 系统音频 DataChannel ====================
 
     /** 共享方：创建系统音频 DataChannel（低延迟：乱序、不重传） */
@@ -424,14 +506,16 @@ class WebRTCPeer(
         if (disposed) return
         val capturer = videoCapturer ?: return
         try {
-            val (capW, capH) = captureSizeForScreen()
+            // 保持当前采集档位尺寸（弱网降质期间切帧率不应恢复 1080p）
+            val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
+            captureFps = fps
             capturer.changeCaptureFormat(capW, capH, fps)
             videoSender?.let { sender ->
                 val params = sender.parameters
                 params.encodings?.firstOrNull()?.maxFramerate = fps
                 sender.parameters = params
             }
-            Log.d(TAG, "帧率已切换为 ${fps}fps")
+            AppLogger.capture("帧率已切换为 ${fps}fps (${capW}x${capH})")
         } catch (t: Throwable) {
             Log.e(TAG, "切换帧率失败: ${t.message}")
         }
@@ -461,7 +545,8 @@ class WebRTCPeer(
         val (capW, capH) = captureSizeForScreen()
         // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
         // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
-        val captureFps = 30
+        captureFps = 30
+        lastCaptureProfile = 0
         reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}...")
         capturer.startCapture(capW, capH, captureFps)
 
@@ -747,6 +832,38 @@ class WebRTCPeer(
     private var lastOutSentCum = 0L
     private var lastOutLostCum = 0L
     private var lastAdaptBitrateCap = 0
+    // V3.1: 动态采集分辨率
+    private var captureFps = 30
+    private var lastCaptureProfile = 0
+
+    /**
+     * V3.1: 按弱网档位选择采集分辨率档位。
+     * 0=1080p(网络好) 1=720p(轻度弱网) 2=480p(严重弱网)；
+     * 降采集分辨率同时降低采集与编码负载，比仅降码率更彻底。
+     */
+    private fun captureProfileForLevel(level: Int): Int {
+        return when {
+            level >= 3 -> 2 // 480p
+            level >= 2 -> 1 // 720p
+            else -> 0      // 1080p
+        }
+    }
+
+    /** 按档位换算实际采集分辨率尺寸 */
+    private fun captureSizeForLevel(profile: Int): Pair<Int, Int> {
+        val base = captureSizeForScreen() // 1080p 上限的屏幕比例尺寸
+        return when (profile) {
+            1 -> { // 720p：等比缩放到最长边1280
+                val scale = 1280f / maxOf(base.first, base.second)
+                ((base.first * scale).toInt() to (base.second * scale).toInt())
+            }
+            2 -> { // 480p：最长边854
+                val scale = 854f / maxOf(base.first, base.second)
+                ((base.first * scale).toInt() to (base.second * scale).toInt())
+            }
+            else -> base
+        }
+    }
 
     /**
      * 腾讯会议式弱网自适应（v1.103）：按远端回报的发送丢包率动态调节码率与分辨率策略。
@@ -815,6 +932,22 @@ class WebRTCPeer(
             } catch (t: Throwable) {
                 Log.w(TAG, "自适应切分辨率策略失败: ${t.message}")
             }
+            // V3.1: 采集侧降分辨率——弱网档位>=2(码率6M)降720p、>=3(4M)降480p，减轻采集+编码双端负载；
+            // 恢复档位0(12M)回升 1080p
+            val targetProfile = captureProfileForLevel(curAdaptLevel)
+            if (targetProfile != lastCaptureProfile) {
+                lastCaptureProfile = targetProfile
+                try {
+                    val capturer = videoCapturer
+                    if (capturer != null) {
+                        val (capW, capH) = captureSizeForLevel(targetProfile)
+                        capturer.changeCaptureFormat(capW, capH, captureFps)
+                        AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (档位$curAdaptLevel)")
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "采集降分辨率失败: ${t.message}")
+                }
+            }
         }
     }
 
@@ -832,6 +965,7 @@ class WebRTCPeer(
         if (disposed) return
         disposed = true
         resetAdaptiveState()
+        restartInFlight = false
         videoCapturer?.stopCapture()
         videoCapturer?.dispose()
         localVideoTrack?.dispose()
