@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
@@ -1294,6 +1295,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnStop.visibility = View.GONE
         binding.btnFullscreen.visibility = View.GONE
 
+        // 控制按钮移入全屏层左下角（远程控制/返回/主页/最近/文本在全屏下仍可用）
+        binding.btnAspectToggle.visibility = View.GONE
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        lp.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.START
+        lp.setMargins(20, 0, 0, 30)
+        binding.flFullscreen.addView(binding.llVideoBtns, lp)
+        binding.llVideoBtns.visibility = View.VISIBLE
+
         // 全屏跟随屏幕方向：竖屏竖着看、横屏横着看（不再强制横屏）
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
 
@@ -1418,6 +1430,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.flRemoteVideo.visibility = View.VISIBLE
             binding.tvZoomHint.visibility = View.VISIBLE
             binding.btnFullscreen.visibility = View.VISIBLE
+            // 控制按钮移回视频框内（顶部左侧）
+            val lp = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            lp.setMargins(0, 0, 0, 0)
+            binding.flRemoteVideo.addView(binding.llVideoBtns, lp)
         }
         binding.llSignal.visibility = View.VISIBLE
         if (peer != null) {
