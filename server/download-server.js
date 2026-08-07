@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "优化远程控制卡顿：\n滑动改为增量式跟手——不再每次发送整条轨迹，只发\"上一点→当前点\"短段，报文小传输快\n共享方手势时长与节流间隔匹配(60ms)，每段到手即完成、无缝衔接，动画不再被反复打断\n按下手势缩短至80ms，首段响应更快",
+  changelog: "优化打开应用瞬间丢包/卡顿：\n启用基于丢包的拥塞控制(BweLossBasedControl)——画面剧变时按丢包率快速降码率，比延迟估计收敛更快\n码率上限 20M→15M、初始 6M 保守起步，避免启动即冲击跨网带宽\n码率变化平滑化，减少丢包-降速-回升抖动",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "优化远程控制卡顿",
+    note: "优化打开应用丢包卡顿",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

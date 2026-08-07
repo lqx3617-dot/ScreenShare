@@ -68,7 +68,12 @@ class WebRTCPeer(
                         "WebRTC-MinimizeResamplingOnMobileVideoBitrateChange/Enabled/" +
                             "WebRTC-VideoHwDecoding/Enabled/" +
                             "WebRTC-FrameDropper/Enabled/" +
-                            "WebRTC-JitterBufferTargetDelay/Enabled/"
+                            "WebRTC-JitterBufferTargetDelay/Enabled/" +
+                            // 基于丢包的拥塞控制：打开应用画面剧变时按丢包率快速降码率，
+                            // 比纯延迟估计收敛更快，减少丢包风暴（相比重传等待，直接降速更稳）
+                            "WebRTC-BweLossBasedControl/Enabled/" +
+                            // 平滑码率变化，避免丢包-降速-回升的抖动循环
+                            "WebRTC-BweLatencySmoothing/Enabled/"
                     )
                     .createInitializationOptions()
             )
@@ -473,10 +478,10 @@ class WebRTCPeer(
                 videoSender = rtp
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
-                    // 1080p 屏幕共享：20Mbps 上限覆盖动态内容编码预算，minBitrate 4M 兜底。
-                    // 上限不过高可让拥塞控制在跨网场景更快稳定，避免打开应用瞬间码率冲击导致排队卡顿
-                    enc.maxBitrateBps = 20_000_000
-                    enc.minBitrateBps = 4_000_000
+                    // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
+                    // 用 15M 上限 + 初始 6M：既覆盖 1080p 动态内容的编码预算，又避免冲击跨网带宽。
+                    enc.maxBitrateBps = 15_000_000
+                    enc.minBitrateBps = 3_000_000
                     enc.maxFramerate = 30
                     // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
                     enc.networkPriority = 4
@@ -489,11 +494,11 @@ class WebRTCPeer(
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 低延迟：初始带宽 8M——跨网场景下给足而非冒进，避免打开应用时瞬间拥塞导致卡顿；
-                // 实际带宽由拥塞控制自适应调整
+                // 打开应用瞬间丢包高：初始带宽 6M 保守起步，由拥塞控制按丢包率自适应爬升，
+                // 避免启动即冲击导致瞬间拥塞卡顿
                 try {
-                    peerConnection?.setBitrate(4_000_000, 8_000_000, 20_000_000)
-                    Log.d(TAG, "已设置初始带宽 4/8/20 Mbps")
+                    peerConnection?.setBitrate(3_000_000, 6_000_000, 15_000_000)
+                    Log.d(TAG, "已设置初始带宽 3/6/15 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
