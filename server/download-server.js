@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复点击全屏闪退：\n进入/退出全屏移动控制按钮时改为先移除再添加，不再抛 IllegalStateException\n全屏按钮放大、完整/铺满按钮右下角切换等特性保留",
+  changelog: "丢包诊断增强：\n全屏统计条丢包改为显示丢包数 + 丢包率百分比\n丢包率≥1% 时统计条变红警示，并采集 NACK 重传次数\n便于判断 185 这样的丢包是否影响观看",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复全屏闪退",
+    note: "丢包诊断增强",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

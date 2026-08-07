@@ -652,6 +652,7 @@ class WebRTCPeer(
                         var outH = 0
                         var lost = 0L
                         var lostTotal = 0L
+                        var nackCount = 0L
                         val stats = report.statsMap
                         for ((_, s) in stats) {
                             when (s.type) {
@@ -662,6 +663,7 @@ class WebRTCPeer(
                                     inH = (s.members["frameHeight"] as? Number)?.toInt() ?: 0
                                     lost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
                                     lostTotal += (s.members["packetsReceived"] as? Number)?.toLong() ?: 0L
+                                    nackCount += (s.members["nackCount"] as? Number)?.toLong() ?: 0L
                                 }
                                 "outbound-rtp" -> {
                                     outFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
@@ -692,6 +694,7 @@ class WebRTCPeer(
                             put("outH", outH)
                             put("lost", lost)
                             put("lostTotal", lostTotal)
+                            put("nack", nackCount)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")

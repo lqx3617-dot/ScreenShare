@@ -1582,7 +1582,23 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
                             if (w > 0) "$w×$h" else "--"
                         }
-                        val lostText = if (!isHostView && json.optInt("lost", 0) > 0) " 丢包 ${json.optInt("lost", 0)}" else ""
+                        val lost = json.optLong("lost", 0)
+                        val lostTotal = json.optLong("lostTotal", 0)
+                        // 丢包率 = 丢包数 / (接收+丢包) 总量
+                        val totalPackets = lostTotal + lost
+                        val lostPct = if (totalPackets > 0) lost * 100.0 / totalPackets else 0.0
+                        val lostText = if (!isHostView && lostTotal > 0) {
+                            if (lost > 0) {
+                                // 丢包率 >=1% 标红警示，否则青色
+                                val color = if (lostPct >= 1.0) 0xFFFF5252.toInt() else 0xFF00E5FF.toInt()
+                                " 丢包 $lost (${"%.1f".format(lostPct)}%)"
+                            } else " 丢包 0"
+                        } else ""
+                        if (lostPct >= 1.0) {
+                            binding.tvFullscreenStats.setTextColor(0xFFFF5252.toInt())
+                        } else {
+                            binding.tvFullscreenStats.setTextColor(0xFF00E5FF.toInt())
+                        }
                         lastStatsTime = now
                         binding.tvFullscreenStats.text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$lostText"
                     }
