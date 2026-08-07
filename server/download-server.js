@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "UI 科技感增强：\n进入动画（标题/状态卡/会议区错峰淡入上滑）\n连接成功后状态点呼吸发光\n全屏观看新增悬浮信息条（实时帧率/延迟）\n控制按钮图标化（返回/主页/最近/全屏）",
+  changelog: "修复按键重叠：\n共享方「远程控制状态」条上移到停止按钮上方，不再与停止按钮重叠\n观看方控制按钮列统一宽度（64dp），文字显示更完整",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "UI 科技感增强（动画/统计/图标）",
+    note: "修复按键重叠",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

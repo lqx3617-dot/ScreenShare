@@ -135,7 +135,7 @@
 
         </FrameLayout>
 
-        <!-- 共享方远程控制状态（仅共享方显示） -->
+        <!-- 共享方远程控制状态（仅共享方显示），悬浮在停止共享按钮上方 -->
         <LinearLayout
             android:id="@+id/llCtrlStatus"
             android:layout_width="wrap_content"
@@ -143,7 +143,7 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="88dp"
             android:paddingStart="14dp"
             android:paddingEnd="14dp"
             android:paddingTop="8dp"
@@ -298,7 +298,7 @@
 
         <TextView
             android:id="@+id/btnRemoteControl"
-            android:layout_width="52dp"
+            android:layout_width="64dp"
             android:layout_height="44dp"
             android:gravity="center"
             android:text="远程控制"
@@ -351,7 +351,7 @@
 
         <TextView
             android:id="@+id/btnCtrlText"
-            android:layout_width="52dp"
+            android:layout_width="64dp"
             android:layout_height="44dp"
             android:gravity="center"
             android:text="文本"
@@ -362,7 +362,7 @@
 
         <TextView
             android:id="@+id/btnAspectToggle"
-            android:layout_width="52dp"
+            android:layout_width="64dp"
             android:layout_height="44dp"
             android:gravity="center"
             android:text="完整"
