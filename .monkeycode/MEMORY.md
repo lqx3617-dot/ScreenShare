@@ -79,7 +79,7 @@ Entries discovered by the Agent during task execution should follow this format:
 - Category: Troubleshooting & Debugging
 - Instructions:
   - 信令服务器反复离线、App 报"无法连接"的根因（v1.15 修复）：
-    - 主因：background_terminal_create 的 timeout 参数单位是毫秒，误传 10000/15000 导致服务器运行 10/15 秒后被自动杀掉，不是环境回收进程！长驻服务必须传 timeout=0（无超时）
+    - 主因：background_terminal_create 的 timeout 参数单位是毫秒，误传 10000/15000 导致服务器运行 10/15 秒后被自动杀掉，不是环境回收进程！长驻服务必须传 timeout=0（无超时），且禁止用 bash 的 & 启动（会话结束后被杀）
     - 环境公网代理对部分端口间歇性返回 530（8080/8081 已失效），需逐一探测可用端口（8090、8095-8101 已验证可用），信令地址用可用端口
     - 信令服务器现运行于 PORT=8095，公网地址 wss://8095-6d639d2de20eb686.monkeycode-ai.online/ws
     - 守护脚本 /workspace/server/daemon-signaling.sh（检测 8095 无监听则重启）需用 timeout=0 的后台终端运行，否则守护进程本身也会被杀
@@ -94,7 +94,6 @@ Entries discovered by the Agent during task execution should follow this format:
   - 诊断：服务器日志 offer/answer 的 ice[] 统计——若两端 relay=0 且 answer 无 srflx，跨网必黑屏；offer 有 srflx 是因为 STUN 有时效返回，answer 端 STUN 失败则无
   - 云更新：download-server.js 提供 /version.json（动态读 build.gradle.kts 的 versionCode/versionName + 计算 APK md5，APK mtime 变化自动失效缓存）；App 端 UpdateChecker.kt 启动时对比 BuildConfig.VERSION_CODE，新版弹窗→下载到 getExternalFilesDir→md5 校验→FileProvider 分发 ACTION_VIEW 安装；需 REQUEST_INSTALL_PACKAGES 权限 + res/xml/file_paths.xml（external-files-path）
   - 会议号 v1.16 起为 4 位数字（App generateMeetingCode 4 位 + validateSignalCode ^[0-9]{4}$；server.js 校验同步）
-  - 后台常驻进程必须用 background_terminal_create 且 timeout=0；用 bash 的 & 启动会在会话结束后被杀
 
 [Project Knowledge Summary]
 - Date: 2026-08-04
@@ -156,4 +155,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 诊断手段：startSessionCore/startScreenCapture 增加 ①~⑤ + ③a~③e 逐步进度显示到 tvScanResult（独立区域，不被 updateUI 状态栏覆盖），用户直接反馈停在哪一步即可定位
   - onOfferReady 会把 SDP 诊断（视频轨道/候选数）显示到 tvScanResult；授权成功后正常流程：①启动服务→②创建PC→③采集→④音频通道→⑤生成SDP
   - 延迟优化实测结论（v1.63/v1.64）：60fps 采集比 30fps 端到端延迟更高——高分辨率 60fps 下硬件编码器每帧处理排队更久。固定用 30fps 采集 + 编码 maxFramerate 30。保留的低延迟手段：enc.networkPriority=4 + bitratePriority=4.0（视频流高优先级减少拥塞抑制）、peerConnection.setBitrate(6M, 12M, 25M)（初始带宽给足跳过码率爬坡期）、MAINTAIN_RESOLUTION 保清晰度
+
+[Project Knowledge Summary]
+- Date: 2026-08-07
+- Context: Discovered by Agent while 排查观看画面滞后（v1.100）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - WebRTC SDK 144 源码在 /tmp/webrtc_src（m144_release 分支，已稀疏检出 modules/call/media，本地 rg 可查 field trials），勿用 git grep（blob:none 需网络）
+  - SDK 144 中**已不存在**的 field trials（加了静默无效）：WebRTC-MinimizeResamplingOnMobileVideoBitrateChange、WebRTC-VideoHwDecoding、WebRTC-FrameDropper、WebRTC-JitterBufferTargetDelay、WebRTC-LowLatencyRenderer、WebRTC-BweLossBasedControl、WebRTC-BweLatencySmoothing
+  - SDK 144 中真实存在：WebRTC-JitterEstimatorConfig（参数 key:value 逗号分隔，如 nack_limit:15,nack_count_timeout:5s）、WebRTC-ZeroPlayoutDelay（min_pacing:8ms，需低延迟渲染路径激活才生效）、WebRTC-Bwe-LossBasedBweV2（丢包拥塞控制，Enabled 默认 true 无需配置）
+  - 观看端画面滞后根因：丢包重传(nack_count>=3)触发 RTT 惩罚放大接收端 jitter 缓冲估计 → target delay 增大 → 播放缓冲膨胀滞后。v1.100 通过 JitterEstimatorConfig 把 nack_limit 3→15、nack_count_timeout 60s→5s 抑制缓冲膨胀
+  - Java SDK 144 无任何视频 playout delay 设置 API（RtpParameters/MediaConstraints/PeerConnection 均无）；UseLowLatencyRendering 需 max_playout_delay<=500ms（默认 10s），仅由 playout-delay RTP header extension 驱动，Java 层无法激活
 
