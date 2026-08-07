@@ -39,6 +39,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.screenshare.databinding.ActivityMainBinding
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.webrtc.*
 
 /**
@@ -64,7 +66,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private lateinit var binding: ActivityMainBinding
     private var eglBaseContext: EglBase.Context? = null
     private var peer: WebRTCPeer? = null
-    private var isHost = false
+    @Volatile private var isHost = false
     private var hostSessionActive = false
 
     // 口令共享（信令服务器模式）
@@ -103,13 +105,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var fullscreenSink: VideoSink? = null
     private var fullscreenScaleDetector: ScaleGestureDetector? = null
     private var fullscreenScale = 1f
-    private var isFullscreen = false
-    // 全屏悬浮信息条：周期拉取 WebRTC 统计并刷新显示
+    @Volatile private var isFullscreen = false
+    // 全屏悬浮信息条：周期拉取 WebRTC 统计并刷新显示（后台线程轮询，避免 getStats 阻塞主线程导致 ANR/闪退）
+    private var statsThread: android.os.HandlerThread? = null
     private var statsTimer: android.os.Handler? = null
     private var statsRunnable: Runnable? = null
     private var lastStatsBytesIn = 0L
     private var lastStatsBytesOut = 0L
     private var lastStatsTime = 0L
+    // 增量丢包统计基准（后台线程读写）
+    private var lastLostTotal = 0L
+    private var lastLost = 0L
 
     // 显示模式：true=完整显示(等比，可能有黑边)，false=铺满(无黑边，边缘裁切)
     private var isFitMode = true
@@ -150,6 +156,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 崩溃日志采集：Java 层崩溃写入外部存储文件，下次启动可查看/上报，便于定位真机闪退
+        installCrashHandler()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -207,7 +215,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
-        if (uri.scheme != "screenshare") return
         // 兼容不同浏览器解析：intent:// 唤起时部分解析会把 query 并入 host，
         // 因此先从 query 取，取不到再从完整字符串兜底提取
         val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
@@ -222,6 +229,44 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         joinMeetingWithCode(code)
+    }
+
+    /** 崩溃日志采集：Java 层崩溃写入外部存储，便于下次启动查看/上报定位闪退 */
+    private fun installCrashHandler() {
+        try {
+            val prev = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                try {
+                    val sw = java.io.StringWriter()
+                    throwable.printStackTrace(java.io.PrintWriter(sw))
+                    val content = StringBuilder()
+                        .append("time=").append(System.currentTimeMillis()).append('\n')
+                        .append("thread=").append(thread.name).append('\n')
+                        .append(sw.toString())
+                    val dir = getExternalFilesDir(null)
+                    if (dir != null) {
+                        val f = java.io.File(dir, "crash-${System.currentTimeMillis()}.log")
+                        f.writeText(content.toString())
+                    }
+                    // 尽力上报信令服务器（诊断模式），失败则忽略
+                    try {
+                        val base = BuildConfig.SIGNAL_URL
+                            .replace("wss://", "https://").replace("ws://", "http://")
+                            .trimEnd('/')
+                        val url = base.substringBeforeLast('/', base)
+                        val body = content.toString().toByteArray().toRequestBody("text/plain".toMediaType())
+                        val req = okhttp3.Request.Builder()
+                            .url("$url/crash")
+                            .post(body)
+                            .build()
+                        okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                            .newCall(req).execute().close()
+                    } catch (_: Throwable) {}
+                } catch (_: Throwable) {}
+                prev?.uncaughtException(thread, throwable)
+            }
+        } catch (_: Throwable) {}
     }
 
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
@@ -1551,7 +1596,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         lastStatsBytesIn = 0L
         lastStatsBytesOut = 0L
         lastStatsTime = 0L
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        lastLostTotal = 0L
+        lastLost = 0L
+        // 统计轮询放后台线程：collectStats 内部同步等待 getStats 回调(最多500ms)，
+        // 打开软件瞬间编码负载高导致回调慢，放主线程会周期性阻塞 UI 造成卡顿甚至 ANR 闪退
+        val thread = android.os.HandlerThread("stats-worker")
+        thread.start()
+        statsThread = thread
+        val handler = android.os.Handler(thread.looper)
         val runnable = object : Runnable {
             override fun run() {
                 if (!isFullscreen) return
@@ -1580,35 +1632,35 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
                             if (w > 0) "$w×$h" else "--"
                         }
-                        // 腾讯会议式弱网自适应：共享方按发送丢包率自动降质保流畅（v1.101）
+                        // 腾讯会议式弱网自适应：共享方按发送增量丢包率自动降质保流畅（v1.102）
                         val outLost = json.optLong("outLost", 0)
                         val outSent = json.optLong("outSent", 0)
-                        if (isHostView && (outSent + outLost) > 0) {
-                            val sendLossPct = outLost * 100.0 / (outSent + outLost)
-                            peer?.adaptToNetwork(sendLossPct)
+                        if (isHostView) {
+                            peer?.adaptToNetwork(outSent, outLost)
                         }
+                        // 观看方丢包率：增量计算（上次统计到本次的新丢包 / 新接收总量），避免累计值不敏感
                         val lost = json.optLong("lost", 0)
                         val lostTotal = json.optLong("lostTotal", 0)
-                        // 丢包率 = 丢包数 / (接收+丢包) 总量
-                        val totalPackets = lostTotal + lost
-                        val lostPct = if (totalPackets > 0) lost * 100.0 / totalPackets else 0.0
-                        val lostText = if (!isHostView && lostTotal > 0) {
-                            if (lost > 0) {
-                                // 丢包率 >=1% 标红警示，否则青色
-                                val color = if (lostPct >= 1.0) 0xFFFF5252.toInt() else 0xFF00E5FF.toInt()
-                                " 丢包 $lost (${"%.1f".format(lostPct)}%)"
-                            } else " 丢包 0"
+                        val dTotal = lostTotal - lastLostTotal
+                        val dLost = lost - lastLost
+                        val lostPct = if (dTotal > 0) dLost * 100.0 / dTotal else 0.0
+                        lastLostTotal = lostTotal
+                        lastLost = lost
+                        val lostText = if (!isHostView && dTotal > 0) {
+                            if (dLost > 0) " 丢包 $dLost (${"%.1f".format(lostPct)}%)" else " 丢包 0"
                         } else ""
-                        if (lostPct >= 1.0) {
-                            binding.tvFullscreenStats.setTextColor(0xFFFF5252.toInt())
-                        } else {
-                            binding.tvFullscreenStats.setTextColor(0xFF00E5FF.toInt())
-                        }
                         lastStatsTime = now
-                        binding.tvFullscreenStats.text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$lostText"
+                        val text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$lostText"
+                        val warn = !isHostView && lostPct >= 1.0
+                        // UI 更新回主线程
+                        binding.root.post {
+                            if (!isFullscreen) return@post
+                            binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF00E5FF.toInt())
+                            binding.tvFullscreenStats.text = text
+                        }
                     }
                 } catch (t: Throwable) {
-                    binding.tvFullscreenStats.text = "统计暂不可用"
+                    binding.root.post { if (isFullscreen) binding.tvFullscreenStats.text = "统计暂不可用" }
                 }
                 handler.postDelayed(this, 1500)
             }
@@ -1622,9 +1674,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         statsRunnable?.let { statsTimer?.removeCallbacks(it) }
         statsTimer = null
         statsRunnable = null
+        statsThread?.quitSafely()
+        statsThread = null
         lastStatsBytesIn = 0L
         lastStatsBytesOut = 0L
         lastStatsTime = 0L
+        lastLostTotal = 0L
+        lastLost = 0L
     }
 
     // ======================== 停止 ========================

@@ -728,23 +728,34 @@ class WebRTCPeer(
     private var recoverTimer = 0
     private var lastAdaptDegradation: RtpParameters.DegradationPreference? = null
     private val adaptBitrateCaps = intArrayOf(15_000_000, 10_000_000, 7_000_000, 5_000_000, 3_000_000)
+    // 增量丢包统计（outbound-rtp 累计值做差，避免长期运行后弱网检测失效）
+    private var lastOutSentCum = 0L
+    private var lastOutLostCum = 0L
+    private var lastAdaptBitrateCap = 0
 
     /**
-     * 腾讯会议式弱网自适应（v1.101）：按发送丢包率动态调节码率上限与分辨率策略。
-     * - 丢包高（>=5%）：逐级降码率 + 切 MAINTAIN_FRAMERATE（保帧率降分辨率，画面流畅不卡顿）
-     * - 丢包恢复（<2% 持续）：缓步回升码率 + 回 MAINTAIN_RESOLUTION（恢复高清晰度）
-     * 由 MainActivity 全屏统计定时器周期调用（约 1.5s 一次）。
+     * 腾讯会议式弱网自适应（v1.101）：按发送增量丢包率动态调节码率上限与分辨率策略。
+     * - 丢包高（>=3%）：逐级降码率 + 切 MAINTAIN_FRAMERATE（保帧率降分辨率，画面流畅不卡顿）
+     * - 丢包恢复（<1% 持续）：缓步回升码率 + 回 MAINTAIN_RESOLUTION（恢复高清晰度）
+     * 由 MainActivity 统计线程周期调用（约 1.5s 一次）。
      *
-     * @param sendLossPct 发送丢包率 0~100（outbound-rtp packetsLost/(sent+lost)）
+     * @param outSentCum outbound-rtp packetsSent 累计值
+     * @param outLostCum outbound-rtp packetsLost 累计值
      */
-    fun adaptToNetwork(sendLossPct: Double) {
+    fun adaptToNetwork(outSentCum: Long, outLostCum: Long) {
         val pc = peerConnection ?: return
         if (disposed) return
-        // 阈值：丢包率 >=5% 视为弱网，需降质；<2% 视为已恢复
+        // 本采样周期新增丢包/发送量（做差），首个周期无差值则跳过
+        val dSent = outSentCum - lastOutSentCum
+        val dLost = outLostCum - lastOutLostCum
+        val sendLossPct = if (lastOutSentCum > 0 && dSent > 0) dLost * 100.0 / dSent else 0.0
+        lastOutSentCum = outSentCum
+        lastOutLostCum = outLostCum
+        // 阈值：周期丢包率 >=3% 视为弱网需降质，<1% 视为已恢复
         val level = when {
             sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1 // 最高档降质
             sendLossPct >= 3.0 -> 2
-            sendLossPct >= 2.0 -> 1
+            sendLossPct >= 1.5 -> 1
             else -> 0
         }
         if (level > curAdaptLevel) {
@@ -760,19 +771,20 @@ class WebRTCPeer(
             }
         }
         val cap = adaptBitrateCaps[curAdaptLevel]
-        try {
-            pc.setBitrate(1_500_000, cap, cap)
-        } catch (t: Throwable) {
-            Log.w(TAG, "自适应调码率失败: ${t.message}")
-        }
-        // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
-        val wantFrameratePref = curAdaptLevel > 0
-        val degradation = if (wantFrameratePref) {
-            RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
-        } else {
-            RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-        }
-        if (lastAdaptDegradation != degradation) {
+        // 仅档位变化时调码率/策略，避免周期重置影响拥塞控制收敛
+        if (lastAdaptBitrateCap != cap) {
+            lastAdaptBitrateCap = cap
+            try {
+                pc.setBitrate(1_500_000, cap, cap)
+            } catch (t: Throwable) {
+                Log.w(TAG, "自适应调码率失败: ${t.message}")
+            }
+            // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
+            val degradation = if (curAdaptLevel > 0) {
+                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+            } else {
+                RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            }
             lastAdaptDegradation = degradation
             try {
                 videoSender?.let { rtp ->
@@ -792,6 +804,9 @@ class WebRTCPeer(
         curAdaptLevel = 0
         recoverTimer = 0
         lastAdaptDegradation = null
+        lastOutSentCum = 0L
+        lastOutLostCum = 0L
+        lastAdaptBitrateCap = 0
     }
 
     fun disconnect() {

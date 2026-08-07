@@ -24,6 +24,8 @@
 "use strict";
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const { WebSocketServer } = require("ws");
 
 const PORT = process.env.PORT || 8080;
@@ -31,6 +33,25 @@ const PORT = process.env.PORT || 8080;
 const DIAG = process.env.DIAG === "1";
 
 const server = http.createServer((req, res) => {
+  // 崩溃日志上报：App Java 层崩溃 POST 到这里落盘，便于定位真机闪退
+  if (req.method === "POST" && req.url.startsWith("/crash")) {
+    let body = "";
+    req.on("data", (c) => { body = (body + c).slice(-200000); });
+    req.on("end", () => {
+      try {
+        const dir = path.join(__dirname, "crashes");
+        fs.mkdirSync(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.writeFileSync(path.join(dir, `crash-${stamp}.log`), body);
+        console.log(`[crash] ${stamp} len=${body.length}`);
+      } catch (e) {
+        console.error("[crash] 写入失败:", e.message);
+      }
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("ok");
+    });
+    return;
+  }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("ScreenShare signaling server is running");
 });
