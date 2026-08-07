@@ -105,12 +105,12 @@ class RemoteControlService : AccessibilityService() {
                 lastTouchX = px.toFloat()
                 lastTouchY = py.toFloat()
                 touching = true
-                // 手指按下并保持 600ms：无后续指令即长按；被 swipe 替换即点击/滑动开始
-                dispatchStroke(pathTo(lastTouchX, lastTouchY), 600L)
+                // 手指按下：短暂保持，随后的增量滑动段会无缝衔接；不等待即可被覆盖，降低首段延迟
+                dispatchStroke(pathTo(lastTouchX, lastTouchY), 80L)
             }
             "swipe" -> {
-                // 完整滑动路径：一次性注入 down→move…→up。
-                // 120ms 时长 + 观看方 66ms 节流：手势持续更久、替换间隙更少，动画更平稳不卡屏
+                // 增量滑动段：观看方 66ms 节流发送"上一点→当前点"短段。
+                // 段时长与节流间隔匹配（66ms），每一段到手即完成，下一段无缝衔接，动画不中断不卡屏
                 val arr = json.optJSONArray("points") ?: return
                 if (arr.length() == 0) return
                 val path = Path()
@@ -126,7 +126,7 @@ class RemoteControlService : AccessibilityService() {
                         path.lineTo(px, py)
                     }
                 }
-                dispatchStroke(path, 120L)
+                dispatchStroke(path, 60L)
                 touching = false
             }
             "up" -> {

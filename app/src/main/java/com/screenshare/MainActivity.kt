@@ -144,6 +144,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var ctrlDownNX = 0f
     private var ctrlDownNY = 0f
 
+    // 增量滑动：上一段已发送的终点（用于发送"上一点→当前点"短段，跟手且报文小）
+    private var ctrlLastNX = 0f
+    private var ctrlLastNY = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -291,7 +295,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .show()
     }
 
-    /** 观看方：控制模式下单指触摸。down 发送按下，MOVE 本地累积轨迹，抬手时一次性发送完整滑动路径 */
+    /** 观看方：控制模式下单指触摸。down 发送按下，MOVE 按 66ms 节流发送增量滑动段，抬手结束 */
     private fun handleControlTouch(event: MotionEvent, renderer: SurfaceViewRenderer) {
         val p = peer ?: return
         if (lastFrameW <= 0 || lastFrameH <= 0) return
@@ -335,6 +339,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 ctrlPoints.add(floatArrayOf(nx, ny))
                 ctrlDownNX = nx
                 ctrlDownNY = ny
+                ctrlLastNX = nx
+                ctrlLastNY = ny
                 ctrlDownTime = SystemClock.uptimeMillis()
                 ctrlDownSent = true
                 ctrlMoveStarted = false
@@ -342,18 +348,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             "move" -> {
                 if (!ctrlDownSent) return
-                ctrlPoints.add(floatArrayOf(nx, ny))
                 // 首次 MOVE 确定为滑动，先发按下再实时跟手
                 if (!ctrlMoveStarted) {
                     ctrlMoveStarted = true
                     p.sendControl("{\"type\":\"touch\",\"action\":\"down\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
                     lastCtrlSend = SystemClock.uptimeMillis()
                 }
-                // 66ms 节流（约 15fps 注入）：降频避免高频手势替换导致动画卡顿
+                // 66ms 节流（约 15fps 注入）：降频避免高频手势替换导致动画卡顿；
+                // 每段只发"上一发送点→当前点"，报文小、传输快，丢一段只少一小截不破坏整条滑动
                 val now = SystemClock.uptimeMillis()
                 if (now - lastCtrlSend >= 66) {
                     lastCtrlSend = now
-                    p.sendControl(buildSwipe())
+                    p.sendControl(buildSwipeIncrement(nx, ny))
                 }
             }
             "up" -> {
@@ -368,8 +374,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         p.sendControl("{\"type\":\"touch\",\"action\":\"tap\",\"nx\":$ctrlDownNX,\"ny\":$ctrlDownNY}")
                     }
                 } else {
-                    ctrlPoints.add(floatArrayOf(nx, ny))
-                    p.sendControl(buildSwipe())
+                    // 补发最后一段到抬手点，再结束滑动
+                    if (Math.abs(nx - ctrlLastNX) + Math.abs(ny - ctrlLastNY) > 0.002f) {
+                        p.sendControl(buildSwipeIncrement(nx, ny))
+                    }
+                    p.sendControl("{\"type\":\"touch\",\"action\":\"up\",\"nx\":$nx,\"ny\":$ny}")
                 }
                 ctrlMoveStarted = false
                 ctrlPoints.clear()
@@ -377,23 +386,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
-    /** 由累积轨迹构建完整滑动指令；抽稀到最多 20 个关键点（保留起点/终点）以减小报文并让手势注入更平稳 */
-    private fun buildSwipe(): String {
-        val src = ctrlPoints
-        val pts: List<FloatArray> = if (src.size <= 20) src else {
-            val step = src.size - 1
-            ArrayList<FloatArray>(21).apply {
-                for (i in 0..20) add(src[(i * step / 20).coerceIn(0, src.size - 1)])
-            }
-        }
-        val sb = StringBuilder()
-        sb.append("{\"type\":\"touch\",\"action\":\"swipe\",\"points\":[")
-        for (i in pts.indices) {
-            if (i > 0) sb.append(',')
-            sb.append('[').append(pts[i][0]).append(',').append(pts[i][1]).append(']')
-        }
-        sb.append("]}")
-        return sb.toString()
+    /** 构建增量滑动段：上一点 → 当前点（两个点，报文最小化，跟手延迟低） */
+    private fun buildSwipeIncrement(nx: Float, ny: Float): String {
+        val msg = "{\"type\":\"touch\",\"action\":\"swipe\",\"points\":[[$ctrlLastNX,$ctrlLastNY],[$nx,$ny]]}"
+        ctrlLastNX = nx
+        ctrlLastNY = ny
+        return msg
     }
 
     /** 观看方：接收共享方回发的控制状态提示 */
