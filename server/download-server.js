@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复全屏时远程控制按钮消失：\n进入全屏后控制按钮组自动移入全屏层左下角（远程控制/返回/主页/最近/文本在全屏下仍可用）\n退出全屏自动移回视频框内",
+  changelog: "全屏统计条增强 + 按钮按压反馈：\n全屏状态条现显示发送/接收帧率、延迟、分辨率、实时码率(kbps)与丢包数\n所有控制按钮/主按钮新增按压高亮反馈，操作更有手感",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复全屏远程控制按钮消失",
+    note: "全屏统计增强+按压反馈",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

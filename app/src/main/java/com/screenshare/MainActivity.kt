@@ -1488,9 +1488,30 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     peer?.collectStats()?.let { raw ->
                         val json = org.json.JSONObject(raw)
                         val now = System.currentTimeMillis()
-                        val fpsText = if (isHost) "发送 ${json.optInt("outFps", 0)}fps" else "接收 ${json.optInt("inFps", 0)}fps"
+                        val isHostView = isHost
+                        val fpsText = if (isHostView) "发送 ${json.optInt("outFps", 0)}fps" else "接收 ${json.optInt("inFps", 0)}fps"
                         val rttText = if (json.optInt("rtt", 0) > 0) "延迟 ${json.optInt("rtt", 0)}ms" else "延迟 --"
-                        binding.tvFullscreenStats.text = "状态 $fpsText | $rttText"
+                        // 码率：字节累计值差 / 采样间隔
+                        var bitrateText = ""
+                        val bytes = if (isHostView) json.optLong("outBytes", 0) else json.optLong("inBytes", 0)
+                        val lastBytes = if (isHostView) lastStatsBytesOut else lastStatsBytesIn
+                        val elapsed = now - lastStatsTime
+                        if (lastStatsTime > 0 && elapsed > 0 && bytes >= lastBytes) {
+                            val kbps = (bytes - lastBytes) * 8.0 / elapsed // 每毫秒 8 bit → kbps
+                            bitrateText = "码率 %.0f kbps".format(kbps)
+                        }
+                        if (isHostView) { lastStatsBytesOut = bytes } else { lastStatsBytesIn = bytes }
+                        // 分辨率
+                        val resText = if (isHostView) {
+                            val w = json.optInt("outW", 0); val h = json.optInt("outH", 0)
+                            if (w > 0) "$w×$h" else "--"
+                        } else {
+                            val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
+                            if (w > 0) "$w×$h" else "--"
+                        }
+                        val lostText = if (!isHostView && json.optInt("lost", 0) > 0) " 丢包 ${json.optInt("lost", 0)}" else ""
+                        lastStatsTime = now
+                        binding.tvFullscreenStats.text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$lostText"
                     }
                 } catch (t: Throwable) {
                     binding.tvFullscreenStats.text = "统计暂不可用"

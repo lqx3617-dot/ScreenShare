@@ -643,19 +643,31 @@ class WebRTCPeer(
                     try {
                         var inFps = 0.0
                         var outFps = 0.0
-                        var inBitrate = 0.0
-                        var outBitrate = 0.0
+                        var inBytes = 0.0
+                        var outBytes = 0.0
                         var rtt = -1.0
+                        var inW = 0
+                        var inH = 0
+                        var outW = 0
+                        var outH = 0
+                        var lost = 0L
+                        var lostTotal = 0L
                         val stats = report.statsMap
                         for ((_, s) in stats) {
                             when (s.type) {
                                 "inbound-rtp" -> {
                                     inFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
-                                    inBitrate += ((s.members["bytesReceived"] as? Number)?.toDouble() ?: 0.0)
+                                    inBytes += ((s.members["bytesReceived"] as? Number)?.toDouble() ?: 0.0)
+                                    inW = (s.members["frameWidth"] as? Number)?.toInt() ?: 0
+                                    inH = (s.members["frameHeight"] as? Number)?.toInt() ?: 0
+                                    lost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
+                                    lostTotal += (s.members["packetsReceived"] as? Number)?.toLong() ?: 0L
                                 }
                                 "outbound-rtp" -> {
                                     outFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
-                                    outBitrate += ((s.members["bytesSent"] as? Number)?.toDouble() ?: 0.0)
+                                    outBytes += ((s.members["bytesSent"] as? Number)?.toDouble() ?: 0.0)
+                                    outW = (s.members["frameWidth"] as? Number)?.toInt() ?: 0
+                                    outH = (s.members["frameHeight"] as? Number)?.toInt() ?: 0
                                 }
                                 "candidate-pair" -> {
                                     val active = s.members["nominated"]
@@ -667,11 +679,19 @@ class WebRTCPeer(
                                 else -> {}
                             }
                         }
-                        // bytesReceived 是累计值，这里换算需与采样间隔配合；此处先返回瞬时 fps/rtt 与累计字节
+                        // bytesReceived/bytesSent 为累计值，由调用方结合采样间隔换算码率
                         result = org.json.JSONObject().apply {
                             put("inFps", inFps.toInt())
                             put("outFps", outFps.toInt())
                             put("rtt", rtt.toInt())
+                            put("inBytes", inBytes.toLong())
+                            put("outBytes", outBytes.toLong())
+                            put("inW", inW)
+                            put("inH", inH)
+                            put("outW", outW)
+                            put("outH", outH)
+                            put("lost", lost)
+                            put("lostTotal", lostTotal)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")
