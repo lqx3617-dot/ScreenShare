@@ -116,6 +116,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 增量丢包统计基准（后台线程读写）
     private var lastLostTotal = 0L
     private var lastLost = 0L
+    // 诊断上报去重签名（值变化才重报）
+    @Volatile private var lastDiagSig = ""
 
     // 显示模式：true=完整显示(等比，可能有黑边)，false=铺满(无黑边，边缘裁切)
     private var isFitMode = true
@@ -269,9 +271,27 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } catch (_: Throwable) {}
     }
 
+    /** 诊断上报：把编码器/瓶颈/丢包/延迟信息 POST 到信令服务器 /diag 落盘，便于远程定位真机问题 */
+    private fun reportDiagnostic(text: String) {
+        try {
+            val base = BuildConfig.SIGNAL_URL
+                .replace("wss://", "https://").replace("ws://", "http://")
+                .trimEnd('/')
+            val url = base.substringBeforeLast('/', base)
+            val payload = "time=${System.currentTimeMillis()} role=host $text\n"
+            val body = payload.toByteArray().toRequestBody("text/plain".toMediaType())
+            val req = okhttp3.Request.Builder()
+                .url("$url/diag")
+                .post(body)
+                .build()
+            okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                .newCall(req).execute().close()
+        } catch (_: Throwable) {}
+    }
+
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
-    private fun onFpsToggleClicked() {
-        currentFps = if (currentFps == 60) 30 else 60
+    private fun onFpsToggleClicked() {        currentFps = if (currentFps == 60) 30 else 60
         binding.btnFpsToggle.text = "${currentFps}帧"
         val msg = org.json.JSONObject()
             .put("type", "fps")
@@ -1666,6 +1686,27 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         }
                         val text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$encText$lostText"
                         val warn = !isHostView && lostPct >= 1.0
+                        // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
+                        if (isHostView) {
+                            val impl = json.optString("encImpl", "")
+                            val limit = json.optString("qualityLimit", "")
+                            val rttMs = json.optInt("rtt", 0)
+                            val lossPct = json.optDouble("outLossPct", -1.0)
+                            val isSoftEnc = impl.contains("SW", true) || impl.contains("OpenH264", true) || impl.contains("Software", true)
+                            val anomaly = isSoftEnc || limit == "cpu" || lossPct >= 3.0 || rttMs >= 500
+                            if (anomaly) {
+                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView"
+                                if (sig != lastDiagSig) {
+                                    lastDiagSig = sig
+                                    reportDiagnostic(
+                                        "impl=$impl limit=$limit outLoss=${"%.1f".format(lossPct)}% rtt=${rttMs}ms " +
+                                            "outFps=${json.optInt("outFps", 0)} inFps=${json.optInt("inFps", 0)} " +
+                                            "res=${json.optInt("outW", 0)}x${json.optInt("outH", 0)} " +
+                                            "outBytes=${json.optLong("outBytes", 0)}"
+                                    )
+                                }
+                            }
+                        }
                         // UI 更新回主线程
                         binding.root.post {
                             if (!isFullscreen) return@post

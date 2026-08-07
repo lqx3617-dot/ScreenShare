@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "定位丢包严重、卡顿闪退：\n① 修复弱网降质从未触发的 Bug——SDK144 中 outbound-rtp 无 packetsLost 字段(源码核验)，旧代码读到的一直是 0；现改为从 remote-inbound-rtp 读取远端 RTCP 直接回报的丢包率 fractionLost，实时准确，弱网自动降质真正生效\n② H264 改 Baseline profile——部分中低端机型硬编不支持 High profile 会静默回退软件编码(1080p30 软编极吃 CPU，表现为不管人数多少都一直卡)；Baseline 保证硬编可用，画质由弱网自适应补偿\n③ 新增编码诊断——状态条显示'编码硬编/软编 + CPU瓶颈/带宽受限/正常'，可直接判断卡顿是编码跟不上还是网络不够",
+  changelog: "诊断能力增强：\n检测到异常(软编/CPU瓶颈/高丢包/高延迟)时，编码器类型、瓶颈原因、丢包率、延迟、帧率、分辨率自动上报服务器落盘——无需手动查看屏幕，正常使用即可自动采集真机诊断数据",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复弱网降质失效+H264改Baseline防软编卡顿",
+    note: "诊断自动上报，无需手动看屏幕",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

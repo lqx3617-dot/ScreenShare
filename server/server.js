@@ -52,6 +52,25 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // 诊断上报：App 检测到软编/CPU瓶颈/高丢包时 POST 到这里落盘
+  if (req.method === "POST" && req.url.startsWith("/diag")) {
+    let body = "";
+    req.on("data", (c) => { body = (body + c).slice(-200000); });
+    req.on("end", () => {
+      try {
+        const dir = path.join(__dirname, "diag");
+        fs.mkdirSync(dir, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.appendFileSync(path.join(dir, "diag.log"), `${stamp} ${body.trim()}\n`);
+        console.log(`[diag] ${stamp} ${body.trim().slice(0, 160)}`);
+      } catch (e) {
+        console.error("[diag] 写入失败:", e.message);
+      }
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("ok");
+    });
+    return;
+  }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("ScreenShare signaling server is running");
 });
