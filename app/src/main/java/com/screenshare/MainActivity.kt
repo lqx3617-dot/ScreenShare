@@ -1636,11 +1636,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val rttText = if (json.optInt("rtt", 0) > 0) "延迟 ${json.optInt("rtt", 0)}ms" else "延迟 --"
                         // 码率：字节累计值差 / 采样间隔
                         var bitrateText = ""
+                        var lastKbps = 0.0
                         val bytes = if (isHostView) json.optLong("outBytes", 0) else json.optLong("inBytes", 0)
                         val lastBytes = if (isHostView) lastStatsBytesOut else lastStatsBytesIn
                         val elapsed = now - lastStatsTime
                         if (lastStatsTime > 0 && elapsed > 0 && bytes >= lastBytes) {
                             val kbps = (bytes - lastBytes) * 8.0 / elapsed // 每毫秒 8 bit → kbps
+                            lastKbps = kbps
                             bitrateText = "码率 %.0f kbps".format(kbps)
                         }
                         if (isHostView) { lastStatsBytesOut = bytes } else { lastStatsBytesIn = bytes }
@@ -1685,6 +1687,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             }
                         }
                         val text = "状态 $fpsText | $rttText | 分辨率 $resText${if (bitrateText.isNotEmpty()) " | $bitrateText" else ""}$encText$lostText"
+                        // V3.2: 网络质量评分（0~100）+ 增强日志
+                        val qualityLoss = if (isHostView) json.optDouble("outLossPct", -1.0) else lostPct
+                        val qualityRtt = json.optInt("rtt", 0)
+                        val qualityScore = peer?.calculateQuality(if (qualityLoss >= 0) qualityLoss else 0.0, qualityRtt) ?: 0
+                        val bitrateMbps = if (bitrateText.isNotEmpty()) "${"%.1f".format(lastKbps / 1000.0)}M" else "--"
+                        AppLogger.webrtc("bitrate=${bitrateMbps}b/s fps=${if (isHostView) json.optInt("outFps", 0) else json.optInt("inFps", 0)} res=${resText}")
+                        AppLogger.network("loss=${"%.2f".format(if (qualityLoss >= 0) qualityLoss else 0.0)} rtt=$qualityRtt quality=$qualityScore")
+                        val qualityText = if (qualityScore > 0) " | 网络质量 $qualityScore" else ""
+                        val fullText = text + qualityText
                         val warn = !isHostView && lostPct >= 1.0
                         // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
                         if (isHostView) {
@@ -1700,6 +1711,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                     lastDiagSig = sig
                                     reportDiagnostic(
                                         "impl=$impl limit=$limit outLoss=${"%.1f".format(lossPct)}% rtt=${rttMs}ms " +
+                                            "quality=${peer?.calculateQuality(if (lossPct >= 0) lossPct else 0.0, rttMs) ?: 0} " +
                                             "outFps=${json.optInt("outFps", 0)} inFps=${json.optInt("inFps", 0)} " +
                                             "res=${json.optInt("outW", 0)}x${json.optInt("outH", 0)} " +
                                             "outBytes=${json.optLong("outBytes", 0)}"
@@ -1711,7 +1723,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         binding.root.post {
                             if (!isFullscreen) return@post
                             binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF00E5FF.toInt())
-                            binding.tvFullscreenStats.text = text
+                            binding.tvFullscreenStats.text = fullText
                         }
                     }
                 } catch (t: Throwable) {

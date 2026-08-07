@@ -51,6 +51,8 @@ class SignalClient(
         const val RETRY_BASE_MS = 1000L
         // V3.1: 应用层心跳间隔（保持 WS 活跃，防止移动网络假断开）
         const val HEARTBEAT_INTERVAL_MS = 10000L
+        // V3.2: 心跳 pong 超时判定——超过 30s 未收到 pong 视为 WS 假死，主动重连
+        const val PONG_TIMEOUT_MS = 30000L
     }
 
     private var webSocket: WebSocket? = null
@@ -60,9 +62,20 @@ class SignalClient(
     private var attempt = 0
     // V3.1: 应用层心跳——10s 周期 ping 保持连接活跃，防止移动网络假断开
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // V3.2: 心跳假死检测——超过 30s 未收到 pong 视为 WebSocket 假死，主动断开并自动重连
+    private var lastPongMs = 0L
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
             if (closedByUs) return
+            val now = System.currentTimeMillis()
+            // 已建立过 pong 基线且长期收不到 pong → 假死，主动取消连接触发 onFailure 重连
+            if (lastPongMs > 0 && now - lastPongMs > PONG_TIMEOUT_MS) {
+                Log.w(TAG, "心跳超时(${now - lastPongMs}ms 无 pong)，判定 WS 假死，主动重连")
+                webSocket?.cancel()
+                webSocket = null
+                scheduleRetry("信令心跳超时，自动重连中...")
+                return
+            }
             webSocket?.send("""{"type":"ping"}""")
             heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
         }
@@ -91,6 +104,7 @@ class SignalClient(
                 }
                 webSocket.send(msg.toString())
                 // V3.1: 连接成功后启动应用层心跳
+                lastPongMs = System.currentTimeMillis()
                 heartbeatHandler.removeCallbacksAndMessages(null)
                 heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS)
             }
@@ -133,7 +147,7 @@ class SignalClient(
             "peer-ready" -> listener.onPeerReady()
             "relay" -> listener.onRelay(json.optString("data"))
             "peer-left" -> listener.onPeerLeft()
-            "pong" -> {}
+            "pong" -> { lastPongMs = System.currentTimeMillis() }
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> Log.w(TAG, "未知消息: ${json.optString("type")}")
         }

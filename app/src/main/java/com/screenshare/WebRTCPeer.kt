@@ -131,11 +131,29 @@ class WebRTCPeer(
     // ===== V3.1: WebRTC 连接状态管理 =====
     enum class ConnectionStatus { CONNECTING, CONNECTED, RECONNECTING, FAILED }
 
+    /** V3.2: 网络质量评分——由丢包率(loss 0~100%)与 RTT(ms) 综合得出 0~100 分 */
+    data class NetworkQuality(val loss: Double, val rtt: Int, val score: Int)
+
+    /**
+     * V3.2: 计算网络质量评分。
+     * 基准 100 分，丢包率每 1% 扣 5 分，RTT>200ms 额外扣 20 分，最低 0 分。
+     */
+    fun calculateQuality(loss: Double, rtt: Int): Int {
+        var score = 100
+        score -= (loss * 5).toInt()
+        if (rtt > 200) score -= 20
+        return score.coerceAtLeast(0)
+    }
+
     /** 当前连接状态（观察方可用 getConnectionStatus() 读取，ICE 状态变化时更新） */
     @Volatile private var connectionStatus = ConnectionStatus.CONNECTING
 
     /** ICE restart 进行中标志，防止并发多次触发 */
     @Volatile private var restartInFlight = false
+
+    // V3.2: 重连保护——最多尝试 5 次 ICE restart，防止弱网下无限重协商耗电
+    @Volatile private var reconnectCount = 0
+    private val maxReconnectAttempts = 5
 
     fun getConnectionStatus(): ConnectionStatus = connectionStatus
 
@@ -173,6 +191,8 @@ class WebRTCPeer(
                 PeerConnection.IceConnectionState.CONNECTED,
                 PeerConnection.IceConnectionState.COMPLETED -> {
                     connectionStatus = ConnectionStatus.CONNECTED
+                    // V3.2: 连接成功后重置重连计数
+                    reconnectCount = 0
                     listener.onConnected()
                 }
                 PeerConnection.IceConnectionState.DISCONNECTED -> {
@@ -186,7 +206,7 @@ class WebRTCPeer(
                     connectionStatus = ConnectionStatus.FAILED
                     listener.onDisconnected()
                     Log.w(TAG, "ICE FAILED，发起 ICE restart 尝试自动恢复")
-                    iceRestart()
+                    restartConnection()
                 }
                 else -> {}
             }
@@ -197,7 +217,7 @@ class WebRTCPeer(
                 // 长时间收不到数据视为连接假死，尝试 ICE restart 恢复
                 if (connectionStatus == ConnectionStatus.CONNECTED) {
                     connectionStatus = ConnectionStatus.RECONNECTING
-                    iceRestart()
+                    restartConnection()
                 }
             }
         }
@@ -349,8 +369,31 @@ class WebRTCPeer(
         createOffer()
     }
 
+    /**
+     * V3.2: 带保护的 ICE restart——重连上限保护，避免无限重协商耗电。
+     * 断线 → 尝试恢复 → 最多 5 次 → 仍失败则提示放弃。
+     */
+    fun restartConnection() {
+        if (disposed) return
+        if (reconnectCount >= maxReconnectAttempts) {
+            AppLogger.webrtc("Reconnect failed (超过${maxReconnectAttempts}次)")
+            connectionStatus = ConnectionStatus.FAILED
+            listener.onDisconnected()
+            return
+        }
+        reconnectCount++
+        AppLogger.webrtc("Restart ICE $reconnectCount/$maxReconnectAttempts")
+        val pc = peerConnection ?: return
+        try {
+            pc.restartIce()
+        } catch (t: Throwable) {
+            Log.w(TAG, "restartIce() 异常，走重协商兜底: ${t.message}")
+        }
+        doIceRestart()
+    }
+
     /** V3.1: ICE restart——重新生成 Offer（IceRestart=true）尝试在断网后自动恢复连接 */
-    fun iceRestart() {
+    private fun doIceRestart() {
         if (disposed) return
         val pc = peerConnection ?: return
         // 防止并发多次 restart（DISCONNECTED/FAILED/receiving 停止可能同时触发）
@@ -835,6 +878,9 @@ class WebRTCPeer(
     // V3.1: 动态采集分辨率
     private var captureFps = 30
     private var lastCaptureProfile = 0
+    // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
+    private var lastCaptureSwitchMs = 0L
+    private val captureSwitchCooldownMs = 4000L
 
     /**
      * V3.1: 按弱网档位选择采集分辨率档位。
@@ -934,18 +980,25 @@ class WebRTCPeer(
             }
             // V3.1: 采集侧降分辨率——弱网档位>=2(码率6M)降720p、>=3(4M)降480p，减轻采集+编码双端负载；
             // 恢复档位0(12M)回升 1080p
+            // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
             val targetProfile = captureProfileForLevel(curAdaptLevel)
             if (targetProfile != lastCaptureProfile) {
-                lastCaptureProfile = targetProfile
-                try {
-                    val capturer = videoCapturer
-                    if (capturer != null) {
-                        val (capW, capH) = captureSizeForLevel(targetProfile)
-                        capturer.changeCaptureFormat(capW, capH, captureFps)
-                        AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (档位$curAdaptLevel)")
+                val now = System.currentTimeMillis()
+                val isDowngrade = targetProfile > lastCaptureProfile
+                val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
+                if (isDowngrade || cooldownOk) {
+                    lastCaptureProfile = targetProfile
+                    lastCaptureSwitchMs = now
+                    try {
+                        val capturer = videoCapturer
+                        if (capturer != null) {
+                            val (capW, capH) = captureSizeForLevel(targetProfile)
+                            capturer.changeCaptureFormat(capW, capH, captureFps)
+                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (档位$curAdaptLevel)")
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "采集降分辨率失败: ${t.message}")
                     }
-                } catch (t: Throwable) {
-                    Log.w(TAG, "采集降分辨率失败: ${t.message}")
                 }
             }
         }
@@ -966,6 +1019,7 @@ class WebRTCPeer(
         disposed = true
         resetAdaptiveState()
         restartInFlight = false
+        reconnectCount = 0
         videoCapturer?.stopCapture()
         videoCapturer?.dispose()
         localVideoTrack?.dispose()

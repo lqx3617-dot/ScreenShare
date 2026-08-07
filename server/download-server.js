@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V3.1 连接与弱网优化：\n① WebRTC 连接状态管理——CONNECTING/CONNECTED/RECONNECTING/FAILED 状态机，断网检测 DISCONNECTED/FAILED 时自动发起 ICE restart 重新建立通道，共享断网自动恢复\n② 动态采集分辨率——弱网时自动降低采集分辨率(1080p→720p→480p)减轻采集+编码双端负载，网络恢复自动回升；与原有降码率/编码降分辨率互补，弱网更流畅\n③ 信令应用层心跳——10s 周期 ping 保持 WebSocket 活跃，防止移动网络假断开\n④ 新增统一日志 AppLogger(WEBRTC/NETWORK/CAPTURE)——排查时按模块过滤\n⑤ 编码上限12M/弱网降质档位 12M→2.5M 五档",
+  changelog: "V3.2 工程保护：\n① WebRTC 重连保护——ICE restart 最多 5 次，超出停止提示，避免弱网下无限重协商耗电；连接成功自动重置计数\n② 网络质量评分——0~100 分（丢包每1%扣5分，RTT>200ms 扣20分），全屏状态条与诊断上报实时显示\n③ 采集分辨率防抖——降质立即执行、回升需 4s 冷却，防止 1080/720/480 临界来回跳\n④ WebSocket 心跳假死检测——30s 收不到 pong 判定假死，主动断开自动重连\n⑤ 日志增强——AppLogger 输出 bitrate/fps/loss/rtt/quality 关键指标，便于定位",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "V3.1 自动重连+动态分辨率+心跳",
+    note: "V3.2 重连保护+网络质量+防抖",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
