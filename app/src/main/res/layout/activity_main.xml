@@ -26,7 +26,25 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="vertical" />
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ScreenShare"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="实时屏幕共享"
+                    android:textSize="11sp"
+                    android:textColor="@color/neon_cyan"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvCheckUpdate"

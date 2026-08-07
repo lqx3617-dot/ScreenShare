@@ -732,13 +732,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             textSize = 56f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
+            setTextColor(Color.parseColor("#00E5FF"))
         }
         val tvHint = TextView(this).apply {
             text = "发给对方后，对方点击【加入会议】输入该会议号即可观看"
             textSize = 13f
             gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#FF6B7280"))
+            setTextColor(Color.parseColor("#64748B"))
             setPadding(0, 8, 0, 0)
         }
         val layout = LinearLayout(this).apply {
@@ -746,7 +746,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             addView(tv)
             addView(tvHint)
         }
-        val dialog = AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(this, R.style.Theme_ScreenShare_Dialog)
             .setTitle("快速会议已创建")
             .setView(layout)
             .setPositiveButton("复制会议号", { _, _ ->

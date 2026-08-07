@@ -5,7 +5,7 @@
     android:orientation="vertical"
     android:minWidth="300dp"
     android:padding="24dp"
-    android:background="@drawable/bg_glass">
+    android:background="@drawable/bg_dialog">
 
     <TextView
         android:layout_width="wrap_content"
@@ -13,14 +13,14 @@
         android:text="加入会议"
         android:textSize="22sp"
         android:textStyle="bold"
-        android:textColor="#FF111827" />
+        android:textColor="@color/text_primary" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="输入会议创建方提供的 4 位会议号"
         android:textSize="13sp"
-        android:textColor="#FF6B7280"
+        android:textColor="@color/text_secondary"
         android:layout_marginTop="4dp" />
 
     <EditText
@@ -32,8 +32,8 @@
         android:gravity="center"
         android:textSize="38sp"
         android:textStyle="bold"
-        android:textColor="#FFFFFFFF"
-        android:textColorHint="#FF6B7280"
+        android:textColor="@color/neon_cyan"
+        android:textColorHint="#3364748B"
         android:hint="0000"
         android:inputType="number"
         android:maxLength="4"
@@ -50,8 +50,8 @@
         android:textSize="16sp"
         android:textStyle="bold"
         android:textAllCaps="false"
-        android:textColor="#FFFFFFFF"
-        android:background="@drawable/bg_btn_green" />
+        android:textColor="#FF0A0D26"
+        android:background="@drawable/bg_btn_neon_violet" />
 
     <TextView
         android:id="@+id/btnJoinCancel"
@@ -61,6 +61,6 @@
         android:gravity="center"
         android:text="取消"
         android:textSize="14sp"
-        android:textColor="#FF6B7280" />
+        android:textColor="@color/text_secondary" />
 
 </LinearLayout>
