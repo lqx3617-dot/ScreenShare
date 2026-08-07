@@ -1580,6 +1580,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
                             if (w > 0) "$w×$h" else "--"
                         }
+                        // 腾讯会议式弱网自适应：共享方按发送丢包率自动降质保流畅（v1.101）
+                        val outLost = json.optLong("outLost", 0)
+                        val outSent = json.optLong("outSent", 0)
+                        if (isHostView && (outSent + outLost) > 0) {
+                            val sendLossPct = outLost * 100.0 / (outSent + outLost)
+                            peer?.adaptToNetwork(sendLossPct)
+                        }
                         val lost = json.optLong("lost", 0)
                         val lostTotal = json.optLong("lostTotal", 0)
                         // 丢包率 = 丢包数 / (接收+丢包) 总量

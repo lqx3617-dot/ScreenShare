@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复观看画面滞后（共享方动了、观看方还卡住）：\n对照 WebRTC SDK 144 源码核验并清理失效配置——旧版 field trials(丢包拥塞控制等)在新 SDK 已移除，全部替换为真实生效的项\n新增 JitterEstimatorConfig 播放缓冲控制：轻微丢包不再放大接收端缓冲(nack_limit 3→15)，画面更跟手；严重丢包仍快速降速保流畅\n丢包快速降码率(LossBasedBweV2)在新 SDK 默认开启，无需额外配置，持续生效",
+  changelog: "打开/加入应用时高丢包、高延迟：新增腾讯会议式弱网自动降质保流畅\n共享方按发送丢包率自动调节——丢包高(≥3%)时自动降码率上限(15M→10M→7M→5M→3M)并优先保帧率降分辨率，画面不再卡顿；丢包恢复(<2%持续4.5s)后逐步回升码率并恢复高清晰度\n网络好时保持 30fps 高清，无需手动切换",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "修复观看画面滞后，清理失效配置",
+    note: "新增弱网自动降质保流畅（腾讯会议模式）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

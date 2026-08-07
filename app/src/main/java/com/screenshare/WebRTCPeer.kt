@@ -658,6 +658,8 @@ class WebRTCPeer(
                         var lost = 0L
                         var lostTotal = 0L
                         var nackCount = 0L
+                        var outLost = 0L
+                        var outSent = 0L
                         val stats = report.statsMap
                         for ((_, s) in stats) {
                             when (s.type) {
@@ -675,6 +677,9 @@ class WebRTCPeer(
                                     outBytes += ((s.members["bytesSent"] as? Number)?.toDouble() ?: 0.0)
                                     outW = (s.members["frameWidth"] as? Number)?.toInt() ?: 0
                                     outH = (s.members["frameHeight"] as? Number)?.toInt() ?: 0
+                                    // 发送端丢包：outbound-rtp 的 packetsLost/packetsSent
+                                    outLost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
+                                    outSent += (s.members["packetsSent"] as? Number)?.toLong() ?: 0L
                                 }
                                 "candidate-pair" -> {
                                     val active = s.members["nominated"]
@@ -700,6 +705,8 @@ class WebRTCPeer(
                             put("lost", lost)
                             put("lostTotal", lostTotal)
                             put("nack", nackCount)
+                            put("outLost", outLost)
+                            put("outSent", outSent)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")
@@ -716,9 +723,81 @@ class WebRTCPeer(
         return result
     }
 
+    // 腾讯会议式弱网自适应状态（v1.101）
+    private var curAdaptLevel = 0
+    private var recoverTimer = 0
+    private var lastAdaptDegradation: RtpParameters.DegradationPreference? = null
+    private val adaptBitrateCaps = intArrayOf(15_000_000, 10_000_000, 7_000_000, 5_000_000, 3_000_000)
+
+    /**
+     * 腾讯会议式弱网自适应（v1.101）：按发送丢包率动态调节码率上限与分辨率策略。
+     * - 丢包高（>=5%）：逐级降码率 + 切 MAINTAIN_FRAMERATE（保帧率降分辨率，画面流畅不卡顿）
+     * - 丢包恢复（<2% 持续）：缓步回升码率 + 回 MAINTAIN_RESOLUTION（恢复高清晰度）
+     * 由 MainActivity 全屏统计定时器周期调用（约 1.5s 一次）。
+     *
+     * @param sendLossPct 发送丢包率 0~100（outbound-rtp packetsLost/(sent+lost)）
+     */
+    fun adaptToNetwork(sendLossPct: Double) {
+        val pc = peerConnection ?: return
+        if (disposed) return
+        // 阈值：丢包率 >=5% 视为弱网，需降质；<2% 视为已恢复
+        val level = when {
+            sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1 // 最高档降质
+            sendLossPct >= 3.0 -> 2
+            sendLossPct >= 2.0 -> 1
+            else -> 0
+        }
+        if (level > curAdaptLevel) {
+            // 弱网加重：直接降到对应档位
+            curAdaptLevel = level
+            recoverTimer = 0
+        } else if (level < curAdaptLevel) {
+            // 网络好转：计数满 3 次（约 4.5s）才回升一档，避免抖动
+            recoverTimer++
+            if (recoverTimer >= 3) {
+                curAdaptLevel--
+                recoverTimer = 0
+            }
+        }
+        val cap = adaptBitrateCaps[curAdaptLevel]
+        try {
+            pc.setBitrate(1_500_000, cap, cap)
+        } catch (t: Throwable) {
+            Log.w(TAG, "自适应调码率失败: ${t.message}")
+        }
+        // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
+        val wantFrameratePref = curAdaptLevel > 0
+        val degradation = if (wantFrameratePref) {
+            RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+        } else {
+            RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        }
+        if (lastAdaptDegradation != degradation) {
+            lastAdaptDegradation = degradation
+            try {
+                videoSender?.let { rtp ->
+                    val params = rtp.parameters
+                    params.degradationPreference = degradation
+                    rtp.parameters = params
+                    Log.d(TAG, "弱网自适应: 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "自适应切分辨率策略失败: ${t.message}")
+            }
+        }
+    }
+
+    /** 重置弱网自适应状态（断开/重新连接时调用） */
+    fun resetAdaptiveState() {
+        curAdaptLevel = 0
+        recoverTimer = 0
+        lastAdaptDegradation = null
+    }
+
     fun disconnect() {
         if (disposed) return
         disposed = true
+        resetAdaptiveState()
         videoCapturer?.stopCapture()
         videoCapturer?.dispose()
         localVideoTrack?.dispose()
