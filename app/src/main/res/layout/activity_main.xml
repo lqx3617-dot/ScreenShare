@@ -210,6 +210,7 @@
 
             <!-- 视频画面比例/全屏按钮：视频框内部右侧 -->
             <LinearLayout
+                android:id="@+id/llRemoteRight"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="top|end"

@@ -1296,7 +1296,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnFullscreen.visibility = View.GONE
 
         // 控制按钮移入全屏层左下角（远程控制/返回/主页/最近/文本在全屏下仍可用）
-        binding.btnAspectToggle.visibility = View.GONE
+        // 完整/铺满按钮移入全屏层右下角，全屏下仍可切换画面比例
         val lp = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1305,6 +1305,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         lp.setMargins(20, 0, 0, 30)
         binding.flFullscreen.addView(binding.llVideoBtns, lp)
         binding.llVideoBtns.visibility = View.VISIBLE
+
+        // 全屏层按钮加大，便于操作（进入时放大，退出时恢复）
+        enlargeFullscreenButtons()
+
+        // 完整/铺满按钮移入全屏层右下角，与左下控制按钮对齐
+        binding.btnAspectToggle.visibility = View.VISIBLE
+        val rlp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        rlp.gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
+        rlp.setMargins(0, 0, 20, 30)
+        binding.flFullscreen.addView(binding.btnAspectToggle, rlp)
 
         // 全屏跟随屏幕方向：竖屏竖着看、横屏横着看（不再强制横屏）
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
@@ -1438,6 +1451,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
             lp.setMargins(0, 0, 0, 0)
             binding.flRemoteVideo.addView(binding.llVideoBtns, lp)
+
+            // 完整/铺满按钮移回视频框右上角
+            binding.btnAspectToggle.visibility = View.VISIBLE
+            val rlp = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            rlp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            rlp.setMargins(0, 10, 10, 0)
+            binding.flRemoteVideo.addView(binding.btnAspectToggle, rlp)
+
+            // 恢复控制按钮原始尺寸
+            restoreFullscreenButtons()
         }
         binding.llSignal.visibility = View.VISIBLE
         if (peer != null) {
@@ -1456,7 +1482,49 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
     }
 
-    /** 会话结束时销毁常驻全屏 renderer */
+    /** 全屏时放大控制按钮（远程控制/返回/主页/最近/文本/完整/铺满），退出全屏恢复原始尺寸 */
+    private fun enlargeFullscreenButtons() {
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        fun linear(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
+        binding.btnRemoteControl.apply {
+            layoutParams = linear(dp(96), dp(56))
+            textSize = 15f
+        }
+        binding.btnCtrlText.apply {
+            layoutParams = linear(dp(96), dp(56))
+            textSize = 15f
+        }
+        binding.btnCtrlBack.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)); textSize = 14f }
+        binding.btnCtrlHome.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)); textSize = 14f }
+        binding.btnCtrlRecents.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(56)); textSize = 14f }
+        binding.btnAspectToggle.apply {
+            layoutParams = FrameLayout.LayoutParams(dp(96), dp(56))
+            textSize = 15f
+        }
+    }
+
+    /** 退出全屏恢复控制按钮 XML 中定义的原始尺寸 */
+    private fun restoreFullscreenButtons() {
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        fun linear(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
+        binding.btnRemoteControl.apply {
+            layoutParams = linear(dp(64), dp(44))
+            textSize = 12f
+        }
+        binding.btnCtrlText.apply {
+            layoutParams = linear(dp(64), dp(44))
+            textSize = 12f
+        }
+        binding.btnCtrlBack.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
+        binding.btnCtrlHome.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
+        binding.btnCtrlRecents.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
+        binding.btnAspectToggle.apply {
+            layoutParams = FrameLayout.LayoutParams(dp(64), dp(44))
+            textSize = 12f
+        }
+    }
     private fun releaseFullscreenRenderer() {
         fullscreenSink?.let { remoteVideoTrack?.removeSink(it) }
         fullscreenSink = null
