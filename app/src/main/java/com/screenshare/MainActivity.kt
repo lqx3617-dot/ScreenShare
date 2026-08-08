@@ -373,12 +373,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             else -> return
         }
         // 内联坐标映射（避免每帧 JSONObject/FloatArray 分配，降低触摸延迟）
-        // 铺满判定与 applyModeScale 一致：手动铺满 或 方向不匹配自动铺满
+        val crop = !isFitMode
         val rw = renderer.width.toFloat()
         val rh = renderer.height.toFloat()
         val vw = lastFrameW.toFloat()
         val vh = lastFrameH.toFloat()
-        val crop = !isFitMode || ((vh >= vw) != (rh >= rw))
         var left = 0f; var top = 0f; var right = rw; var bottom = rh
         if (!crop) {
             val scale = minOf(rw / vw, rh / vh)
@@ -555,16 +554,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         applyModeScale()
     }
 
-    /** 完整模式（fit）下是否应自动改为铺满（crop）。
-     *  视频方向与观看端容器方向不一致时（如横屏视频在竖屏手机上），等比完整显示
-     *  会留下大面积黑边、画面显得很小；此时自动铺满让画面占满屏幕（裁切边缘）。
-     *  方向一致时保持等比完整（黑边少，不裁切）。 */
-    private fun isAutoFill(vw: Int, vh: Int, cw: Int, ch: Int): Boolean {
-        if (cw <= 0 || ch <= 0) return false
-        return (vh >= vw) != (ch >= cw)
-    }
-
-    /** 根据当前模式 + 视频/容器比例，手动设置 renderer 尺寸实现完整（等比黑边）或铺满（放大裁切） */
+    /** 根据当前模式 + 视频/容器比例，手动设置 renderer 尺寸实现完整（等比黑边）或铺满（放大裁切）。
+     *  方向不匹配的视频（如横屏视频在竖屏手机）保持等比完整显示——铺满会裁切大部分画面。 */
     private fun applyModeScale() {
         val vw = lastFrameW
         val vh = lastFrameH
@@ -573,7 +564,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val cw = binding.flRemoteVideo.width
         val ch = binding.flRemoteVideo.height
         if (cw > 0 && ch > 0) {
-            val fill = !isFitMode || isAutoFill(vw, vh, cw, ch)
+            val fill = !isFitMode
             val fit = minOf(cw.toFloat() / vw, ch.toFloat() / vh)
             val lp = if (fill) {
                 FrameLayout.LayoutParams(
@@ -602,7 +593,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val fw2 = binding.flFullscreen.width
         val fh2 = binding.flFullscreen.height
         if (fw2 > 0 && fh2 > 0) {
-            val fill2 = !isFitMode || isAutoFill(vw, vh, fw2, fh2)
+            val fill2 = !isFitMode
             val fit2 = minOf(fw2.toFloat() / vw, fh2.toFloat() / vh)
             val lp2 = if (fill2) {
                 FrameLayout.LayoutParams(
@@ -1411,7 +1402,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (fw != lastFrameW || fh != lastFrameH) {
                 lastFrameW = fw
                 lastFrameH = fh
-                runOnUiThread { applyModeScale() }
+                runOnUiThread {
+                    applyModeScale()
+                    // host 旋转导致视频方向变化时，全屏观看自动跟随新方向
+                    if (isFullscreen && fw > 0 && fh > 0) {
+                        requestedOrientation = if (fw > fh)
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        else
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    }
+                }
             }
         }
         track.addSink(remoteVideoSink!!)
@@ -1491,8 +1491,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         rlp.setMargins(0, 0, 20, 30)
         moveView(binding.btnAspectToggle, binding.flFullscreen, rlp)
 
-        // 全屏跟随屏幕方向：竖屏竖着看、横屏横着看（不再强制横屏）
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        // 全屏跟随视频方向：横屏视频自动横屏、竖屏视频自动竖屏，画面最大化且不裁切
+        // （视频方向来自首帧旋转后的宽高）
+        if (lastFrameW > 0 && lastFrameH > 0) {
+            requestedOrientation = if (lastFrameW > lastFrameH)
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        } else {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
 
         // 沉浸式：隐藏系统栏
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -1568,7 +1576,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (fw != lastFrameW || fh != lastFrameH) {
                 lastFrameW = fw
                 lastFrameH = fh
-                runOnUiThread { applyModeScale() }
+                runOnUiThread {
+                    applyModeScale()
+                    if (isFullscreen && fw > 0 && fh > 0) {
+                        requestedOrientation = if (fw > fh)
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        else
+                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    }
+                }
             }
         }
         // 不预先 addSink：主预览与全屏两个 renderer 同时渲染会双倍消耗解码/渲染资源导致卡顿。
@@ -2043,6 +2059,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     )
                     r.requestLayout()
                 }
+                applyModeScale()
             }
         }
         // 仅当处于共享状态且本机是共享方时更新采集方向

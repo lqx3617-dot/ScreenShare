@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第三阶段 画面自适应完善：\n① 修复全屏画面过小——进入全屏时容器由隐藏转可见后立即重新测量并应用铺满判定，横屏视频在竖屏手机上全屏观看同样铺满，不再缩成窄条\n② 退出全屏回主页同步重新应用铺满，主页/全屏显示效果一致",
+  changelog: "V4 第四阶段 画面显示彻底修复：\n① 移除方向不匹配自动铺满——横屏视频在竖屏手机上铺满会裁切掉大部分画面（只能看到中间一条），现恢复等比完整显示，画面始终完整可见\n② 全屏自动旋转到视频方向——横屏视频进全屏自动横屏、竖屏自动竖屏，host 旋转时 viewer 全屏实时跟随，画面最大化且完整\n③ 主页/全屏显示一致，控制模式触摸坐标保持等比完整映射",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "V4 全屏画面自适应修复",
+    note: "V4 画面显示修复-全屏自动旋转",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
