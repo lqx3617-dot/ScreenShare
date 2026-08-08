@@ -81,6 +81,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var authorizationRequested = false
     // Trickle ICE：SDP 是否已通过信令发出，之后的候选才单独增量发送
     private var signalSdpSent = false
+    // V4: 采集/主会话是否就绪（新 viewer 加入时据此决定立即发 Offer 或排队）
+    private var screenCaptureReady = false
 
     // ICE 候选缓存（打包进信令 SDP 一起发送）
     private val iceCandidates = mutableListOf<IceCandidate>()
@@ -214,13 +216,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         handleShareLink(intent)
     }
 
-    /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
+    /** 解析分享链接并自动加入：screenshare://join?code=XXXX&token=YYYY */
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
         // 兼容不同浏览器解析：intent:// 唤起时部分解析会把 query 并入 host，
         // 因此先从 query 取，取不到再从完整字符串兜底提取
         val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
             ?: Regex("code=([0-9]{4})").find(uri.toString())?.groupValues?.get(1) ?: ""
+        val token = uri.getQueryParameter("token")?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+            ?: Regex("token=([A-Za-z0-9]+)").find(uri.toString())?.groupValues?.get(1)?.uppercase() ?: ""
         if (!Regex("^[0-9]{4}$").matches(code)) {
             Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
             return
@@ -230,7 +234,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "当前会话进行中，无法加入", Toast.LENGTH_SHORT).show()
             return
         }
-        joinMeetingWithCode(code)
+        if (token.isEmpty()) {
+            Toast.makeText(this, "分享链接缺少口令，请在 App 内手动输入", Toast.LENGTH_LONG).show()
+            return
+        }
+        joinMeetingWithCode(code, token)
     }
 
     /** 崩溃日志采集：Java 层崩溃写入外部存储，便于下次启动查看/上报定位闪退 */
@@ -769,10 +777,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 等 ICE 收集一些候选后创建 Offer（给 ICE 一点时间收集）
         // 重要：必须在主线程创建/操作 PeerConnection（与 createPeerConnection 同一线程），
         // 跨线程调用会导致 ICE 模块异常、候选不生成。
+        // V4: host 端主连接仅作采集底座，不直接发 offer；每个 viewer 由独立连接发送 offer
         binding.root.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
             val target = peer ?: return@postDelayed
-            target.createOffer()
+            screenCaptureReady = true
+            // 采集就绪后补发此前排队的新 viewer Offer
+            pendingViewerIds.toList().forEach { vid ->
+                target.createOfferFor(vid)
+            }
+            pendingViewerIds.clear()
         }, 500)
     }
 
@@ -811,7 +825,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             setTextColor(Color.parseColor("#00E5FF"))
         }
         val tvHint = TextView(this).apply {
-            text = "发给对方后，对方点击【加入会议】输入该会议号即可观看"
+            text = "口令: ${signalClient?.getToken() ?: "--"}\n发给对方，对方输入会议号+口令即可观看"
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#64748B"))
@@ -839,10 +853,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         dialog.show()
     }
 
-    /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号） */
+    /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号 + 口令） */
     private fun buildShareText(code: String): String {
         val base = "https://8090-6d639d2de20eb686.monkeycode-ai.online"
-        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
+        val token = signalClient?.getToken() ?: ""
+        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code&token=$token\n会议号：$code\n口令：$token（也可在 App 内手动输入）"
     }
 
     /** 调起系统分享面板发送会议链接 */
@@ -892,8 +907,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 input.selectAll()
                 return@setOnClickListener
             }
+            val token = dialog.findViewById<EditText>(R.id.etMeetingToken).text.toString().trim().uppercase()
+            if (token.isEmpty()) {
+                Toast.makeText(this, "请输入会议口令", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             dialog.dismiss()
-            joinMeetingWithCode(code)
+            joinMeetingWithCode(code, token)
         }
         dialog.findViewById<TextView>(R.id.btnJoinCancel).setOnClickListener { dialog.dismiss() }
 
@@ -901,8 +921,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         input.postDelayed({ input.requestFocus() }, 200)
     }
 
-    /** 携带会议号执行加入会议流程（Host 视角为 false） */
-    private fun joinMeetingWithCode(code: String) {
+    /** 携带会议号与口令执行加入会议流程（Host 视角为 false） */
+    private fun joinMeetingWithCode(code: String, token: String = "") {
         signalCode = code
         signalMode = true
         isHost = false
@@ -917,7 +937,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnSignalJoin.isEnabled = false
 
         updateUI("正在加入会议（$code）...")
-        connectSignal(code, asHost = false)
+        connectSignal(code, asHost = false, token = token)
     }
 
     /** 生成 4 位数字会议号（不重复，忽略极小概率碰撞） */
@@ -936,18 +956,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         return true
     }
 
-    private fun connectSignal(code: String, asHost: Boolean) {
+    private fun connectSignal(code: String, asHost: Boolean, token: String = "") {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
             resetUI()
             return
         }
         val client = SignalClient(BuildConfig.SIGNAL_URL, object : SignalClient.Listener {
-            override fun onRoomReady(role: String) {
+            override fun onRoomReady(role: String, viewerId: Int) {
                 runOnUiThread {
                     if (role == "created") {
                         updateUI("✅ 会议已创建，等待对方加入...")
-                        binding.tvScanResult.text = "会议号: $signalCode\n让对方输入此号码加入"
+                        val roomToken = signalClient?.getToken() ?: ""
+                        binding.tvScanResult.text = "会议号: $signalCode\n口令: $roomToken\n让对方输入会议号+口令加入"
                         binding.tvScanResult.visibility = View.VISIBLE
                         // 立即申请屏幕采集权限（不必等对方加入），授权后共享随时就绪，
                         // 对方加入时立即交换 SDP，避免"对方已加入但还没授权"的等待
@@ -995,13 +1016,28 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
             }
 
-            override fun onRelay(data: String) {
-                runOnUiThread { handleSignalRelay(data) }
+            override fun onRelay(data: String, viewerId: Int) {
+                runOnUiThread { handleSignalRelay(data, viewerId) }
             }
 
-            override fun onPeerLeft() {
+            override fun onViewerJoined(vid: Int) {
                 runOnUiThread {
-                    updateUI("❌ 对方已离开")
+                    updateUI("观众 #$vid 已加入")
+                    // 多 viewer：为该 viewer 建立独立连接并发送 Offer
+                    handleViewerJoined(vid)
+                }
+            }
+
+            override fun onViewerLeft(vid: Int) {
+                runOnUiThread {
+                    updateUI("观众 #$vid 已离开")
+                    handleViewerLeft(vid)
+                }
+            }
+
+            override fun onHostLeft() {
+                runOnUiThread {
+                    updateUI("❌ 共享方已离开")
                     cleanupPeer()
                     resetUI()
                 }
@@ -1035,17 +1071,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
         })
         signalClient = client
-        client.connect(code, asHost)
+        client.connect(code, asHost, token)
     }
 
     /**
      * 处理信令服务器转发来的 SDP 数据。
      * 格式与二维码一致（SignalManager 编码），只是传输通道从扫码改为网络。
      */
-    private fun handleSignalRelay(data: String) {
+    private fun handleSignalRelay(data: String, viewerId: Int) {
         // 增量候选消息（Trickle ICE）：直接投递（未就绪时由 WebRTCPeer 缓冲）
         SignalManager.decodeCandidate(data)?.let { cand ->
-            peer?.addIceCandidate(cand)
+            if (isHost) {
+                peer?.addViewerIce(viewerId, cand)
+            } else {
+                peer?.addIceCandidate(cand)
+            }
             return
         }
         val decoded = SignalManager.decode(data)
@@ -1085,19 +1125,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 candidates.forEach { p.addIceCandidate(it) }
             }
             SessionDescription.Type.ANSWER -> {
-                // 共享方收到 Answer：完成 P2P 连接
+                // 共享方收到指定 viewer 的 Answer：完成该 viewer 的 P2P 连接
                 if (!isHost) {
                     updateUI("❌ 角色错配：观看方不应收到 Answer")
                     return
                 }
-                val p = peer
-                if (p == null) {
-                    updateUI("❌ 连接已失效，请重新发起共享")
-                    return
+                if (viewerId > 0) {
+                    peer?.handleViewerAnswer(viewerId, sdp, candidates)
+                    updateUI("正在建立与观众 #$viewerId 的 P2P 连接，稍等...")
+                } else {
+                    val p = peer
+                    if (p == null) {
+                        updateUI("❌ 连接已失效，请重新发起共享")
+                        return
+                    }
+                    p.setRemoteDescription(sdp)
+                    candidates.forEach { p.addIceCandidate(it) }
+                    updateUI("正在建立 P2P 连接，稍等...")
                 }
-                p.setRemoteDescription(sdp)
-                candidates.forEach { p.addIceCandidate(it) }
-                updateUI("正在建立 P2P 连接，稍等...")
             }
             else -> updateUI("❌ 未知的 SDP 类型: ${sdp.type}")
         }
@@ -1132,6 +1177,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.visibility = View.VISIBLE
         }
         if (signalMode) {
+            // V4: host 端主连接仅作采集底座，Offer 由每个 viewer 独立连接发送（onViewerOfferReady）；
+            // 主连接 Offer 不再转发，避免无 viewerId 的 offer 被服务器拒发
+            if (isHost) return
             Log.d(TAG, "Offer 就绪，经信令服务器转发")
             signalSdpSent = true
             val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
@@ -1165,6 +1213,59 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.visibility = View.VISIBLE
         }
     }
+
+    // ======================== V4: 多 viewer 回调 ========================
+
+    override fun onViewerIceCandidate(viewerId: Int, candidate: IceCandidate) {
+        // host：该 viewer 的候选，带 viewerId 转发
+        if (signalMode) {
+            signalClient?.sendRelay(SignalManager.encodeCandidate(candidate), viewerId)
+        }
+    }
+
+    override fun onViewerOfferReady(viewerId: Int, sdp: SessionDescription) {
+        // host：为新 viewer 生成 Offer，带 viewerId 发送
+        Log.d(TAG, "viewer#$viewerId Offer 就绪，经信令服务器转发")
+        if (signalMode) {
+            val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
+            signalClient?.sendRelay(encoded, viewerId)
+        }
+    }
+
+    override fun onViewerRestarted(viewerId: Int) {
+        // host：viewer 连接重建后重新发送 Offer
+        runOnUiThread {
+            updateUI("观众 #$viewerId 连接重建中...")
+            peer?.createOfferFor(viewerId)
+        }
+    }
+
+    /** host：新 viewer 加入——创建独立连接并发送 Offer */
+    private fun handleViewerJoined(viewerId: Int) {
+        if (!isHost) return
+        // 采集未就绪时等待（startSessionCore 完成后 sendPendingViewerOffers 兜底）
+        val p = peer ?: return
+        val pc = p.createViewerConnection(viewerId)
+        if (pc == null) {
+            updateUI("⚠️ 为观众 #$viewerId 创建连接失败")
+            return
+        }
+        // 采集已就绪则立即发 Offer（Trickle ICE，候选随后增量）
+        if (screenCaptureReady) {
+            p.createOfferFor(viewerId)
+        } else {
+            pendingViewerIds.add(viewerId)
+        }
+    }
+
+    /** host：viewer 离开——移除其连接 */
+    private fun handleViewerLeft(viewerId: Int) {
+        if (!isHost) return
+        peer?.removeViewer(viewerId)
+        pendingViewerIds.remove(viewerId)
+    }
+
+    private val pendingViewerIds = mutableListOf<Int>()
 
     override fun onIceCandidate(candidate: IceCandidate) {
         iceCandidates.add(candidate)
@@ -1695,7 +1796,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         AppLogger.webrtc("bitrate=${bitrateMbps}b/s fps=${if (isHostView) json.optInt("outFps", 0) else json.optInt("inFps", 0)} res=${resText}")
                         AppLogger.network("loss=${"%.2f".format(if (qualityLoss >= 0) qualityLoss else 0.0)} rtt=$qualityRtt quality=$qualityScore")
                         val qualityText = if (qualityScore > 0) " | 网络质量 $qualityScore" else ""
-                        val fullText = text + qualityText
+                        // V4: 性能监控面板（StatsMonitor 组装 FPS/Bitrate/Delay/Loss/CPU/Mem）
+                        val fpsNow = if (isHostView) json.optInt("outFps", 0) else json.optInt("inFps", 0)
+                        val bitrateMb = if (lastKbps > 0) "%.1f".format(lastKbps / 1000.0) else "--"
+                        val lossForPanel = if (isHostView) json.optDouble("outLossPct", -1.0) else lostPct
+                        val panelText = StatsMonitor.buildPanel(
+                            this@MainActivity,
+                            fpsNow,
+                            bitrateMb,
+                            json.optInt("rtt", 0),
+                            if (lossForPanel >= 0) lossForPanel else 0.0
+                        )
+                        val fullText = panelText + qualityText
                         val warn = !isHostView && lostPct >= 1.0
                         // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
                         if (isHostView) {

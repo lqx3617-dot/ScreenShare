@@ -22,14 +22,18 @@ class SignalClient(
     private val listener: Listener
 ) {
     interface Listener {
-        /** 服务器创建/加入房间成功，可以开始屏幕采集与 SDP 交换 */
-        fun onRoomReady(role: String)
+        /** 服务器创建/加入房间成功（host 会带 token），可以开始屏幕采集与 SDP 交换 */
+        fun onRoomReady(role: String, viewerId: Int)
         /** 对端已加入房间，等待/开始交换信令 */
         fun onPeerReady()
-        /** 收到对端转发的信令数据（SDP/ICE 编码串） */
-        fun onRelay(data: String)
-        /** 对端已离开 */
-        fun onPeerLeft()
+        /** 收到对端转发的信令数据（SDP/ICE 编码串）；viewerId 标识来源/目标 viewer（host 多路用） */
+        fun onRelay(data: String, viewerId: Int)
+        /** 新 viewer 加入（仅 host 收到），viewerId 用于建立对应连接 */
+        fun onViewerJoined(viewerId: Int)
+        /** 某 viewer 离开（仅 host 收到） */
+        fun onViewerLeft(viewerId: Int)
+        /** host 离开（所有 viewer 收到） */
+        fun onHostLeft()
         /** 连接异常，但将在几秒后自动重试（仅提示，不应清理本地状态） */
         fun onRetrying(message: String)
         /** 服务器返回错误，或多次重连后仍失败 */
@@ -58,8 +62,11 @@ class SignalClient(
     private var webSocket: WebSocket? = null
     private var closedByUs = false
     private var code = ""
+    private var token = ""
     private var asHost = false
     private var attempt = 0
+    /** V4: 本端在房间中的 viewerId（host 恒为 0；viewer 为服务器分配） */
+    private var myViewerId = 0
     // V3.1: 应用层心跳——10s 周期 ping 保持连接活跃，防止移动网络假断开
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // V3.2: 心跳假死检测——超过 30s 未收到 pong 视为 WebSocket 假死，主动断开并自动重连
@@ -81,12 +88,14 @@ class SignalClient(
         }
     }
 
-    /** 创建房间（共享方）或加入房间（观看方）。code 为 4-12 位口令。 */
-    fun connect(code: String, asHost: Boolean) {
+    /** 创建房间（共享方，token 为空由服务器生成）或加入房间（观看方，需填 token）。code 为 4 位口令。 */
+    fun connect(code: String, asHost: Boolean, token: String = "") {
         closedByUs = false
         this.code = code
         this.asHost = asHost
+        this.token = token
         attempt = 0
+        myViewerId = 0
         tryConnect()
     }
 
@@ -101,6 +110,7 @@ class SignalClient(
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")
                     put("code", code)
+                    if (!asHost) put("token", token)
                 }
                 webSocket.send(msg.toString())
                 // V3.1: 连接成功后启动应用层心跳
@@ -142,25 +152,40 @@ class SignalClient(
 
     private fun handleMessage(text: String) {
         val json = try { JSONObject(text) } catch (e: Exception) { return }
+        val vid = json.optInt("viewerId", myViewerId)
         when (json.optString("type")) {
-            "created", "joined" -> listener.onRoomReady(json.optString("type"))
+            "created" -> {
+                // host：保存服务器下发的房间 token（join 时需告知 viewer）
+                token = json.optString("token", token)
+                listener.onRoomReady("created", 0)
+            }
+            "joined" -> {
+                myViewerId = json.optInt("viewerId", 0)
+                listener.onRoomReady("joined", myViewerId)
+            }
             "peer-ready" -> listener.onPeerReady()
-            "relay" -> listener.onRelay(json.optString("data"))
-            "peer-left" -> listener.onPeerLeft()
+            "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0))
+            "viewer-left" -> listener.onViewerLeft(json.optInt("viewerId", 0))
+            "host-left" -> listener.onHostLeft()
+            "relay" -> listener.onRelay(json.optString("data"), vid)
             "pong" -> { lastPongMs = System.currentTimeMillis() }
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> Log.w(TAG, "未知消息: ${json.optString("type")}")
         }
     }
 
-    /** 发送信令数据到对端（SDP/ICE 编码串） */
-    fun sendRelay(data: String) {
+    /** 发送信令数据到对端（SDP/ICE 编码串）。host 发给指定 viewer 需传 viewerId；viewer 发 host 传 0 即可 */
+    fun sendRelay(data: String, viewerId: Int = 0) {
         val msg = JSONObject().apply {
             put("type", "relay")
             put("data", data)
+            if (asHost && viewerId > 0) put("viewerId", viewerId)
         }
         webSocket?.send(msg.toString())
     }
+
+    /** 获取服务器分配的 token（host 创建房间后有效，用于告知 viewer join） */
+    fun getToken(): String = token
 
     fun disconnect() {
         closedByUs = true

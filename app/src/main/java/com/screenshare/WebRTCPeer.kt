@@ -104,6 +104,10 @@ class WebRTCPeer(
         fun onIceGatheringComplete() {}
         /** ICE 状态变化（CHECKING/CONNECTED/FAILED...），用于 UI 显示诊断信息 */
         fun onIceState(state: String) {}
+        // V4: 多 viewer 回调（host 端）
+        fun onViewerIceCandidate(viewerId: Int, candidate: IceCandidate) {}
+        fun onViewerOfferReady(viewerId: Int, sdp: SessionDescription) {}
+        fun onViewerRestarted(viewerId: Int) {}
     }
 
     private var peerConnection: PeerConnection? = null
@@ -112,6 +116,17 @@ class WebRTCPeer(
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var disposed = false
+
+    // V4: 多客户端——共享方(host)为每个 viewer 维护一条独立 PeerConnection。
+    // 采集/视频源/音频源共享一份（localVideoTrack 可同时 addTrack 到多条连接），
+    // 每条连接独立的 SDP/ICE 协商与 DataChannel。
+    private data class ViewerConnection(
+        val pc: PeerConnection,
+        var videoSender: org.webrtc.RtpSender? = null,
+        var systemAudioChannel: DataChannel? = null,
+        var controlChannel: DataChannel? = null
+    )
+    private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
 
     // 系统音频 DataChannel（共享方发送 / 观看方接收）
     private var systemAudioChannel: DataChannel? = null
@@ -293,6 +308,208 @@ class WebRTCPeer(
         return peerConnection
     }
 
+    // ==================== V4: 多 viewer 连接管理 ====================
+
+    /** viewer 连接数（host 视角） */
+    fun viewerCount(): Int = viewerConnections.size
+
+    /**
+     * 为指定 viewer 创建独立 PeerConnection 并挂载共享视频轨道。
+     * host 收到 onViewerJoined(viewerId) 时调用。
+     * @return 新建的 PeerConnection；失败返回 null
+     */
+    fun createViewerConnection(viewerId: Int): PeerConnection? {
+        if (disposed) return null
+        if (viewerConnections.containsKey(viewerId)) return viewerConnections[viewerId]?.pc
+        val factory = getFactory()
+        val config = PeerConnection.RTCConfiguration(iceServers).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            keyType = PeerConnection.KeyType.ECDSA
+        }
+        val observer = object : PeerConnection.Observer {
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+            override fun onRenegotiationNeeded() {}
+            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                AppLogger.webrtc("viewer#$viewerId ICE: $state")
+                when (state) {
+                    PeerConnection.IceConnectionState.CONNECTED,
+                    PeerConnection.IceConnectionState.COMPLETED -> {
+                        AppLogger.webrtc("viewer#$viewerId connected")
+                    }
+                    PeerConnection.IceConnectionState.FAILED -> {
+                        AppLogger.network("viewer#$viewerId FAILED, restarting")
+                        restartViewer(viewerId)
+                    }
+                    else -> {}
+                }
+            }
+            override fun onIceConnectionReceivingChange(receiving: Boolean) {
+                if (!receiving) {
+                    AppLogger.network("viewer#$viewerId receiving stopped, restarting")
+                    restartViewer(viewerId)
+                }
+            }
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+            override fun onIceCandidate(candidate: IceCandidate) {
+                // 该 viewer 的候选：带 viewerId 转发给对端
+                listener.onViewerIceCandidate(viewerId, candidate)
+            }
+            override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+            @Deprecated("Deprecated in Java")
+            override fun onAddStream(stream: MediaStream?) {}
+            @Deprecated("Deprecated in Java")
+            override fun onRemoveStream(stream: MediaStream?) {}
+            override fun onDataChannel(channel: org.webrtc.DataChannel?) {
+                handleViewerDataChannel(viewerId, channel)
+            }
+        }
+        val pc = factory.createPeerConnection(config, observer) ?: return null
+        val conn = ViewerConnection(pc)
+        viewerConnections[viewerId] = conn
+        // 挂载共享视频轨道（host 采集已启动才有轨道）
+        localVideoTrack?.let { track ->
+            val rtp = pc.addTrack(track)
+            if (rtp == null) {
+                Log.e(TAG, "viewer#$viewerId addTrack 失败")
+            } else {
+                conn.videoSender = rtp
+                val params = rtp.parameters
+                params.encodings?.firstOrNull()?.let { enc ->
+                    enc.maxBitrateBps = 12_000_000
+                    enc.minBitrateBps = 1_500_000
+                    enc.maxFramerate = 30
+                    enc.networkPriority = 4
+                    enc.bitratePriority = 4.0
+                }
+                try {
+                    params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+                } catch (t: Throwable) {}
+                rtp.parameters = params
+            }
+        }
+        AppLogger.webrtc("viewer#$viewerId connection created")
+        return pc
+    }
+
+    /** 为该 viewer 创建 Offer 并发起协商（host 端） */
+    fun createOfferFor(viewerId: Int) {
+        val conn = viewerConnections[viewerId] ?: return
+        val pc = conn.pc
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+        }
+        pc.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        val ld = pc.localDescription
+                        listener.onViewerOfferReady(viewerId, ld ?: sdp)
+                    }
+                    override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId setLocalDescription 失败: $error") }
+                    override fun onCreateSuccess(p0: SessionDescription?) {}
+                    override fun onCreateFailure(p0: String?) {}
+                }, sdp)
+            }
+            override fun onCreateFailure(error: String?) { Log.e(TAG, "viewer#$viewerId 创建 Offer 失败: $error") }
+            override fun onSetSuccess() {}
+            override fun onSetFailure(error: String?) {}
+        }, constraints)
+    }
+
+    /** 处理该 viewer 的 Answer（host 端收到后完成连接） */
+    fun handleViewerAnswer(viewerId: Int, sdp: SessionDescription, candidates: List<IceCandidate>) {
+        val conn = viewerConnections[viewerId] ?: return
+        val pc = conn.pc
+        pc.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                pendingViewerCandidates[viewerId]?.forEach { pc.addIceCandidate(it) }
+                pendingViewerCandidates.remove(viewerId)
+                AppLogger.webrtc("viewer#$viewerId answer applied")
+            }
+            override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId setRemoteDescription 失败: $error") }
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onCreateFailure(p0: String?) {}
+        }, sdp)
+        candidates.forEach { pc.addIceCandidate(it) }
+    }
+
+    /** 为指定 viewer 投递 ICE 候选（host 端；对端 Answer 未就绪时缓冲） */
+    private val pendingViewerCandidates = mutableMapOf<Int, MutableList<IceCandidate>>()
+
+    fun addViewerIce(viewerId: Int, candidate: IceCandidate) {
+        val conn = viewerConnections[viewerId] ?: return
+        val pc = conn.pc
+        if (pc.remoteDescription == null) {
+            synchronized(pendingViewerCandidates) {
+                pendingViewerCandidates.getOrPut(viewerId) { mutableListOf() }.add(candidate)
+            }
+        } else {
+            pc.addIceCandidate(candidate)
+        }
+    }
+
+    /** 移除指定 viewer 连接（host 端，viewer 离开时调用） */
+    fun removeViewer(viewerId: Int) {
+        val conn = viewerConnections.remove(viewerId) ?: return
+        pendingViewerCandidates.remove(viewerId)
+        try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
+        try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
+        try {
+            conn.pc.close()
+            conn.pc.dispose()
+        } catch (t: Throwable) { Log.w(TAG, "viewer#$viewerId 清理失败: ${t.message}") }
+        AppLogger.webrtc("viewer#$viewerId removed")
+    }
+
+    /** 该 viewer 断线重连（ICE restart 简化版：直接重建连接，host 端） */
+    private fun restartViewer(viewerId: Int) {
+        val old = viewerConnections[viewerId] ?: return
+        AppLogger.network("viewer#$viewerId restarting connection")
+        removeViewer(viewerId)
+        if (createViewerConnection(viewerId) != null) {
+            listener.onViewerRestarted(viewerId)
+        }
+    }
+
+    private fun handleViewerDataChannel(viewerId: Int, channel: org.webrtc.DataChannel?) {
+        if (channel == null) return
+        val conn = viewerConnections[viewerId] ?: return
+        when (channel.label()) {
+            SYSTEM_AUDIO_LABEL -> {
+                conn.systemAudioChannel = channel
+                channel.registerObserver(object : DataChannel.Observer {
+                    override fun onBufferedAmountChange(previousAmount: Long) {}
+                    override fun onStateChange() {}
+                    override fun onMessage(buffer: DataChannel.Buffer) {
+                        if (buffer.binary) {
+                            val data = ByteArray(buffer.data.remaining())
+                            buffer.data.get(data)
+                            systemAudioListener?.invoke(data)
+                        }
+                    }
+                })
+            }
+            CONTROL_LABEL -> {
+                conn.controlChannel = channel
+                channel.registerObserver(object : DataChannel.Observer {
+                    override fun onBufferedAmountChange(previousAmount: Long) {}
+                    override fun onStateChange() {}
+                    override fun onMessage(buffer: DataChannel.Buffer) {
+                        if (!buffer.binary) {
+                            val data = ByteArray(buffer.data.remaining())
+                            buffer.data.get(data)
+                            controlListener?.invoke(String(data))
+                        }
+                    }
+                })
+            }
+        }
+    }
+
     // ==================== 麦克风语音（会议内双向对讲） ====================
 
     /**
@@ -456,14 +673,20 @@ class WebRTCPeer(
         }
     }
 
-    /** 共享方：发送一段系统音频 PCM 数据 */
+    /** 共享方：发送一段系统音频 PCM 数据（广播到主连接 + 所有 viewer 连接） */
     fun sendSystemAudio(data: ByteArray) {
-        val dc = systemAudioChannel ?: return
-        if (dc.state() == DataChannel.State.OPEN) {
-            try {
-                dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true))
-            } catch (t: Throwable) {
-                Log.w(TAG, "发送系统音频失败: ${t.message}")
+        val buf = DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true)
+        systemAudioChannel?.let { dc ->
+            if (dc.state() == DataChannel.State.OPEN) {
+                try { dc.send(buf) } catch (t: Throwable) {
+                    Log.w(TAG, "发送系统音频失败: ${t.message}")
+                }
+            }
+        }
+        viewerConnections.values.forEach { conn ->
+            val dc = conn.systemAudioChannel
+            if (dc != null && dc.state() == DataChannel.State.OPEN) {
+                try { dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true)) } catch (t: Throwable) {}
             }
         }
     }
@@ -500,12 +723,21 @@ class WebRTCPeer(
     fun controlChannelOpen(): Boolean = controlChannel?.state() == DataChannel.State.OPEN
 
     /** 观看方：经控制通道向共享方发送指令（如 {"type":"fps","value":30}） */
-    fun sendControl(message: String) {        val dc = controlChannel ?: return
-        if (dc.state() == DataChannel.State.OPEN) {
+    fun sendControl(message: String) {
+        // 主连接（观看方视角）
+        val dc = controlChannel
+        if (dc != null && dc.state() == DataChannel.State.OPEN) {
             try {
                 dc.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(message.toByteArray()), false))
             } catch (t: Throwable) {
                 Log.w(TAG, "发送控制消息失败: ${t.message}")
+            }
+        }
+        // host 回发消息到所有 viewer 连接
+        viewerConnections.values.forEach { conn ->
+            val c = conn.controlChannel
+            if (c != null && c.state() == DataChannel.State.OPEN) {
+                try { c.send(DataChannel.Buffer(java.nio.ByteBuffer.wrap(message.toByteArray()), false)) } catch (_: Throwable) {}
             }
         }
     }
@@ -1020,6 +1252,14 @@ class WebRTCPeer(
         resetAdaptiveState()
         restartInFlight = false
         reconnectCount = 0
+        // V4: 清理所有 viewer 连接
+        viewerConnections.values.forEach { conn ->
+            try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
+            try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
+            try { conn.pc.close(); conn.pc.dispose() } catch (_: Throwable) {}
+        }
+        viewerConnections.clear()
+        pendingViewerCandidates.clear()
         videoCapturer?.stopCapture()
         videoCapturer?.dispose()
         localVideoTrack?.dispose()

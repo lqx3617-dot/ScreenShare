@@ -1,25 +1,28 @@
 /**
- * ScreenShare 信令服务器（腾讯会议式房间）
+ * ScreenShare 信令服务器（腾讯会议式房间，V4 多客户端 + Token 认证）
  *
  * 协议（JSON over WebSocket）：
  *   client -> server:
- *     { "type": "create", "code": "1234" }           // 共享方创建会议（4 位数字会议号）
- *     { "type": "join",   "code": "123456789" }     // 观看方加入会议
- *     { "type": "relay",  "data": "<payload>" }     // 中转信令数据（SDP/ICE，原样转发给对端）
+ *     { "type": "create", "code": "1234" }                       // 共享方创建会议
+ *     { "type": "join",   "code": "1234", "token": "XXXX" }     // 观看方带 token 加入
+ *     { "type": "relay",  "data": "<payload>", "viewerId": n }   // 中转信令（viewerId: host发往指定viewer）
  *     { "type": "ping" }
  *
  *   server -> client:
- *     { "type": "created",   "code": "123456789" }  // 会议创建成功
- *     { "type": "joined",    "code": "123456789" }  // 加入成功，等待对端
- *     { "type": "peer-ready" }                       // 对端已加入，可以开始交换信令
- *     { "type": "relay",     "data": "<payload>" }   // 对端转发来的信令数据
- *     { "type": "peer-left" }                        // 对端断开
+ *     { "type": "created", "code": "1234", "token": "XXXX" }     // 创建成功，返回房间 token
+ *     { "type": "joined",  "code": "1234", "viewerId": n }       // 加入成功
+ *     { "type": "peer-ready" }                                   // 对端已加入（host 视角）
+ *     { "type": "viewer-joined", "viewerId": n }                 // 新 viewer 加入（仅 host 收到）
+ *     { "type": "relay",     "data": "<payload>", "viewerId": n }
+ *     { "type": "viewer-left", "viewerId": n }                   // 某 viewer 离开（仅 host 收到）
+ *     { "type": "host-left" }                                    // host 离开（所有 viewer 收到）
  *     { "type": "error",     "message": "..." }
  *
  * 行为：
- * - 会议最多 2 人（1 个共享方 + 1 个观看方）
- * - 会议号不区分大小写（纯数字）
- * - 会议内任一方断开，通知另一方并清理会议
+ * - 会议 1 host + 多 viewer（从 1对1 升级为 1对多）
+ * - join 必须携带正确 token，防止撞房/未授权观看
+ * - host 离开：整房销毁，通知所有 viewer
+ * - viewer 离开：仅移除该 viewer，通知 host
  */
 "use strict";
 
@@ -27,13 +30,14 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
+const RoomManager = require("./RoomManager");
 
 const PORT = process.env.PORT || 8080;
 // 诊断模式：DIAG=1 时打印 SDP/候选统计（默认关闭，转发零解析零日志最快）
 const DIAG = process.env.DIAG === "1";
 
 const server = http.createServer((req, res) => {
-  // 崩溃日志上报：App Java 层崩溃 POST 到这里落盘，便于定位真机闪退
+  // 崩溃日志上报：App Java 层崩溃 POST 到这里落盘
   if (req.method === "POST" && req.url.startsWith("/crash")) {
     let body = "";
     req.on("data", (c) => { body = (body + c).slice(-200000); });
@@ -75,11 +79,9 @@ const server = http.createServer((req, res) => {
   res.end("ScreenShare signaling server is running");
 });
 
-// maxPayload 限制 512KB：信令消息都很小，防滥用大包拖慢转发
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 512 * 1024 });
 
-// code(lowercase) -> { host: ws, join: ws }
-const rooms = new Map();
+const rooms = new RoomManager();
 
 function send(ws, obj) {
   if (ws && ws.readyState === ws.OPEN) {
@@ -93,7 +95,8 @@ function normalizeCode(code) {
 
 wss.on("connection", (ws) => {
   let roomCode = null;
-  let role = null; // "host" | "join"
+  let role = null; // "host" | "viewer"
+  let viewerId = null;
 
   ws.on("message", (raw) => {
     let msg;
@@ -107,41 +110,39 @@ wss.on("connection", (ws) => {
     switch (msg.type) {
       case "create": {
         const code = normalizeCode(msg.code);
-        if (!/^[0-9]{4}$/.test(code)) {
+        if (!rooms.isValidCode(code)) {
           send(ws, { type: "error", message: "会议号需为 4 位数字" });
           return;
         }
-        if (rooms.has(code)) {
-          send(ws, { type: "error", message: "会议号已被占用，请重试" });
+        const err = rooms.create(code, ws);
+        if (err) {
+          send(ws, { type: "error", message: err });
           return;
         }
-        rooms.set(code, { host: ws, join: null });
         roomCode = code;
         role = "host";
-        send(ws, { type: "created", code });
-        console.log(`[room ${code}] created by host`);
+        const token = rooms.getRoom(code).token;
+        send(ws, { type: "created", code, token });
+        console.log(`[room ${code}] created by host, token=${token}`);
         break;
       }
 
       case "join": {
         const code = normalizeCode(msg.code);
-        const room = rooms.get(code);
-        if (!room) {
-          send(ws, { type: "error", message: "会议号不存在或会议已结束" });
+        const token = String(msg.token || "").trim().toUpperCase();
+        const res = rooms.join(code, token, ws);
+        if (!res.ok) {
+          send(ws, { type: "error", message: res.error });
           return;
         }
-        if (room.join) {
-          send(ws, { type: "error", message: "会议已满（仅支持一对一）" });
-          return;
-        }
-        room.join = ws;
         roomCode = code;
-        role = "join";
-        send(ws, { type: "joined", code });
-        // 通知双方：对端已就绪
-        send(room.host, { type: "peer-ready" });
-        send(room.join, { type: "peer-ready" });
-        console.log(`[room ${code}] joined by viewer`);
+        role = "viewer";
+        viewerId = res.viewerId;
+        send(ws, { type: "joined", code, viewerId });
+        // 通知 host：新 viewer 加入（携带 viewerId 供 host 建立指定连接）
+        const host = rooms.getHost(code);
+        send(host, { type: "viewer-joined", viewerId });
+        console.log(`[room ${code}] viewer#${viewerId} joined`);
         break;
       }
 
@@ -150,20 +151,13 @@ wss.on("connection", (ws) => {
           send(ws, { type: "error", message: "尚未加入房间" });
           return;
         }
-        const room = rooms.get(roomCode);
-        if (!room) {
-          send(ws, { type: "error", message: "房间已失效" });
-          return;
-        }
-        const target = role === "host" ? room.join : room.host;
+        const target = rooms.route(roomCode, role, msg.viewerId);
         if (!target) {
           send(ws, { type: "error", message: "对端尚未加入" });
           return;
         }
-        // 原样转发，不解析内容（默认零解析零日志，最快转发）
         const data = msg.data;
         if (DIAG) {
-          // 诊断模式：解析并统计 SDP/候选类型
           const payloadLen = String(data || "").length;
           let host = 0, srflx = 0, relay = 0, sdpCand = 0;
           let mediaLines = [];
@@ -180,9 +174,9 @@ wss.on("connection", (ws) => {
               else if (s.includes("typ relay")) relay++;
             });
           } catch (e) {}
-          console.log(`[room ${roomCode}] relay ${role}->${role === "host" ? "join" : "host"} ${payloadLen}B | sdp a=candidate:${sdpCand} | media:[${mediaLines.join(" | ")}] | ice[]: host=${host} srflx=${srflx} relay=${relay}`);
+          console.log(`[room ${roomCode}] relay ${role}#${viewerId||""}->${role === "host" ? "viewer#" + msg.viewerId : "host"} ${payloadLen}B | sdp a=candidate:${sdpCand} | media:[${mediaLines.join(" | ")}] | ice[]: host=${host} srflx=${srflx} relay=${relay}`);
         }
-        send(target, { type: "relay", data });
+        send(target, { type: "relay", data, viewerId: role === "host" ? msg.viewerId : viewerId });
         break;
       }
 
@@ -198,12 +192,15 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     if (!roomCode) return;
-    const room = rooms.get(roomCode);
-    if (room) {
-      const peer = role === "host" ? room.join : room.host;
-      if (peer) send(peer, { type: "peer-left" });
-      rooms.delete(roomCode);
-      console.log(`[room ${roomCode}] closed (${role} left)`);
+    const r = rooms.onDisconnect(roomCode, role, viewerId);
+    if (r.removedHost) {
+      // host 离开：通知所有 viewer
+      r.remainingViewers.forEach((v) => send(v, { type: "host-left" }));
+      console.log(`[room ${roomCode}] closed (host left, ${r.remainingViewers.length} viewer(s) disconnected)`);
+    } else {
+      // viewer 离开：通知 host
+      if (r.peerLeftWs) send(r.peerLeftWs, { type: "viewer-left", viewerId });
+      console.log(`[room ${roomCode}] viewer#${viewerId} left`);
     }
   });
 
