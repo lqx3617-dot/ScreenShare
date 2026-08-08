@@ -33,10 +33,14 @@ class RoomManager {
 
   /**
    * viewer 加入房间。返回 { ok:true, viewerId } 或 { ok:false, error }。
+   * 情侣模式：每房间最多 1 个观看方，已有 viewer 时拒绝后续加入。
    */
   join(code, viewerWs) {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: "会议号不存在或会议已结束" };
+    if (room.viewers.size > 0) {
+      return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };
+    }
     const viewerId = ++this.viewerSeq;
     room.viewers.set(viewerId, viewerWs);
     return { ok: true, viewerId };

@@ -1025,15 +1025,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             override fun onViewerJoined(vid: Int) {
                 runOnUiThread {
-                    updateUI("观众 #$vid 已加入")
-                    // 多 viewer：为该 viewer 建立独立连接并发送 Offer
+                    updateUI("对方已加入")
+                    // 情侣模式：每房间仅 1 个 viewer，为该 viewer 建立独立连接并发送 Offer
                     handleViewerJoined(vid)
                 }
             }
 
             override fun onViewerLeft(vid: Int) {
                 runOnUiThread {
-                    updateUI("观众 #$vid 已离开")
+                    updateUI("对方已离开")
                     handleViewerLeft(vid)
                 }
             }
@@ -1135,7 +1135,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
                 if (viewerId > 0) {
                     peer?.handleViewerAnswer(viewerId, sdp, candidates)
-                    updateUI("正在建立与观众 #$viewerId 的 P2P 连接，稍等...")
+                    updateUI("正在建立与对方的 P2P 连接，稍等...")
                 } else {
                     val p = peer
                     if (p == null) {
@@ -1238,7 +1238,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onViewerRestarted(viewerId: Int) {
         // host：viewer 连接重建后重新发送 Offer
         runOnUiThread {
-            updateUI("观众 #$viewerId 连接重建中...")
+            updateUI("对方连接重建中...")
             peer?.createOfferFor(viewerId)
         }
     }
@@ -1250,7 +1250,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val p = peer ?: return
         val pc = p.createViewerConnection(viewerId)
         if (pc == null) {
-            updateUI("⚠️ 为观众 #$viewerId 创建连接失败")
+            updateUI("⚠️ 与对方建立连接失败")
             return
         }
         // 采集已就绪则立即发 Offer（Trickle ICE，候选随后增量）
