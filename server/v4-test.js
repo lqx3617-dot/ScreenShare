@@ -42,28 +42,19 @@ async function main() {
   await host.open();
   host.send({ type: "create", code: "1234" });
   const created = await host.nextType("created");
-  check("host 创建成功且返回 token", created.token);
-  const hostToken = created.token;
-
-  // 错误 token 被拒
-  const bad = new Client("bad");
-  await bad.open();
-  bad.send({ type: "join", code: "1234", token: "WRONG" });
-  const badErr = await bad.nextType("error");
-  check("错误 token 被拒绝", badErr.message.includes("口令"));
-  bad.close();
+  check("host 创建成功", created.code === "1234");
 
   // viewer1 加入
   const v1 = new Client("v1");
   await v1.open();
-  v1.send({ type: "join", code: "1234", token: hostToken });
+  v1.send({ type: "join", code: "1234" });
   const joined1 = await v1.nextType("joined");
   check("viewer1 加入成功", joined1.viewerId > 0);
 
   // viewer2 加入
   const v2 = new Client("v2");
   await v2.open();
-  v2.send({ type: "join", code: "1234", token: hostToken });
+  v2.send({ type: "join", code: "1234" });
   const joined2 = await v2.nextType("joined");
   check("viewer2 加入成功", joined2.viewerId > 0 && joined2.viewerId !== joined1.viewerId);
 
@@ -96,12 +87,12 @@ async function main() {
   check("host 离开 viewer2 收到 host-left", hl.type === "host-left");
   v2.close();
 
-  // 房间销毁后旧 token 失效
+  // 房间销毁后新 viewer 加入被拒
   const late = new Client("late");
   await late.open();
-  late.send({ type: "join", code: "1234", token: hostToken });
+  late.send({ type: "join", code: "1234" });
   const lateErr = await late.nextType("error");
-  check("房间销毁后旧 token 加入被拒", lateErr.message.includes("不存在") || lateErr.message.includes("口令"));
+  check("房间销毁后加入被拒", lateErr.message.includes("不存在") || lateErr.message.includes("口令"));
   late.close();
 
   console.log(`\n== 结果: ${pass} passed, ${fail} failed ==`);

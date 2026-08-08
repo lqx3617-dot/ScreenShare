@@ -22,7 +22,7 @@ class SignalClient(
     private val listener: Listener
 ) {
     interface Listener {
-        /** 服务器创建/加入房间成功（host 会带 token），可以开始屏幕采集与 SDP 交换 */
+        /** 服务器创建/加入房间成功，可以开始屏幕采集与 SDP 交换 */
         fun onRoomReady(role: String, viewerId: Int)
         /** 对端已加入房间，等待/开始交换信令 */
         fun onPeerReady()
@@ -62,7 +62,6 @@ class SignalClient(
     private var webSocket: WebSocket? = null
     private var closedByUs = false
     private var code = ""
-    private var token = ""
     private var asHost = false
     private var attempt = 0
     /** V4: 本端在房间中的 viewerId（host 恒为 0；viewer 为服务器分配） */
@@ -88,12 +87,11 @@ class SignalClient(
         }
     }
 
-    /** 创建房间（共享方，token 为空由服务器生成）或加入房间（观看方，需填 token）。code 为 4 位口令。 */
-    fun connect(code: String, asHost: Boolean, token: String = "") {
+    /** 创建房间（共享方）或加入房间（观看方）。code 为 4 位口令。 */
+    fun connect(code: String, asHost: Boolean) {
         closedByUs = false
         this.code = code
         this.asHost = asHost
-        this.token = token
         attempt = 0
         myViewerId = 0
         tryConnect()
@@ -110,7 +108,6 @@ class SignalClient(
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")
                     put("code", code)
-                    if (!asHost) put("token", token)
                 }
                 webSocket.send(msg.toString())
                 // V3.1: 连接成功后启动应用层心跳
@@ -155,8 +152,7 @@ class SignalClient(
         val vid = json.optInt("viewerId", myViewerId)
         when (json.optString("type")) {
             "created" -> {
-                // host：保存服务器下发的房间 token（join 时需告知 viewer）
-                token = json.optString("token", token)
+                // host：房间创建成功，等待 viewer 加入
                 listener.onRoomReady("created", 0)
             }
             "joined" -> {
@@ -183,9 +179,6 @@ class SignalClient(
         }
         webSocket?.send(msg.toString())
     }
-
-    /** 获取服务器分配的 token（host 创建房间后有效，用于告知 viewer join） */
-    fun getToken(): String = token
 
     fun disconnect() {
         closedByUs = true

@@ -1,15 +1,15 @@
 /**
- * ScreenShare 信令服务器（腾讯会议式房间，V4 多客户端 + Token 认证）
+ * ScreenShare 信令服务器（腾讯会议式房间，V4 多客户端）
  *
  * 协议（JSON over WebSocket）：
  *   client -> server:
  *     { "type": "create", "code": "1234" }                       // 共享方创建会议
- *     { "type": "join",   "code": "1234", "token": "XXXX" }     // 观看方带 token 加入
+ *     { "type": "join",   "code": "1234" }                       // 观看方加入
  *     { "type": "relay",  "data": "<payload>", "viewerId": n }   // 中转信令（viewerId: host发往指定viewer）
  *     { "type": "ping" }
  *
  *   server -> client:
- *     { "type": "created", "code": "1234", "token": "XXXX" }     // 创建成功，返回房间 token
+ *     { "type": "created", "code": "1234" }                      // 创建成功
  *     { "type": "joined",  "code": "1234", "viewerId": n }       // 加入成功
  *     { "type": "peer-ready" }                                   // 对端已加入（host 视角）
  *     { "type": "viewer-joined", "viewerId": n }                 // 新 viewer 加入（仅 host 收到）
@@ -20,7 +20,6 @@
  *
  * 行为：
  * - 会议 1 host + 多 viewer（从 1对1 升级为 1对多）
- * - join 必须携带正确 token，防止撞房/未授权观看
  * - host 离开：整房销毁，通知所有 viewer
  * - viewer 离开：仅移除该 viewer，通知 host
  */
@@ -121,16 +120,14 @@ wss.on("connection", (ws) => {
         }
         roomCode = code;
         role = "host";
-        const token = rooms.getRoom(code).token;
-        send(ws, { type: "created", code, token });
-        console.log(`[room ${code}] created by host, token=${token}`);
+        send(ws, { type: "created", code });
+        console.log(`[room ${code}] created by host`);
         break;
       }
 
       case "join": {
         const code = normalizeCode(msg.code);
-        const token = String(msg.token || "").trim().toUpperCase();
-        const res = rooms.join(code, token, ws);
+        const res = rooms.join(code, ws);
         if (!res.ok) {
           send(ws, { type: "error", message: res.error });
           return;

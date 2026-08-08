@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第一阶段 连接体验：\n① 多客户端房间——1 共享方 + 多观看方，host 为每个 viewer 建立独立 PeerConnection（共享一份屏幕采集），任意 viewer 离开不影响其他观看者\n② 房间 Token 认证——创建房间生成 8 位口令，观看方需输入会议号+口令才能加入，防撞房与未授权观看；分享链接自动附带口令一键加入\n③ 性能监控面板——全屏状态条显示 FPS/Bitrate/Delay/Loss/CPU/内存 六项实时指标\n④ 信令协议升级：host 离开通知所有 viewer，viewer 离开只通知 host，旧会议号/口令自动失效",
+  changelog: "V4 第二阶段 体验优化：\n① 移除房间口令认证——加入会议只需 4 位会议号，分享链接不含口令，输入更简单；保留 1 共享方 + 多观看方多客户端房间\n② 修复画面显示——共享方为手机时（横屏视频在竖屏观看端），等比完整显示会导致画面过小，现已自动铺满屏幕；方向一致仍保持等比完整，控制模式触摸坐标同步修正\n③ 采集帧率优化——屏幕旋转后更新采集分辨率时不再错误恢复 60fps，保持 30fps 低延迟策略",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "V4 多客户端+口令认证+监控面板",
+    note: "V4 无口令多客户端+画面自适应",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

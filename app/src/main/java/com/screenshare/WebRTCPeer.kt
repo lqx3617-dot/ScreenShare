@@ -990,8 +990,8 @@ class WebRTCPeer(
         val scale = minOf(1f, maxDim.toFloat() / maxOf(width, height))
         val capW = (width * scale).toInt()
         val capH = (height * scale).toInt()
-        videoCapturer?.changeCaptureFormat(capW, capH, 60)
-        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@60")
+        videoCapturer?.changeCaptureFormat(capW, capH, captureFps)
+        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@$captureFps")
     }
 
     /**

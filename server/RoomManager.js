@@ -2,16 +2,14 @@
  * RoomManager.js —— V4：多客户端房间管理
  *
  * 房结构：1 host + N viewers（从 1对1 升级为 1对多）。
- *   room = { host: ws, viewers: Map<viewerId, ws>, token: string }
+ *   room = { host: ws, viewers: Map<viewerId, ws> }
  *
  * 路由规则：
- * - host 的 relay 广播给所有 viewers
+ * - host 的 relay 广播给指定 viewer
  * - viewer 的 relay 转发给 host
  * - 任一 viewer 离开：从 viewers 移除，通知 host；host 离开：整房销毁，通知所有 viewer
  */
 "use strict";
-
-const AuthManager = require("./AuthManager");
 
 class RoomManager {
   constructor() {
@@ -29,22 +27,19 @@ class RoomManager {
   /** host 创建房间。返回空串表示成功，否则返回错误文案 */
   create(code, hostWs) {
     if (this.rooms.has(code)) return "会议号已被占用，请重试";
-    const token = AuthManager.issueToken(code);
-    this.rooms.set(code, { host: hostWs, viewers: new Map(), token });
+    this.rooms.set(code, { host: hostWs, viewers: new Map() });
     return "";
   }
 
   /**
-   * viewer 加入房间。返回 { ok:true, viewerId, token } 或 { ok:false, error }。
-   * 需验证 token，防止撞房/未授权观看。
+   * viewer 加入房间。返回 { ok:true, viewerId } 或 { ok:false, error }。
    */
-  join(code, token, viewerWs) {
+  join(code, viewerWs) {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: "会议号不存在或会议已结束" };
-    if (!AuthManager.verify(code, token)) return { ok: false, error: "会议口令不正确" };
     const viewerId = ++this.viewerSeq;
     room.viewers.set(viewerId, viewerWs);
-    return { ok: true, viewerId, token };
+    return { ok: true, viewerId };
   }
 
   /** 获取房间 */
@@ -90,7 +85,7 @@ class RoomManager {
 
   /**
    * 成员断开。返回 { removedHost, roomClosed, peerLeft } 便于通知。
-   * 若 host 离开：整房销毁并释放 token，通知所有剩余 viewer。
+   * 若 host 离开：整房销毁，通知所有剩余 viewer。
    * 若 viewer 离开：仅移除该 viewer，通知 host。
    */
   onDisconnect(code, role, viewerId) {
@@ -98,7 +93,6 @@ class RoomManager {
     if (!room) return { removedHost: false, roomClosed: false, peerLeftWs: null };
     if (role === "host") {
       this.rooms.delete(code);
-      AuthManager.releaseTokens(code);
       return { removedHost: true, roomClosed: true, peerLeftWs: room.host, remainingViewers: Array.from(room.viewers.values()) };
     }
     // viewer 离开

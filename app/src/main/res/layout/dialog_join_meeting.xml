@@ -41,32 +41,6 @@
         android:imeOptions="actionDone"
         android:importantForAutofill="no" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="会议口令（创建方分享链接中附带）"
-        android:textSize="13sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="16dp" />
-
-    <EditText
-        android:id="@+id/etMeetingToken"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_marginTop="12dp"
-        android:background="@drawable/bg_input"
-        android:gravity="center"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:textColor="@color/neon_cyan"
-        android:textColorHint="#3364748B"
-        android:hint="XXXX-XXXX"
-        android:inputType="text"
-        android:maxLength="8"
-        android:letterSpacing="0.3"
-        android:imeOptions="actionDone"
-        android:importantForAutofill="no" />
-
     <Button
         android:id="@+id/btnJoinSubmit"
         android:layout_width="match_parent"

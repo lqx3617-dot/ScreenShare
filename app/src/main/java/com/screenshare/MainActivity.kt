@@ -216,15 +216,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         handleShareLink(intent)
     }
 
-    /** 解析分享链接并自动加入：screenshare://join?code=XXXX&token=YYYY */
+    /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
         // 兼容不同浏览器解析：intent:// 唤起时部分解析会把 query 并入 host，
         // 因此先从 query 取，取不到再从完整字符串兜底提取
         val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
             ?: Regex("code=([0-9]{4})").find(uri.toString())?.groupValues?.get(1) ?: ""
-        val token = uri.getQueryParameter("token")?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
-            ?: Regex("token=([A-Za-z0-9]+)").find(uri.toString())?.groupValues?.get(1)?.uppercase() ?: ""
         if (!Regex("^[0-9]{4}$").matches(code)) {
             Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
             return
@@ -234,11 +232,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "当前会话进行中，无法加入", Toast.LENGTH_SHORT).show()
             return
         }
-        if (token.isEmpty()) {
-            Toast.makeText(this, "分享链接缺少口令，请在 App 内手动输入", Toast.LENGTH_LONG).show()
-            return
-        }
-        joinMeetingWithCode(code, token)
+        joinMeetingWithCode(code)
     }
 
     /** 崩溃日志采集：Java 层崩溃写入外部存储，便于下次启动查看/上报定位闪退 */
@@ -379,11 +373,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             else -> return
         }
         // 内联坐标映射（避免每帧 JSONObject/FloatArray 分配，降低触摸延迟）
-        val crop = !isFitMode
+        // 铺满判定与 applyModeScale 一致：手动铺满 或 方向不匹配自动铺满
         val rw = renderer.width.toFloat()
         val rh = renderer.height.toFloat()
         val vw = lastFrameW.toFloat()
         val vh = lastFrameH.toFloat()
+        val crop = !isFitMode || ((vh >= vw) != (rh >= rw))
         var left = 0f; var top = 0f; var right = rw; var bottom = rh
         if (!crop) {
             val scale = minOf(rw / vw, rh / vh)
@@ -560,6 +555,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         applyModeScale()
     }
 
+    /** 完整模式（fit）下是否应自动改为铺满（crop）。
+     *  视频方向与观看端容器方向不一致时（如横屏视频在竖屏手机上），等比完整显示
+     *  会留下大面积黑边、画面显得很小；此时自动铺满让画面占满屏幕（裁切边缘）。
+     *  方向一致时保持等比完整（黑边少，不裁切）。 */
+    private fun isAutoFill(vw: Int, vh: Int, cw: Int, ch: Int): Boolean {
+        if (cw <= 0 || ch <= 0) return false
+        return (vh >= vw) != (ch >= cw)
+    }
+
     /** 根据当前模式 + 视频/容器比例，手动设置 renderer 尺寸实现完整（等比黑边）或铺满（放大裁切） */
     private fun applyModeScale() {
         val vw = lastFrameW
@@ -569,17 +573,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val cw = binding.flRemoteVideo.width
         val ch = binding.flRemoteVideo.height
         if (cw > 0 && ch > 0) {
+            val fill = !isFitMode || isAutoFill(vw, vh, cw, ch)
             val fit = minOf(cw.toFloat() / vw, ch.toFloat() / vh)
-            val lp = if (isFitMode) {
+            val lp = if (fill) {
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            } else {
                 FrameLayout.LayoutParams(
                     (vw * fit).toInt().coerceAtLeast(1),
                     (vh * fit).toInt().coerceAtLeast(1),
                     Gravity.CENTER
-                )
-            } else {
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
                 )
             }
             videoRenderer?.apply {
@@ -587,8 +592,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 scaleX = 1f
                 scaleY = 1f
                 setScalingType(
-                    if (isFitMode) RendererCommon.ScalingType.SCALE_ASPECT_FIT
-                    else RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                    if (fill) RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                    else RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
             }
             currentVideoScale = 1f
@@ -597,17 +602,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val fw2 = binding.flFullscreen.width
         val fh2 = binding.flFullscreen.height
         if (fw2 > 0 && fh2 > 0) {
+            val fill2 = !isFitMode || isAutoFill(vw, vh, fw2, fh2)
             val fit2 = minOf(fw2.toFloat() / vw, fh2.toFloat() / vh)
-            val lp2 = if (isFitMode) {
+            val lp2 = if (fill2) {
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            } else {
                 FrameLayout.LayoutParams(
                     (vw * fit2).toInt().coerceAtLeast(1),
                     (vh * fit2).toInt().coerceAtLeast(1),
                     Gravity.CENTER
-                )
-            } else {
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
                 )
             }
             fullscreenRenderer?.apply {
@@ -615,8 +621,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 scaleX = 1f
                 scaleY = 1f
                 setScalingType(
-                    if (isFitMode) RendererCommon.ScalingType.SCALE_ASPECT_FIT
-                    else RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                    if (fill2) RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                    else RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
             }
         }
@@ -825,7 +831,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             setTextColor(Color.parseColor("#00E5FF"))
         }
         val tvHint = TextView(this).apply {
-            text = "口令: ${signalClient?.getToken() ?: "--"}\n发给对方，对方输入会议号+口令即可观看"
+            text = "发给对方，对方输入会议号即可观看"
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#64748B"))
@@ -853,11 +859,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         dialog.show()
     }
 
-    /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号 + 口令） */
+    /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号） */
     private fun buildShareText(code: String): String {
         val base = "https://8090-6d639d2de20eb686.monkeycode-ai.online"
-        val token = signalClient?.getToken() ?: ""
-        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code&token=$token\n会议号：$code\n口令：$token（也可在 App 内手动输入）"
+        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
     }
 
     /** 调起系统分享面板发送会议链接 */
@@ -907,13 +912,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 input.selectAll()
                 return@setOnClickListener
             }
-            val token = dialog.findViewById<EditText>(R.id.etMeetingToken).text.toString().trim().uppercase()
-            if (token.isEmpty()) {
-                Toast.makeText(this, "请输入会议口令", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
             dialog.dismiss()
-            joinMeetingWithCode(code, token)
+            joinMeetingWithCode(code)
         }
         dialog.findViewById<TextView>(R.id.btnJoinCancel).setOnClickListener { dialog.dismiss() }
 
@@ -921,8 +921,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         input.postDelayed({ input.requestFocus() }, 200)
     }
 
-    /** 携带会议号与口令执行加入会议流程（Host 视角为 false） */
-    private fun joinMeetingWithCode(code: String, token: String = "") {
+    /** 携带会议号执行加入会议流程（Host 视角为 false） */
+    private fun joinMeetingWithCode(code: String) {
         signalCode = code
         signalMode = true
         isHost = false
@@ -937,7 +937,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnSignalJoin.isEnabled = false
 
         updateUI("正在加入会议（$code）...")
-        connectSignal(code, asHost = false, token = token)
+        connectSignal(code, asHost = false)
     }
 
     /** 生成 4 位数字会议号（不重复，忽略极小概率碰撞） */
@@ -956,7 +956,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         return true
     }
 
-    private fun connectSignal(code: String, asHost: Boolean, token: String = "") {
+    private fun connectSignal(code: String, asHost: Boolean) {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
             resetUI()
@@ -967,8 +967,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 runOnUiThread {
                     if (role == "created") {
                         updateUI("✅ 会议已创建，等待对方加入...")
-                        val roomToken = signalClient?.getToken() ?: ""
-                        binding.tvScanResult.text = "会议号: $signalCode\n口令: $roomToken\n让对方输入会议号+口令加入"
+                        binding.tvScanResult.text = "会议号: $signalCode\n让对方输入会议号即可观看"
                         binding.tvScanResult.visibility = View.VISIBLE
                         // 立即申请屏幕采集权限（不必等对方加入），授权后共享随时就绪，
                         // 对方加入时立即交换 SDP，避免"对方已加入但还没授权"的等待
@@ -1071,7 +1070,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
         })
         signalClient = client
-        client.connect(code, asHost, token)
+        client.connect(code, asHost)
     }
 
     /**
