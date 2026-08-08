@@ -739,6 +739,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             ScreenProjectionService.stop(this)
             return
         }
+        // V4: host 主连接仅作采集底座，ICE 永不 CONNECTED（onOfferReady isHost return），
+        // onConnected 在 host 端从不触发。因此 host 本地预览与连接 UI 必须在此处
+        // 采集启动成功后立即建立，不能依赖主连接 ICE 状态。
+        if (isHost) {
+            updateUI("✅ 屏幕共享进行中...")
+            startStatusBreathing()
+            binding.btnStop.visibility = View.VISIBLE
+            binding.btnStop.isEnabled = true
+            binding.btnMic.visibility = View.VISIBLE
+            updateMicButton()
+            peer?.getLocalVideoTrack()?.let { setupVideoPreview(it) }
+            binding.llCtrlStatus.visibility = View.VISIBLE
+            updateRemoteControlStatus()
+        }
         binding.tvScanResult.text = "④ 创建音频/控制通道..."
         // 系统音频内录：创建 DataChannel + 启动内录（复用 MediaProjection 授权）
         p.createSystemAudioChannel()

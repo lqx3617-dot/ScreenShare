@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第四阶段 画面显示彻底修复：\n① 移除方向不匹配自动铺满——横屏视频在竖屏手机上铺满会裁切掉大部分画面（只能看到中间一条），现恢复等比完整显示，画面始终完整可见\n② 全屏自动旋转到视频方向——横屏视频进全屏自动横屏、竖屏自动竖屏，host 旋转时 viewer 全屏实时跟随，画面最大化且完整\n③ 主页/全屏显示一致，控制模式触摸坐标保持等比完整映射",
+  changelog: "V4 第五阶段 修复共享端本地预览黑屏：\n① 修复共享方（host）本地预览黑屏——V4 多客户端架构下 host 主连接仅作采集底座、ICE 不会建立，本地预览改在采集启动成功后立即绑定本地视频轨，不再依赖主连接建立\n② 观看方显示逻辑不受影响（主页等比完整显示、全屏自动旋转跟随视频方向）",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "V4 画面显示修复-全屏自动旋转",
+    note: "修复共享端本地预览黑屏",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
