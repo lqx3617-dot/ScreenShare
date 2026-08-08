@@ -740,8 +740,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         // V4: host 主连接仅作采集底座，ICE 永不 CONNECTED（onOfferReady isHost return），
-        // onConnected 在 host 端从不触发。因此 host 本地预览与连接 UI 必须在此处
-        // 采集启动成功后立即建立，不能依赖主连接 ICE 状态。
+        // onConnected 在 host 端从不触发。因此 host 的连接 UI 必须在此处采集启动成功后
+        // 立即建立，不能依赖主连接 ICE 状态。host 端不显示本地预览视频（共享方看自己的屏幕即可）。
         if (isHost) {
             updateUI("✅ 屏幕共享进行中...")
             startStatusBreathing()
@@ -749,7 +749,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.btnStop.isEnabled = true
             binding.btnMic.visibility = View.VISIBLE
             updateMicButton()
-            peer?.getLocalVideoTrack()?.let { setupVideoPreview(it) }
             binding.llCtrlStatus.visibility = View.VISIBLE
             updateRemoteControlStatus()
         }
@@ -1315,8 +1314,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateMicButton()
 
             if (isHost) {
-                // 共享方本地预览：将本地采集轨道绑定到画面区（与观看方同一渲染链路）
-                peer?.getLocalVideoTrack()?.let { setupVideoPreview(it) }
+                // 共享方本地不显示预览视频（自己看屏幕即可），仅更新控制状态 UI
                 binding.llCtrlStatus.visibility = View.VISIBLE
                 updateRemoteControlStatus()
             } else {
@@ -1347,9 +1345,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     private fun setupVideoPreview(track: VideoTrack) {
         binding.flRemoteVideo.visibility = View.VISIBLE
-        // host 本地预览：视频方向与屏幕方向一致，默认铺满容器最大化显示（比例接近，基本不裁切）；
-        // viewer 端默认等比完整（方向可能不匹配，铺满会裁切画面，v1.111 定案）
-        isFitMode = !isHost
+        // 观看方默认等比完整显示（方向可能不匹配，铺满会裁切画面，v1.111 定案）
+        isFitMode = true
         applyAspectMode()
 
         // 移除旧的 renderer 和 sink（重连/切换预览时复用同一容器）

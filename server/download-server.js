@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第五阶段 修复共享端显示问题：\n① 修复共享方（host）本地预览黑屏——V4 多客户端架构下 host 主连接仅作采集底座、ICE 不会建立，本地预览改在采集启动成功后立即绑定本地视频轨\n② 修复共享端本地预览画面过小——host 预览视频与屏幕同方向，默认改为铺满容器最大化显示；观看方仍为等比完整显示",
+  changelog: "V4 第五阶段 优化共享端界面：\n① 移除共享方（host）本地视频预览——共享方直接看自己屏幕即可，界面更简洁（之前预览画面偏小）\n② 观看方不受影响（等比完整显示、全屏自动旋转跟随视频方向）",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "共享端预览铺满显示",
+    note: "移除共享端本地预览",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
