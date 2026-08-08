@@ -1347,6 +1347,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     private fun setupVideoPreview(track: VideoTrack) {
         binding.flRemoteVideo.visibility = View.VISIBLE
+        // host 本地预览：视频方向与屏幕方向一致，默认铺满容器最大化显示（比例接近，基本不裁切）；
+        // viewer 端默认等比完整（方向可能不匹配，铺满会裁切画面，v1.111 定案）
+        isFitMode = !isHost
+        applyAspectMode()
 
         // 移除旧的 renderer 和 sink（重连/切换预览时复用同一容器）
         val oldTrack = remoteVideoTrack
