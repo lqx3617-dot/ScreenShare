@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第二阶段 体验优化：\n① 移除房间口令认证——加入会议只需 4 位会议号，分享链接不含口令，输入更简单；保留 1 共享方 + 多观看方多客户端房间\n② 修复画面显示——共享方为手机时（横屏视频在竖屏观看端），等比完整显示会导致画面过小，现已自动铺满屏幕；方向一致仍保持等比完整，控制模式触摸坐标同步修正\n③ 采集帧率优化——屏幕旋转后更新采集分辨率时不再错误恢复 60fps，保持 30fps 低延迟策略",
+  changelog: "V4 第三阶段 画面自适应完善：\n① 修复全屏画面过小——进入全屏时容器由隐藏转可见后立即重新测量并应用铺满判定，横屏视频在竖屏手机上全屏观看同样铺满，不再缩成窄条\n② 退出全屏回主页同步重新应用铺满，主页/全屏显示效果一致",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "V4 无口令多客户端+画面自适应",
+    note: "V4 全屏画面自适应修复",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

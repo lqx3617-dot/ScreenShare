@@ -1452,6 +1452,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flFullscreen.visibility = View.VISIBLE
         // 全屏时才接收视频帧（避免与主预览双 renderer 同时渲染导致卡顿）
         bindFullscreenSink()
+        // 全屏容器布局完成后立即重新应用铺满判定（容器由 gone→visible 需重新测量）
+        binding.flFullscreen.post {
+            if (isFullscreen) applyModeScale()
+        }
 
         // 隐藏所有其他 UI
         binding.llTitle.visibility = View.GONE
@@ -1648,6 +1652,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
 
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+
+        // 主页容器由 gone→visible 后重新测量，布局完成后重新应用铺满判定
+        binding.flRemoteVideo.post {
+            if (!isFullscreen) applyModeScale()
+        }
     }
 
     /** 全屏时放大控制按钮（远程控制/返回/主页/最近/文本/完整/铺满），退出全屏恢复原始尺寸 */
