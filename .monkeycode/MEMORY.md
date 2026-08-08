@@ -167,3 +167,11 @@ Entries discovered by the Agent during task execution should follow this format:
   - 观看端画面滞后根因：丢包重传(nack_count>=3)触发 RTT 惩罚放大接收端 jitter 缓冲估计 → target delay 增大 → 播放缓冲膨胀滞后。v1.100 通过 JitterEstimatorConfig 把 nack_limit 3→15、nack_count_timeout 60s→5s 抑制缓冲膨胀
   - Java SDK 144 无任何视频 playout delay 设置 API（RtpParameters/MediaConstraints/PeerConnection 均无）；UseLowLatencyRendering 需 max_playout_delay<=500ms（默认 10s），仅由 playout-delay RTP header extension 驱动，Java 层无法激活
 
+[User Instruction Summary]
+- Date: 2026-08-08
+- Context: 用户要求去掉多人共享，改为情侣之间的 1 对 1 共享
+- Instructions:
+  - 共享功能为情侣 1 对 1 模式：每房间最多 1 个观看方，第 2 个加入被拒（"该会议已被对方加入，仅支持 1 对 1 共享"）
+  - 界面文案情侣化："观众 #N 已加入"改为"对方已加入"、"观众 #N 已离开"改为"对方已离开"
+  - 采用服务器限制方案（RoomManager.join 检查 viewers.size>0 拒绝），保留 V4 客户端多连接框架不动，降低回归风险
+
