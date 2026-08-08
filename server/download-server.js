@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.116 情侣 1 对 1 模式：\n① 去掉多人共享，同一会议仅允许 1 个观看方加入，后来者提示会议已被对方加入\n② 界面提示改为情侣化表述（对方已加入/对方已离开），连接流程不变",
+  changelog: "v1.117 控制通道诊断版：\n① 观看端新增 DataChannel 诊断——收到控制/音频通道及状态实时显示，定位控制通道未就绪原因\n② 修复更新包下载校验崩溃（文件校验前先确认存在）\n③ 服务器日志区分 Offer 是否携带 DataChannel 段",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "情侣 1 对 1 共享",
+    note: "控制通道诊断版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

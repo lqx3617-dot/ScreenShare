@@ -158,11 +158,19 @@ wss.on("connection", (ws) => {
           const payloadLen = String(data || "").length;
           let host = 0, srflx = 0, relay = 0, sdpCand = 0;
           let mediaLines = [];
+          let hasApp = false;
+          let candInfo = "";
           try {
             const p = JSON.parse(data || "{}");
             const sdpBody = String(p.sdp && p.sdp.sdp || "");
             sdpCand = (sdpBody.match(/a=candidate/g) || []).length;
             mediaLines = (sdpBody.match(/^m=/gm) || []).slice(0, 6);
+            hasApp = /^m=application\b/m.test(sdpBody);
+            if (p.type === "candidate") {
+              const s = String(p.candidate || "");
+              const ct = s.includes("typ relay") ? "relay" : s.includes("typ srflx") ? "srflx" : s.includes("typ host") ? "host" : "other";
+              candInfo = ` | cand:${ct}(${s.slice(0, 90)})`;
+            }
             const iceArr = Array.isArray(p.ice) ? p.ice : [];
             iceArr.forEach((c) => {
               const s = String(c && c.candidate || "");
@@ -171,7 +179,7 @@ wss.on("connection", (ws) => {
               else if (s.includes("typ relay")) relay++;
             });
           } catch (e) {}
-          console.log(`[room ${roomCode}] relay ${role}#${viewerId||""}->${role === "host" ? "viewer#" + msg.viewerId : "host"} ${payloadLen}B | sdp a=candidate:${sdpCand} | media:[${mediaLines.join(" | ")}] | ice[]: host=${host} srflx=${srflx} relay=${relay}`);
+          console.log(`[room ${roomCode}] relay ${role}#${viewerId||""}->${role === "host" ? "viewer#" + msg.viewerId : "host"} ${payloadLen}B | app=${hasApp ? "有DataChannel" : "无DataChannel"} | sdp a=candidate:${sdpCand} | media:[${mediaLines.join(" | ")}] | ice[]: host=${host} srflx=${srflx} relay=${relay}${candInfo}`);
         }
         send(target, { type: "relay", data, viewerId: role === "host" ? msg.viewerId : viewerId });
         break;

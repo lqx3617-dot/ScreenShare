@@ -175,3 +175,12 @@ Entries discovered by the Agent during task execution should follow this format:
   - 界面文案情侣化："观众 #N 已加入"改为"对方已加入"、"观众 #N 已离开"改为"对方已离开"
   - 采用服务器限制方案（RoomManager.join 检查 viewers.size>0 拒绝），保留 V4 客户端多连接框架不动，降低回归风险
 
+[Project Knowledge Summary]
+- Date: 2026-08-08
+- Context: Discovered by Agent while 排查"视频连不上 + 控制通道未就绪"（v1.116/v1.117）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 症状：同 WiFi 下视频"连接中/连接超时"、观看端远程控制提示"控制通道未就绪"。根因：共享方（host）手机开着 VPN，WebRTC 只收集到 VPN 虚拟网卡候选（如 172.19.0.1），无真实 WiFi 局域网 IP、无 srflx 公网映射 → viewer 无法可达 → P2P 建立失败，DataChannel 也随 ICE 失败。用户关闭 VPN 后重测即正常（host 候选变为 192.168.x.x + srflx）
+  - 服务器 DIAG 增强定位：server.js relay 日志对 type=candidate 消息解析 candidate 字段打印候选类型（cand:host/srflx/relay + IP 片段）。判断网络问题依据：候选全是虚拟网段地址(172.19.0.1)且无 srflx → host 开 VPN；有真实局域网 IP + srflx → 正常
+  - 环境事实：本次排查时 TURN 3478 公网反代已失效（https://3478-<domain>/ 返回 HTTP 530），仅 8090/8095 反代可用，request_preview 返回 URL 但反代不生效；但同 WiFi + srflx 场景无需 TURN 也能连，TURN 只影响跨网/复杂网络兜底
+

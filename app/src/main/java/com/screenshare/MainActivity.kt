@@ -318,7 +318,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (isHost) return
         val p = peer ?: return
         if (p.controlChannelOpen().not()) {
-            Toast.makeText(this, "控制通道未就绪", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "控制通道未就绪 ${p.controlChannelDebug()}", Toast.LENGTH_SHORT).show()
             return
         }
         isControlMode = !isControlMode
@@ -1214,6 +1214,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         runOnUiThread {
             binding.tvScanResult.text = state
             binding.tvScanResult.visibility = View.VISIBLE
+        }
+    }
+
+    override fun onDataChannelInfo(info: String) {
+        runOnUiThread {
+            binding.tvScanResult.text = info
+            binding.tvScanResult.visibility = View.VISIBLE
+            Log.d(TAG, "DataChannel: $info")
         }
     }
 

@@ -104,10 +104,12 @@ class WebRTCPeer(
         fun onIceGatheringComplete() {}
         /** ICE 状态变化（CHECKING/CONNECTED/FAILED...），用于 UI 显示诊断信息 */
         fun onIceState(state: String) {}
-        // V4: 多 viewer 回调（host 端）
+        /** V4: 多 viewer 回调（host 端） */
         fun onViewerIceCandidate(viewerId: Int, candidate: IceCandidate) {}
         fun onViewerOfferReady(viewerId: Int, sdp: SessionDescription) {}
         fun onViewerRestarted(viewerId: Int) {}
+        /** DataChannel 事件诊断（label + 状态变化），viewer 端用于确认控制/音频通道是否建立 */
+        fun onDataChannelInfo(info: String) {}
     }
 
     private var peerConnection: PeerConnection? = null
@@ -267,7 +269,9 @@ class WebRTCPeer(
             if (channel?.label() == SYSTEM_AUDIO_LABEL) {
                 channel.registerObserver(object : DataChannel.Observer {
                     override fun onBufferedAmountChange(previousAmount: Long) {}
-                    override fun onStateChange() {}
+                    override fun onStateChange() {
+                        listener.onDataChannelInfo("音频通道: ${channel.state()}")
+                    }
                     override fun onMessage(buffer: DataChannel.Buffer) {
                         if (buffer.binary) {
                             val data = ByteArray(buffer.data.remaining())
@@ -276,10 +280,14 @@ class WebRTCPeer(
                         }
                     }
                 })
+                listener.onDataChannelInfo("收到音频通道 (${channel.state()})")
             } else if (channel?.label() == CONTROL_LABEL) {
                 // 观看方侧：保存控制通道引用（用于向共享方发送指令），并接收可能的回应
                 controlChannel = channel
                 registerControlObserver(channel)
+                listener.onDataChannelInfo("收到控制通道 (${channel.state()})")
+            } else {
+                listener.onDataChannelInfo("收到未知通道: ${channel?.label()}")
             }
         }
         override fun onRenegotiationNeeded() {}
@@ -791,7 +799,9 @@ class WebRTCPeer(
     private fun registerControlObserver(dc: DataChannel) {
         dc.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
-            override fun onStateChange() {}
+            override fun onStateChange() {
+                listener.onDataChannelInfo("控制通道状态: ${dc.state()}")
+            }
             override fun onMessage(buffer: DataChannel.Buffer) {
                 if (!buffer.binary) {
                     val data = ByteArray(buffer.data.remaining())
@@ -802,6 +812,12 @@ class WebRTCPeer(
                 }
             }
         })
+    }
+
+    /** 控制通道诊断信息（观看方）：通道是否建立、当前状态 */
+    fun controlChannelDebug(): String {
+        val c = controlChannel
+        return if (c == null) "控制通道: 未建立" else "控制通道: ${c.state()}"
     }
 
     /** 采集分辨率匹配屏幕比例（虚拟显示比例与屏幕不一致时系统会放大裁切屏幕内容，导致上下被切）。

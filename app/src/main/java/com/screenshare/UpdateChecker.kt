@@ -210,7 +210,7 @@ object UpdateChecker {
                 target.delete()
                 return@Thread
             }
-            if (!ok) {
+            if (!ok || !target.exists()) {
                 target.delete()
                 (context as? android.app.Activity)?.runOnUiThread {
                     Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
@@ -281,6 +281,13 @@ object UpdateChecker {
             activity?.runOnUiThread {
                 progressBar.progress = 100
                 textView.text = "正在校验文件..."
+            }
+            if (!target.exists()) {
+                activity?.runOnUiThread {
+                    if (dialog.isShowing) dialog.dismiss()
+                    Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                }
+                return@Thread
             }
             if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
                 activity?.runOnUiThread {
