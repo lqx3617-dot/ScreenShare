@@ -391,7 +391,48 @@ class WebRTCPeer(
             }
         }
         AppLogger.webrtc("viewer#$viewerId connection created")
+        // V4: host 主连接仅作采集底座不参与协商，控制/音频 DataChannel 必须随每个
+        // viewer 连接的 Offer 携带（createDataChannel 在 createOffer 前调用，随 SDP 协商），
+        // 否则 viewer 端 onDataChannel 收不到通道，控制通道与系统音频均不可用。
+        createViewerDataChannels(viewerId)
         return pc
+    }
+
+    /** host 端：为 viewer 连接创建控制 + 系统音频 DataChannel（offerer 侧，viewer 端 onDataChannel 接收） */
+    private fun createViewerDataChannels(viewerId: Int) {
+        val conn = viewerConnections[viewerId] ?: return
+        val pc = conn.pc
+        try {
+            val ctrlInit = DataChannel.Init().apply {
+                ordered = false
+                maxRetransmits = 1
+            }
+            val ctrlDc = pc.createDataChannel(CONTROL_LABEL, ctrlInit)
+            conn.controlChannel = ctrlDc
+            ctrlDc.registerObserver(object : DataChannel.Observer {
+                override fun onBufferedAmountChange(previousAmount: Long) {}
+                override fun onStateChange() {}
+                override fun onMessage(buffer: DataChannel.Buffer) {
+                    if (!buffer.binary) {
+                        val data = ByteArray(buffer.data.remaining())
+                        buffer.data.get(data)
+                        controlListener?.invoke(String(data))
+                    }
+                }
+            })
+        } catch (t: Throwable) {
+            Log.e(TAG, "viewer#$viewerId 创建控制 DataChannel 失败: ${t.message}")
+        }
+        try {
+            val audioInit = DataChannel.Init().apply {
+                ordered = false
+                maxRetransmits = 0
+            }
+            val audioDc = pc.createDataChannel(SYSTEM_AUDIO_LABEL, audioInit)
+            conn.systemAudioChannel = audioDc
+        } catch (t: Throwable) {
+            Log.e(TAG, "viewer#$viewerId 创建音频 DataChannel 失败: ${t.message}")
+        }
     }
 
     /** 为该 viewer 创建 Offer 并发起协商（host 端） */

@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "V4 第五阶段 优化共享端界面：\n① 移除共享方（host）本地视频预览——共享方直接看自己屏幕即可，界面更简洁（之前预览画面偏小）\n② 观看方不受影响（等比完整显示、全屏自动旋转跟随视频方向）",
+  changelog: "V4 第六阶段 修复观看端控制通道不可用：\n① 修复控制通道未就绪——V4 多客户端架构下 host 主连接仅作采集底座不参与协商，控制/音频 DataChannel 必须随每个 viewer 连接的 Offer 建立，现在每个观看方连接都携带控制与音频通道\n② 观看端远程控制/帧率切换/系统音频恢复正常；共享端仍无本地预览",
   forced: false,
 };
 
@@ -60,7 +60,7 @@ function getVersion() {
     url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
     md5,
     size: fs.statSync(APK).size,
-    note: "移除共享端本地预览",
+    note: "修复观看端控制通道不可用",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
