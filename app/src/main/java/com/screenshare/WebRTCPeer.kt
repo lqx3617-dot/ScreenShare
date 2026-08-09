@@ -100,6 +100,8 @@ class WebRTCPeer(
         fun onAnswerReady(sdp: SessionDescription)
         fun onConnected()
         fun onDisconnected()
+        /** 重连超过上限，连接彻底失败——用于 UI 给出可操作的诊断提示 */
+        fun onConnectionFailed() {}
         fun onRemoteVideoTrack(videoTrack: VideoTrack)
         fun onIceGatheringComplete() {}
         /** ICE 状态变化（CHECKING/CONNECTED/FAILED...），用于 UI 显示诊断信息 */
@@ -321,6 +323,9 @@ class WebRTCPeer(
     /** viewer 连接数（host 视角） */
     fun viewerCount(): Int = viewerConnections.size
 
+    /** 当前活跃 viewer 的 id（1 对 1 模式下取唯一 viewer；无则返回 0） */
+    fun firstViewerId(): Int = viewerConnections.keys.firstOrNull() ?: 0
+
     /**
      * 为指定 viewer 创建独立 PeerConnection 并挂载共享视频轨道。
      * host 收到 onViewerJoined(viewerId) 时调用。
@@ -396,6 +401,13 @@ class WebRTCPeer(
                     params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
                 } catch (t: Throwable) {}
                 rtp.parameters = params
+                // 初始带宽保守起步（同主连接：1.5/5/12M），避免 viewer 刚加入即冲击带宽导致瞬时拥塞
+                try {
+                    pc.setBitrate(1_500_000, 5_000_000, 12_000_000)
+                    Log.d(TAG, "viewer#$viewerId 初始带宽 1.5/5/12 Mbps")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
+                }
             }
         }
         AppLogger.webrtc("viewer#$viewerId connection created")
@@ -644,6 +656,7 @@ class WebRTCPeer(
         if (reconnectCount >= maxReconnectAttempts) {
             AppLogger.webrtc("Reconnect failed (超过${maxReconnectAttempts}次)")
             connectionStatus = ConnectionStatus.FAILED
+            listener.onConnectionFailed()
             listener.onDisconnected()
             return
         }
@@ -1057,6 +1070,16 @@ class WebRTCPeer(
      */
     fun collectStats(): String? {
         val pc = peerConnection ?: return null
+        return collectStatsFor(pc)
+    }
+
+    /** 指定 viewer 连接的统计（V4 host 端弱网自适应用，取该连接的发送/丢包数据） */
+    fun collectViewerStats(viewerId: Int): String? {
+        val conn = viewerConnections[viewerId] ?: return null
+        return collectStatsFor(conn.pc)
+    }
+
+    private fun collectStatsFor(pc: PeerConnection): String? {
         var result: String? = null
         val lock = Object()
         try {
@@ -1284,6 +1307,87 @@ class WebRTCPeer(
                             val (capW, capH) = captureSizeForLevel(targetProfile)
                             capturer.changeCaptureFormat(capW, capH, captureFps)
                             AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (档位$curAdaptLevel)")
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "采集降分辨率失败: ${t.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * V4 host 端：对指定 viewer 连接执行弱网自适应（1 对 1 模式的实际视频承载连接）。
+     * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
+     * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
+     */
+    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
+        if (disposed) return
+        val conn = viewerConnections[viewerId] ?: return
+        val pc = conn.pc
+        val sender = conn.videoSender ?: return
+        // 丢包率：优先用 fractionLost；未上报时用增量累计做差兜底
+        var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
+        if (fractionLossPct < 0 && lastOutSentCum > 0) {
+            val dSent = outSentCum - lastOutSentCum
+            val dLost = outLostCum - lastOutLostCum
+            if (dSent > 0) sendLossPct = dLost * 100.0 / dSent
+        }
+        lastOutSentCum = outSentCum
+        lastOutLostCum = outLostCum
+        val level = when {
+            sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1
+            sendLossPct >= 3.0 -> 2
+            sendLossPct >= 1.5 -> 1
+            else -> 0
+        }
+        if (level > curAdaptLevel) {
+            curAdaptLevel = level
+            recoverTimer = 0
+        } else if (level < curAdaptLevel) {
+            recoverTimer++
+            if (recoverTimer >= 3) {
+                curAdaptLevel--
+                recoverTimer = 0
+            }
+        }
+        val cap = adaptBitrateCaps[curAdaptLevel]
+        if (lastAdaptBitrateCap != cap) {
+            lastAdaptBitrateCap = cap
+            try {
+                pc.setBitrate(1_500_000, cap, cap)
+            } catch (t: Throwable) {
+                Log.w(TAG, "viewer#$viewerId 自适应调码率失败: ${t.message}")
+            }
+            val degradation = if (curAdaptLevel > 0) {
+                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+            } else {
+                RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            }
+            lastAdaptDegradation = degradation
+            try {
+                val params = sender.parameters
+                params.degradationPreference = degradation
+                sender.parameters = params
+                Log.d(TAG, "viewer#$viewerId 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
+            } catch (t: Throwable) {
+                Log.w(TAG, "viewer#$viewerId 自适应切策略失败: ${t.message}")
+            }
+            // 采集侧降分辨率（与主连接共用采集器，弱网降采集分辨率同时减轻两端负载）
+            val targetProfile = captureProfileForLevel(curAdaptLevel)
+            if (targetProfile != lastCaptureProfile) {
+                val now = System.currentTimeMillis()
+                val isDowngrade = targetProfile > lastCaptureProfile
+                val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
+                if (isDowngrade || cooldownOk) {
+                    lastCaptureProfile = targetProfile
+                    lastCaptureSwitchMs = now
+                    try {
+                        val capturer = videoCapturer
+                        if (capturer != null) {
+                            val (capW, capH) = captureSizeForLevel(targetProfile)
+                            capturer.changeCaptureFormat(capW, capH, captureFps)
+                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (viewer#$viewerId 档位$curAdaptLevel)")
                         }
                     } catch (t: Throwable) {
                         Log.w(TAG, "采集降分辨率失败: ${t.message}")

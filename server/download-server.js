@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.117 控制通道诊断版：\n① 观看端新增 DataChannel 诊断——收到控制/音频通道及状态实时显示，定位控制通道未就绪原因\n② 修复更新包下载校验崩溃（文件校验前先确认存在）\n③ 服务器日志区分 Offer 是否携带 DataChannel 段",
+  changelog: "v1.118 连接与体验优化：\n① 修复 1 对 1 模式下弱网自适应未生效（实际视频连接未接入降质逻辑），弱网自动降码率/降分辨率保流畅\n② 观看方加入时初始带宽保守起步，避免刚连接即冲击带宽\n③ 连接失败时给出可操作诊断提示（识别 VPN/网络不互通/中继不可用）\n④ 分享链接与下载地址改为随服务器自动派生，换服务器无需改源码",
   forced: false,
 };
 
@@ -44,7 +44,8 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
 let cachedVersion = null;
 let cachedMtime = 0;
-function getVersion() {
+// APK 下载 URL：随请求 Host 动态生成（http/https 由反代层决定，这里统一输出 https 公网地址）
+function getVersion(host) {
   const mtime = fs.statSync(APK).mtimeMs;
   if (cachedVersion && cachedMtime === mtime) return cachedVersion;
   const gradle = fs.readFileSync(GRADLE, "utf8");
@@ -54,13 +55,14 @@ function getVersion() {
     .execSync(`md5sum "${APK}"`)
     .toString()
     .split(/\s+/)[0];
+  const base = (host || "").trim() || "localhost";
   cachedVersion = {
     versionCode: vc ? parseInt(vc[1], 10) : 0,
     versionName: vn ? vn[1] : "0",
-    url: "https://8090-6d639d2de20eb686.monkeycode-ai.online/ScreenShare-allarch-signed.apk",
+    url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "控制通道诊断版",
+    note: "连接与体验优化版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
@@ -76,7 +78,7 @@ const server = http.createServer((req, res) => {
   };
   if (urlPath === "/version.json") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getVersion()));
+    res.end(JSON.stringify(getVersion(req.headers.host)));
     done(200);
     return;
   }

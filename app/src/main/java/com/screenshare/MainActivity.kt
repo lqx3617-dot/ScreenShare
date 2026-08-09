@@ -865,7 +865,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 生成分享文案（https 兜底链接 + scheme 唤起链接 + 会议号） */
     private fun buildShareText(code: String): String {
-        val base = "https://8090-6d639d2de20eb686.monkeycode-ai.online"
+        // 分享落地页域名从 UPDATE_URL 派生（https://host/version.json → https://host），换服务器无需改源码
+        val base = BuildConfig.UPDATE_URL
+            .trimEnd('/')
+            .substringBeforeLast("/", BuildConfig.UPDATE_URL)
+            .trimEnd('/')
         return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
     }
 
@@ -1343,6 +1347,39 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
+    /** 连接彻底失败（重连超限）：结合本机候选情况给出可操作诊断，避免用户无从下手 */
+    override fun onConnectionFailed() {
+        runOnUiThread {
+            val counts = iceCandidates.groupingBy { c ->
+                when {
+                    c.sdp.contains("typ host") -> "host"
+                    c.sdp.contains("typ srflx") -> "srflx"
+                    c.sdp.contains("typ relay") -> "relay"
+                    else -> "other"
+                }
+            }.eachCount()
+            val tip = buildString {
+                append("❌ 连接失败：多次重连仍未建立 P2P\n")
+                append("本机网络候选 ${iceCandidates.size} 个（")
+                append("host=${counts["host"] ?: 0}, ")
+                append("公网映射=${counts["srflx"] ?: 0}, ")
+                append("中继=${counts["relay"] ?: 0}）\n")
+                when {
+                    counts["host"] ?: 0 > 0 && (counts["srflx"] ?: 0) == 0 && (counts["relay"] ?: 0) == 0 ->
+                        append("提示：只有内网候选，双方可能不在同一网络，请确认在同一 WiFi 下使用")
+                    (counts["srflx"] ?: 0) > 0 && (counts["relay"] ?: 0) == 0 ->
+                        append("提示：双方网络无法直接互通，且中继服务器不可用，请稍后重试或检查网络")
+                    (counts["host"] ?: 0) == 0 && (counts["srflx"] ?: 0) == 0 ->
+                        append("提示：本机未收集到任何网络候选，请检查是否开启了 VPN 或飞行模式")
+                    else -> append("提示：请检查双方网络是否正常，稍后重试")
+                }
+            }
+            Toast.makeText(this, tip, Toast.LENGTH_LONG).show()
+            binding.tvScanResult.text = tip
+            binding.tvScanResult.visibility = View.VISIBLE
+        }
+    }
+
     override fun onRemoteVideoTrack(videoTrack: VideoTrack) {
         runOnUiThread { setupVideoPreview(videoTrack) }
     }
@@ -1776,8 +1813,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             override fun run() {
                 if (!isFullscreen) return
                 try {
-                    peer?.collectStats()?.let { raw ->
-                        val json = org.json.JSONObject(raw)
+                    // V4 host：1 对 1 模式下实际视频承载在 viewer 连接，统计取该连接（发送帧率/码率/丢包才是真实值）
+                    val vid = if (isHost) peer?.firstViewerId() ?: 0 else 0
+                    val raw = if (vid > 0) peer?.collectViewerStats(vid) else peer?.collectStats()
+                    raw?.let {
+                        val json = org.json.JSONObject(it)
                         val now = System.currentTimeMillis()
                         val isHostView = isHost
                         val fpsText = if (isHostView) "发送 ${json.optInt("outFps", 0)}fps" else "接收 ${json.optInt("inFps", 0)}fps"
@@ -1804,11 +1844,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         }
                         // 腾讯会议式弱网自适应：共享方按远端回报的发送丢包率自动降质保流畅（v1.103）
                         // fractionLost 由 remote-inbound-rtp 直接给出（0~100），未上报为 -1 时走增量兜底
+                        // V4 host：1 对 1 模式下实际视频承载在 viewer 连接，弱网自适应作用于该连接
                         val outLost = json.optLong("outLost", 0)
                         val outSent = json.optLong("outSent", 0)
                         val outLossPct = json.optDouble("outLossPct", -1.0)
                         if (isHostView) {
-                            peer?.adaptToNetwork(outLossPct, outSent, outLost)
+                            val activeVid = peer?.firstViewerId() ?: 0
+                            if (activeVid > 0) {
+                                peer?.adaptViewerNetwork(activeVid, outLossPct, outSent, outLost)
+                            } else {
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost)
+                            }
                         }
                         // 观看方丢包率：增量计算（上次统计到本次的新丢包 / 新接收总量），避免累计值不敏感
                         val lost = json.optLong("lost", 0)

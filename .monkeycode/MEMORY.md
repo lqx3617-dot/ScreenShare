@@ -184,3 +184,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - 服务器 DIAG 增强定位：server.js relay 日志对 type=candidate 消息解析 candidate 字段打印候选类型（cand:host/srflx/relay + IP 片段）。判断网络问题依据：候选全是虚拟网段地址(172.19.0.1)且无 srflx → host 开 VPN；有真实局域网 IP + srflx → 正常
   - 环境事实：本次排查时 TURN 3478 公网反代已失效（https://3478-<domain>/ 返回 HTTP 530），仅 8090/8095 反代可用，request_preview 返回 URL 但反代不生效；但同 WiFi + srflx 场景无需 TURN 也能连，TURN 只影响跨网/复杂网络兜底
 
+[Project Knowledge Summary]
+- Date: 2026-08-09
+- Context: Discovered by Agent while 软件全面优化（v1.118）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - V4 host 端弱网自适应缺口：adaptToNetwork 只作用于主连接（peerConnection），而 1 对 1 模式实际视频承载在 viewerConnections，导致弱网降质完全未生效。修复：新增 collectViewerStats(viewerId)/adaptViewerNetwork(viewerId,...)，MainActivity 统计线程 host 端优先取 viewer 连接数据并调用 adaptViewerNetwork（用 firstViewerId() 取活跃 viewer）
+  - 地址参数化：分享链接 base 从 BuildConfig.UPDATE_URL 派生（去 /version.json）；download-server.js getVersion(host) 的 url 改为随请求 Host 动态生成（https://${host}/...），换服务器无需改源码
+  - 连接失败诊断：Listener 新增 onConnectionFailed()（restartConnection 超限时触发），MainActivity 按本机候选类型给出可操作提示（全是内网候选→不同网络；有 srflx 无 relay→中继不可用；无任何候选→检查 VPN/飞行模式）
+  - viewer 连接初始带宽补 setBitrate(1.5/5/12M) 保守起步，与主连接一致，避免 viewer 刚加入即冲击带宽
+  - 环境限制复述：公网大文件下载整包 curl 超时/截断（25MB 约需 >25s），但 Range 分块下载稳定（每块 10MB 完整），手机端下载器断点续传可正常完成；验证 APK 完整性用 Range 分块而非整包
+
