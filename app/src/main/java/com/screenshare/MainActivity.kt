@@ -73,6 +73,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var signalClient: SignalClient? = null
     private var signalMode = false
     private var signalPeerReady = false
+    // host 端：对方（viewer）是否已加入房间。服务器对 host 发的是 viewer-joined 而非 peer-ready，
+    // 用此标记判断"对方已加入"（关闭会议号弹窗 / 授权后不弹窗）
+    private var viewerJoined = false
     private var signalPendingOfferData: String? = null
     // 对端尚未加入时缓存的 ICE 候选（加入后连同 offer 一起补发，避免服务器"对端尚未加入"拒发丢失）
     private var signalPendingCandidates = mutableListOf<IceCandidate>()
@@ -812,6 +815,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         isHost = true
         hostSessionActive = true
         signalPeerReady = false
+        viewerJoined = false
         signalPendingOfferData = null
 
         binding.btnSignalHost.isEnabled = false
@@ -936,6 +940,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         isHost = false
         hostSessionActive = false
         signalPeerReady = false
+        viewerJoined = false
         signalPendingOfferData = null
         signalPendingCandidates.clear()
         signalSdpSent = false
@@ -1030,6 +1035,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             override fun onViewerJoined(vid: Int) {
                 runOnUiThread {
                     updateUI("对方已加入")
+                    viewerJoined = true
+                    // 对方已加入：关闭会议号弹窗，避免遮挡画面（服务器对 host 发的是 viewer-joined 而非 peer-ready）
+                    dismissMeetingCodeDialog()
                     // 情侣模式：每房间仅 1 个 viewer，为该 viewer 建立独立连接并发送 Offer
                     handleViewerJoined(vid)
                 }
@@ -1055,6 +1063,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     updateUI("⚠️ $message")
                     // 连接可能重建，重置对端就绪标记，等重连成功后重新走流程
                     signalPeerReady = false
+                    viewerJoined = false
                     signalSdpSent = false
                 }
             }
@@ -1161,6 +1170,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         signalClient?.disconnect()
         signalClient = null
         signalPeerReady = false
+        viewerJoined = false
         signalPendingOfferData = null
         signalPendingCandidates.clear()
         signalSdpSent = false
@@ -1986,8 +1996,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             // 授权成功：显示会议号弹窗（供复制给对方）+ 启动共享
             signalCode?.let { code ->
                 // 对方已加入（授权期间对方输入会议号加入）：不再弹会议号弹窗，
-                // 避免弹窗晚于 onPeerReady 弹出后无人关闭、遮挡画面
-                if (!signalPeerReady) {
+                // 避免弹窗晚于对方加入后弹出、遮挡画面
+                if (!viewerJoined) {
                     try { showMeetingCodeDialog(code) } catch (t: Throwable) {
                         Log.e(TAG, "会议号弹窗异常（不影响连接）: ${t.message}")
                     }
@@ -2102,6 +2112,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         hostSessionActive = false
         signalMode = false
         signalPeerReady = false
+        viewerJoined = false
         signalPendingOfferData = null
         signalPendingCandidates.clear()
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
