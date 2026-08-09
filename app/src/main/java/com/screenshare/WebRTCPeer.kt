@@ -131,6 +131,9 @@ class WebRTCPeer(
         var controlChannel: DataChannel? = null
     )
     private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
+    // viewer 断线重建计数（防持续弱网下无限重建）与上限
+    private val viewerRestartCounts = mutableMapOf<Int, Int>()
+    private val viewerMaxRestarts = 5
 
     // 系统音频 DataChannel（共享方发送 / 观看方接收）
     private var systemAudioChannel: DataChannel? = null
@@ -517,6 +520,7 @@ class WebRTCPeer(
     fun removeViewer(viewerId: Int) {
         val conn = viewerConnections.remove(viewerId) ?: return
         pendingViewerCandidates.remove(viewerId)
+        viewerRestartCounts.remove(viewerId)
         try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
         try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
         try {
@@ -526,10 +530,20 @@ class WebRTCPeer(
         AppLogger.webrtc("viewer#$viewerId removed")
     }
 
-    /** 该 viewer 断线重连（ICE restart 简化版：直接重建连接，host 端） */
+    /** 该 viewer 断线重连（ICE restart 简化版：直接重建连接，host 端）。
+     * 带每 viewer 重连上限保护（同主连接 restartConnection 策略），
+     * 避免持续弱网下无限重建连接耗尽电量、画面卡死。 */
     private fun restartViewer(viewerId: Int) {
-        val old = viewerConnections[viewerId] ?: return
-        AppLogger.network("viewer#$viewerId restarting connection")
+        if (viewerConnections[viewerId] == null) return
+        val count = viewerRestartCounts.getOrPut(viewerId) { 0 } + 1
+        if (count > viewerMaxRestarts) {
+            AppLogger.webrtc("viewer#$viewerId 重连超过${viewerMaxRestarts}次，放弃")
+            removeViewer(viewerId)
+            listener.onConnectionFailed()
+            return
+        }
+        viewerRestartCounts[viewerId] = count
+        AppLogger.network("viewer#$viewerId restarting connection ($count/$viewerMaxRestarts)")
         removeViewer(viewerId)
         if (createViewerConnection(viewerId) != null) {
             listener.onViewerRestarted(viewerId)

@@ -66,6 +66,9 @@ class SignalClient(
     private var attempt = 0
     /** V4: 本端在房间中的 viewerId（host 恒为 0；viewer 为服务器分配） */
     private var myViewerId = 0
+    // 信令待发队列：WS 未就绪（断开/重连中）时缓存 relay 消息，连接恢复后统一补发，
+    // 避免网络波动瞬间 SDP/ICE 发送静默丢失导致连接卡死
+    private val pendingRelays = java.util.concurrent.ConcurrentLinkedQueue<String>()
     // V3.1: 应用层心跳——10s 周期 ping 保持连接活跃，防止移动网络假断开
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // V3.2: 心跳假死检测——超过 30s 未收到 pong 视为 WebSocket 假死，主动断开并自动重连
@@ -94,6 +97,7 @@ class SignalClient(
         this.asHost = asHost
         attempt = 0
         myViewerId = 0
+        pendingRelays.clear()
         tryConnect()
     }
 
@@ -154,10 +158,12 @@ class SignalClient(
             "created" -> {
                 // host：房间创建成功，等待 viewer 加入
                 listener.onRoomReady("created", 0)
+                flushPending()
             }
             "joined" -> {
                 myViewerId = json.optInt("viewerId", 0)
                 listener.onRoomReady("joined", myViewerId)
+                flushPending()
             }
             "peer-ready" -> listener.onPeerReady()
             "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0))
@@ -177,7 +183,41 @@ class SignalClient(
             put("data", data)
             if (asHost && viewerId > 0) put("viewerId", viewerId)
         }
-        webSocket?.send(msg.toString())
+        val ws = webSocket
+        if (ws == null || closedByUs) {
+            // WS 未连接或已主动断开：缓存，等重连成功后补发（onOpen → flushPending）
+            pendingRelays.offer(msg.toString())
+            return
+        }
+        val ok = try {
+            ws.send(msg.toString())
+        } catch (t: Throwable) {
+            false
+        }
+        if (!ok) {
+            Log.w(TAG, "relay 发送失败（WS 未就绪），已入待发队列")
+            pendingRelays.offer(msg.toString())
+        }
+    }
+
+    /** 连接恢复后补发缓存中的信令消息（onOpen 时调用），保证 SDP/ICE 不因网络波动丢失 */
+    private fun flushPending() {
+        while (true) {
+            val m = pendingRelays.poll() ?: break
+            val sent = try {
+                webSocket?.send(m) ?: false
+            } catch (t: Throwable) {
+                false
+            }
+            if (!sent) {
+                // 又失败了：放回队首，等待下次重连补发
+                pendingRelays.offer(m)
+                break
+            }
+        }
+        if (pendingRelays.isNotEmpty()) {
+            Log.d(TAG, "补发完成，剩余 ${pendingRelays.size} 条待下次连接")
+        }
     }
 
     fun disconnect() {

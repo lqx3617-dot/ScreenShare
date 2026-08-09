@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.118 连接与体验优化：\n① 修复 1 对 1 模式下弱网自适应未生效（实际视频连接未接入降质逻辑），弱网自动降码率/降分辨率保流畅\n② 观看方加入时初始带宽保守起步，避免刚连接即冲击带宽\n③ 连接失败时给出可操作诊断提示（识别 VPN/网络不互通/中继不可用）\n④ 分享链接与下载地址改为随服务器自动派生，换服务器无需改源码",
+  changelog: "v1.119 连接稳定性优化：\n① 信令待发队列：网络波动时 SDP/ICE 不再静默丢失，连接恢复后自动补发\n② 观看端断线重建加入上限保护（最多 5 次），持续弱网不再无限重建连接",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "连接与体验优化版",
+    note: "连接稳定性优化版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
