@@ -22,3 +22,5 @@ keystore.properties
 
 # 服务器依赖
 /server/node_modules/
+# 崩溃上报日志（运行时产物，不入库）
+/server/crashes/
