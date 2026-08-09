@@ -1318,6 +1318,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onConnected() {
         runOnUiThread {
             updateUI("✅ 已连接！屏幕共享进行中...")
+            // 兜底关闭会议号弹窗（P2P 建立后不应残留遮挡画面）
+            dismissMeetingCodeDialog()
             // 状态点呼吸发光，增强已连接的科技感反馈
             startStatusBreathing()
             binding.btnStop.visibility = View.VISIBLE
@@ -1983,8 +1985,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (ScreenCapturerFactory.handleActivityResult(requestCode, resultCode, data)) {
             // 授权成功：显示会议号弹窗（供复制给对方）+ 启动共享
             signalCode?.let { code ->
-                try { showMeetingCodeDialog(code) } catch (t: Throwable) {
-                    Log.e(TAG, "会议号弹窗异常（不影响连接）: ${t.message}")
+                // 对方已加入（授权期间对方输入会议号加入）：不再弹会议号弹窗，
+                // 避免弹窗晚于 onPeerReady 弹出后无人关闭、遮挡画面
+                if (!signalPeerReady) {
+                    try { showMeetingCodeDialog(code) } catch (t: Throwable) {
+                        Log.e(TAG, "会议号弹窗异常（不影响连接）: ${t.message}")
+                    }
                 }
             }
             startHostSession()

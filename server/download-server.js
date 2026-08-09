@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.121 带宽优化：系统音频静音检测\n① 共享方无声时（视频暂停/切后台/无播放）静音帧直接丢弃，不再经 DataChannel 发送，无声状态带宽占用接近归零\n② 弱网下视频带宽更充足，观看更流畅；观看方无需改动，完全向后兼容",
+  changelog: "v1.122 会议号弹窗修复\n① 修复共享方授权屏幕期间对方已加入时，会议号弹窗晚于 onPeerReady 弹出后无法自动关闭、遮挡画面的问题\n② 对方加入后（onPeerReady/onConnected）自动关闭会议号弹窗，不再残留",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "带宽优化版",
+    note: "会议号弹窗修复版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
