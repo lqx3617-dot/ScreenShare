@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.119 连接稳定性优化：\n① 信令待发队列：网络波动时 SDP/ICE 不再静默丢失，连接恢复后自动补发\n② 观看端断线重建加入上限保护（最多 5 次），持续弱网不再无限重建连接",
+  changelog: "v1.120 动态画面流畅优化：\n① 新增编码负载自适应：共享方打开视频软件等动态画面时，硬编跟不上自动降采集分辨率保帧率（1080→720），画面恢复后自动回升，观看不再卡顿\n② 与弱网自适应联动：编码瓶颈与网络弱网取更严格的降质档位，避免互相覆盖",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "连接稳定性优化版",
+    note: "动态画面流畅优化版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

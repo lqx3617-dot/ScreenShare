@@ -1855,6 +1855,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             } else {
                                 peer?.adaptToNetwork(outLossPct, outSent, outLost)
                             }
+                            // V1.120: 编码负载自适应——开视频软件等动态画面时硬编跟不上，
+                            // 即使网络不丢包也主动降采集分辨率保帧率（用实际承载视频连接的 outFps/qualityLimit）
+                            peer?.adaptToEncoderLoad(
+                                json.optInt("outFps", 0),
+                                json.optString("qualityLimit", "")
+                            )
                         }
                         // 观看方丢包率：增量计算（上次统计到本次的新丢包 / 新接收总量），避免累计值不敏感
                         val lost = json.optLong("lost", 0)

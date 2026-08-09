@@ -134,6 +134,11 @@ class WebRTCPeer(
     // viewer 断线重建计数（防持续弱网下无限重建）与上限
     private val viewerRestartCounts = mutableMapOf<Int, Int>()
     private val viewerMaxRestarts = 5
+    // 编码负载自适应（v1.120）：开视频软件等动态画面时硬编跟不上，主动降采集分辨率保帧率。
+    // 与弱网档位(curAdaptLevel)独立，最终采集档位取两者的较大值
+    private var encLoadDown = false
+    private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
+    private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
 
     // 系统音频 DataChannel（共享方发送 / 观看方接收）
     private var systemAudioChannel: DataChannel? = null
@@ -1238,6 +1243,102 @@ class WebRTCPeer(
     }
 
     /**
+     * 编码负载自适应（v1.120）：处理"开视频软件/动态画面时硬编跟不上"的卡顿。
+     * 共享方打开视频播放类应用时，画面每帧都在变，硬件编码器负载升高（低端机发热降频），
+     * 实际编码帧率(outbound-rtp.framesPerSecond)持续低于目标帧率，即使网络不丢包观看方也卡。
+     * - 编码帧率持续 < 目标*0.7（约30fps目标时<21fps）或编码器报 cpu 瓶颈：切 MAINTAIN_FRAMERATE
+     *   保帧率，采集降一档分辨率（1080→720），减轻编码负载
+     * - 编码帧率恢复 >= 目标*0.85 持续若干次：回 MAINTAIN_RESOLUTION + 回升 1080p
+     * 由 MainActivity 统计线程周期调用（约 1.5s 一次）。
+     *
+     * @param encodedFps 实际编码帧率（outFps），0 表示暂无统计
+     * @param qualityLimit 编码器报告的质量限制原因（cpu/bandwidth/none）
+     */
+    fun adaptToEncoderLoad(encodedFps: Int, qualityLimit: String) {
+        val pc = peerConnection ?: return
+        if (disposed) return
+        if (encodedFps <= 0) return
+        val target = captureFps
+        if (target <= 0) return
+        val cpuBottleneck = qualityLimit == "cpu"
+        val isEncLag = cpuBottleneck || encodedFps < target * 0.7
+        val isEncOk = !cpuBottleneck && encodedFps >= target * 0.85
+        if (!encLoadDown) {
+            // 未降质：持续卡帧/CPU瓶颈触发降质
+            if (isEncLag) {
+                encLoadSamples++
+                encRecoverSamples = 0
+                if (encLoadSamples >= 3) {
+                    encLoadDown = true
+                    encLoadSamples = 0
+                    applyEncoderLoadProfile(true)
+                }
+            } else {
+                encLoadSamples = 0
+            }
+        } else {
+            // 已降质：编码帧率回升才恢复
+            if (isEncOk) {
+                encRecoverSamples++
+                encLoadSamples = 0
+                if (encRecoverSamples >= 3) {
+                    encLoadDown = false
+                    encRecoverSamples = 0
+                    applyEncoderLoadProfile(false)
+                }
+            } else {
+                encRecoverSamples = 0
+            }
+        }
+    }
+
+    /**
+     * 应用编码负载档位：切换 degradationPreference + 采集分辨率。
+     * 采集档位取编码负载档位与弱网档位(captureProfileForLevel)的较大值（更严格者生效），
+     * 与弱网自适应共用 lastCaptureProfile/lastCaptureSwitchMs 防抖。
+     */
+    private fun applyEncoderLoadProfile(down: Boolean) {
+        val targetProfile = if (down) 1 else 0
+        val effective = maxOf(captureProfileForLevel(curAdaptLevel), targetProfile)
+        // degradationPreference：编码瓶颈时保帧率降分辨率（动态画面流畅优先）
+        val degradation = if (effective > 0) {
+            RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+        } else {
+            RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        }
+        lastAdaptDegradation = degradation
+        try {
+            videoSender?.let { rtp ->
+                val params = rtp.parameters
+                params.degradationPreference = degradation
+                rtp.parameters = params
+                Log.d(TAG, "编码负载自适应: ${if (down) "降720p" else "回升1080p"} 策略=$degradation")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "编码负载切策略失败: ${t.message}")
+        }
+        if (effective != lastCaptureProfile) {
+            val now = System.currentTimeMillis()
+            val isDowngrade = effective > lastCaptureProfile
+            val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
+            if (isDowngrade || cooldownOk) {
+                lastCaptureProfile = effective
+                lastCaptureSwitchMs = now
+                try {
+                    val capturer = videoCapturer
+                    if (capturer != null) {
+                        val (capW, capH) = captureSizeForLevel(effective)
+                        capturer.changeCaptureFormat(capW, capH, captureFps)
+                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${captureFps} 档位$effective")
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "编码负载降分辨率失败: ${t.message}")
+                }
+            }
+        }
+    }
+
+    /**
      * 腾讯会议式弱网自适应（v1.103）：按远端回报的发送丢包率动态调节码率与分辨率策略。
      * - 丢包高（>=3%）：逐级降码率 + 切 MAINTAIN_FRAMERATE（保帧率降分辨率，画面流畅不卡顿）
      * - 丢包恢复（<1% 持续）：缓步回升码率 + 回 MAINTAIN_RESOLUTION（恢复高清晰度）
@@ -1307,7 +1408,9 @@ class WebRTCPeer(
             // V3.1: 采集侧降分辨率——弱网档位>=2(码率6M)降720p、>=3(4M)降480p，减轻采集+编码双端负载；
             // 恢复档位0(12M)回升 1080p
             // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
-            val targetProfile = captureProfileForLevel(curAdaptLevel)
+            // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
+            val weakProfile = captureProfileForLevel(curAdaptLevel)
+            val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
             if (targetProfile != lastCaptureProfile) {
                 val now = System.currentTimeMillis()
                 val isDowngrade = targetProfile > lastCaptureProfile
@@ -1388,7 +1491,9 @@ class WebRTCPeer(
                 Log.w(TAG, "viewer#$viewerId 自适应切策略失败: ${t.message}")
             }
             // 采集侧降分辨率（与主连接共用采集器，弱网降采集分辨率同时减轻两端负载）
-            val targetProfile = captureProfileForLevel(curAdaptLevel)
+            // V1.120: 与编码负载自适应档位取较大值
+            val weakProfile = captureProfileForLevel(curAdaptLevel)
+            val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
             if (targetProfile != lastCaptureProfile) {
                 val now = System.currentTimeMillis()
                 val isDowngrade = targetProfile > lastCaptureProfile
@@ -1419,6 +1524,9 @@ class WebRTCPeer(
         lastOutSentCum = 0L
         lastOutLostCum = 0L
         lastAdaptBitrateCap = 0
+        encLoadDown = false
+        encLoadSamples = 0
+        encRecoverSamples = 0
     }
 
     fun disconnect() {
