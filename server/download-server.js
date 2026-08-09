@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.120 动态画面流畅优化：\n① 新增编码负载自适应：共享方打开视频软件等动态画面时，硬编跟不上自动降采集分辨率保帧率（1080→720），画面恢复后自动回升，观看不再卡顿\n② 与弱网自适应联动：编码瓶颈与网络弱网取更严格的降质档位，避免互相覆盖",
+  changelog: "v1.121 带宽优化：系统音频静音检测\n① 共享方无声时（视频暂停/切后台/无播放）静音帧直接丢弃，不再经 DataChannel 发送，无声状态带宽占用接近归零\n② 弱网下视频带宽更充足，观看更流畅；观看方无需改动，完全向后兼容",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "动态画面流畅优化版",
+    note: "带宽优化版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

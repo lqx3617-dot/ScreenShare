@@ -24,6 +24,10 @@ object SystemAudioBridge {
     // 20ms/块 = 48000/1000*20 = 960 采样 * 2 字节 = 1920 字节，与 WebRTC 音频包惯例一致
     private const val CHUNK_SAMPLES = 960
     private const val CHUNK_BYTES = CHUNK_SAMPLES * 2
+    // 静音检测（v1.121）：PCM16 采样峰值绝对值低于该阈值视为静音帧，直接丢弃不发送。
+    // 阈值 500 ≈ -36dBFS：真正的无声（无播放/暂停/切后台）才触发；音乐弱音一般高于此，避免误伤音质。
+    // 观看方 AudioTrack 无新数据时自然输出静默，因此观看方无需任何改动，向后兼容。
+    private const val SILENCE_PEAK = 500
 
     // ==================== 共享方：采集系统 PCM ====================
     @Volatile private var recordThread: Thread? = null
@@ -85,6 +89,9 @@ object SystemAudioBridge {
                 while (recording) {
                     val n = record.read(buf, 0, CHUNK_BYTES)
                     if (n > 0 && recording) {
+                        // 静音检测：PCM16 小端，峰值绝对值低于阈值视为静音帧，丢弃不发省带宽。
+                        // 无声时 DataChannel 不再每秒发送 96KB 数据，弱网下视频带宽更充足
+                        if (isSilent(buf, n)) continue
                         onPcm(buf.copyOf(n))
                     }
                 }
@@ -104,6 +111,20 @@ object SystemAudioBridge {
     fun stopCapture() {
         recording = false
         recordThread = null
+    }
+
+    /** 静音检测：遍历 PCM16 采样，所有采样绝对值 < SILENCE_PEAK 视为静音帧 */
+    private fun isSilent(data: ByteArray, len: Int): Boolean {
+        var i = 0
+        val end = len - 1
+        while (i < end) {
+            val lo = data[i].toInt() and 0xFF
+            val hi = data[i + 1].toInt()
+            val sample = (lo or (hi shl 8)).toShort()
+            if (kotlin.math.abs(sample.toInt()) >= SILENCE_PEAK) return false
+            i += 2
+        }
+        return true
     }
 
     // ==================== 观看方：播放系统 PCM ====================
