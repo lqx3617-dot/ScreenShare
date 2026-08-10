@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.126.1 修复视频无声 + 音频诊断\n① 下调静音检测阈值（-36dBFS→-52dBFS）：部分设备系统内录增益偏低，正常视频声音被误判为静音整段丢弃导致观看方完全无声，现已放宽\n② 新增音频诊断：双端每 5 秒上报采集/播放统计（帧数、静音数、振幅峰值/RMS）到服务器 /diag，若仍有异常可精确定位",
+  changelog: "v1.126.2 修复观看方音频解码越界导致无声\n① 诊断确认观看方解码持续越界（ArrayIndexOutOfBoundsException: length=1920; index=1920），所有帧被丢弃 → 完全无声\n② decodeFrame 加防御性边界（按采样数精确限界，异常帧安全截断），无论输入帧长度如何都不越界，正常帧解码输出与之前完全一致\n③ 解码异常上报完整堆栈，若仍有问题可精确定位到行",
   forced: false,
 };
 

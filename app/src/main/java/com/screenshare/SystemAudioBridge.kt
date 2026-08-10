@@ -96,20 +96,21 @@ object SystemAudioBridge {
         }
         val adpcmLen = frame.size - 1
         // 每 1 字节 ADPCM 解出 2 采样，每采样 2 字节 PCM → 输出字节数 = adpcmLen*4
-        // （v1.124 误写 adpcmLen*2 导致数组越界崩溃，播放持续声音时必现）
-        val outLen = adpcmLen * 4
-        val out = ByteArray(outLen)
+        // 防御：即使帧头/长度异常也不越界，越界的采样丢弃
+        val sampleCount = adpcmLen * 2
+        val out = ByteArray(sampleCount * 2)
         var predicted = decPredicted
         var index = decIndex
         var p = 1
         var o = 0
-        while (p < frame.size) {
+        while (p < frame.size && o < sampleCount) {
             val byte = frame[p].toInt() and 0xFF
             val c1 = byte and 0x0F
             val c2 = (byte shr 4) and 0x0F
             val s1 = adpcmDecodeSample(c1, predicted, index)
             predicted = s1.pred; index = s1.idx
             writeSample(out, o++, s1.value)
+            if (o >= sampleCount) break
             val s2 = adpcmDecodeSample(c2, predicted, index)
             predicted = s2.pred; index = s2.idx
             writeSample(out, o++, s2.value)

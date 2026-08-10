@@ -1145,7 +1145,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             }
                         } catch (t: Throwable) {
                             // 解码异常（v1.126 加固后不崩溃，但需上报定位"视频无声"）
-                            reportDiagnostic("audio decExc ${t.javaClass.simpleName}:${t.message} len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1}")
+                            val sw = java.io.StringWriter()
+                            t.printStackTrace(java.io.PrintWriter(sw))
+                            reportDiagnostic("audio decExc ${t.javaClass.simpleName}:${t.message} len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1} stack=${sw.toString().replace('\n', '|')}")
                         }
                     }
                     // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
