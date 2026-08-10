@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.125 修复播放视频时闪退崩溃\n① 修复 v1.124 引入的音频解码数组越界（ADPCM 480 字节应解出 1920 字节 PCM，误分配 960 字节），播放持续声音时必崩溃，现已修复\n② 系统音频 ADPCM 压缩功能保留，音质与带宽优化不变",
+  changelog: "v1.126 音频通道异常加固\n① 系统音频/控制指令的回调异常不再导致进程崩溃：v1.124 的越界异常发生在 WebRTC 回调线程（native 线程抛 Java 异常会直接闪退且不触发崩溃上报），现对该线程全部音频/指令处理加保护，异常仅丢弃该帧继续运行\n② 继承 v1.125 的 ADPCM 解码越界修复，播放视频不闪退",
   forced: false,
 };
 

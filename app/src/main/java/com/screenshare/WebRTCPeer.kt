@@ -284,9 +284,15 @@ class WebRTCPeer(
                     }
                     override fun onMessage(buffer: DataChannel.Buffer) {
                         if (buffer.binary) {
-                            val data = ByteArray(buffer.data.remaining())
-                            buffer.data.get(data)
-                            systemAudioListener?.invoke(data)
+                            try {
+                                val data = ByteArray(buffer.data.remaining())
+                                buffer.data.get(data)
+                                systemAudioListener?.invoke(data)
+                            } catch (t: Throwable) {
+                                // 音频解码异常不抛到 WebRTC 回调线程（native 线程异常会导致进程崩溃且不触发
+                                // UncaughtExceptionHandler），丢弃该帧继续
+                                Log.w(TAG, "系统音频处理异常: ${t.message}")
+                            }
                         }
                     }
                 })
@@ -566,9 +572,15 @@ class WebRTCPeer(
                     override fun onStateChange() {}
                     override fun onMessage(buffer: DataChannel.Buffer) {
                         if (buffer.binary) {
-                            val data = ByteArray(buffer.data.remaining())
-                            buffer.data.get(data)
-                            systemAudioListener?.invoke(data)
+                            try {
+                                val data = ByteArray(buffer.data.remaining())
+                                buffer.data.get(data)
+                                systemAudioListener?.invoke(data)
+                            } catch (t: Throwable) {
+                                // 音频解码异常不抛到 WebRTC 回调线程（native 线程异常会导致进程崩溃且不触发
+                                // UncaughtExceptionHandler），丢弃该帧继续
+                                Log.w(TAG, "viewer#$viewerId 系统音频处理异常: ${t.message}")
+                            }
                         }
                     }
                 })
@@ -580,9 +592,13 @@ class WebRTCPeer(
                     override fun onStateChange() {}
                     override fun onMessage(buffer: DataChannel.Buffer) {
                         if (!buffer.binary) {
-                            val data = ByteArray(buffer.data.remaining())
-                            buffer.data.get(data)
-                            controlListener?.invoke(String(data))
+                            try {
+                                val data = ByteArray(buffer.data.remaining())
+                                buffer.data.get(data)
+                                controlListener?.invoke(String(data))
+                            } catch (t: Throwable) {
+                                Log.w(TAG, "viewer#$viewerId 控制指令处理异常: ${t.message}")
+                            }
                         }
                     }
                 })
@@ -836,11 +852,15 @@ class WebRTCPeer(
             }
             override fun onMessage(buffer: DataChannel.Buffer) {
                 if (!buffer.binary) {
-                    val data = ByteArray(buffer.data.remaining())
-                    buffer.data.get(data)
-                    val msg = String(data)
-                    Log.d(TAG, "收到控制指令: $msg")
-                    controlListener?.invoke(msg)
+                    try {
+                        val data = ByteArray(buffer.data.remaining())
+                        buffer.data.get(data)
+                        val msg = String(data)
+                        Log.d(TAG, "收到控制指令: $msg")
+                        controlListener?.invoke(msg)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "控制指令处理异常: ${t.message}")
+                    }
                 }
             }
         })
