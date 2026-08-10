@@ -35,6 +35,9 @@ object SystemAudioBridge {
     //         接收端用首字节区分格式（替代脆弱的 frame.size>=5 判断），双端版本不一致也不会错位解码
     private const val FRAME_FLAG_ADPCM = 0x01.toByte()
     private const val FRAME_FLAG_ADPCM_STATE = 0x02.toByte()
+    // v1.132：带序号帧（6 字节头：flag + 2B 序号 + 2B 预测器 + 1B 索引），
+    // 序号用于双端帧对齐诊断（重复/乱序/丢帧检测）与校验和对比
+    private const val FRAME_FLAG_ADPCM_SEQ = 0x03.toByte()
     // IMA ADPCM 步长表（标准 89 项）
     private val stepSizeTable = intArrayOf(
         7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -54,6 +57,8 @@ object SystemAudioBridge {
     // 编码预测器状态（采集线程单线程访问，无需加锁）
     private var encPredicted = 0
     private var encIndex = 0
+    // 编码帧序号（v1.132，单调递增，用于双端帧对齐诊断）
+    private var frameSeq = 0
     // 解码预测器状态（DataChannel 回调线程单线程访问）
     private var decPredicted = 0
     private var decIndex = 0
@@ -64,22 +69,27 @@ object SystemAudioBridge {
         if (n <= 0) return null
         // 每 2 个采样打包 1 字节（低 4 位=第 1 采样，高 4 位=第 2 采样）
         val outBytes = (n + 1) / 2
-        // 帧头：1 字节标记 + 2 字节预测器 + 1 字节步长索引（v1.127 起携带预测器状态，抗丢包防电流声）
-        val out = ByteArray(outBytes + 4)
-        out[0] = FRAME_FLAG_ADPCM_STATE
+        // v1.132 帧头：1 标志 + 2 序号 + 2 预测器 + 1 索引（6 字节），序号用于双端帧对齐诊断
+        val out = ByteArray(outBytes + 6)
+        out[0] = FRAME_FLAG_ADPCM_SEQ
         // 写入本帧起始预测器状态：解码端每帧从帧头恢复，单帧丢包不再导致永久失步
         val startPred = encPredicted
         val startIdx = encIndex
-        out[1] = (startPred and 0xFF).toByte()
-        out[2] = ((startPred shr 8) and 0xFF).toByte()
-        out[3] = startIdx.toByte()
+        frameSeq = (frameSeq + 1) and 0xFFFF
+        out[1] = (frameSeq and 0xFF).toByte()
+        out[2] = ((frameSeq shr 8) and 0xFF).toByte()
+        out[3] = (startPred and 0xFF).toByte()
+        out[4] = ((startPred shr 8) and 0xFF).toByte()
+        out[5] = startIdx.toByte()
         lastEncPred = startPred
         lastEncIdx = startIdx
+        lastEncSeq = frameSeq
+        lastEncSum = adpcmSum(out, 6)
         lastEncHead = frameHeadHex(out)
         var predicted = encPredicted
         var index = encIndex
         var p = 0
-        var o = 4
+        var o = 6
         while (p < n) {
             val s1 = readSample(pcm, p++)
             var enc = adpcmEncodeSample(s1, predicted, index)
@@ -103,17 +113,34 @@ object SystemAudioBridge {
     /** 解码带帧头的 ADPCM 数据，返回 PCM16；帧头为原始 PCM 时原样返回。解码失败返回 null */
     fun decodeFrame(frame: ByteArray): ByteArray? {
         if (frame.isEmpty()) return null
-        if (frame[0] != FRAME_FLAG_ADPCM && frame[0] != FRAME_FLAG_ADPCM_STATE) {
+        if (frame[0] != FRAME_FLAG_ADPCM && frame[0] != FRAME_FLAG_ADPCM_STATE && frame[0] != FRAME_FLAG_ADPCM_SEQ) {
             // 旧版共享方/原始 PCM 帧：直接返回（不含帧头？含？——发送端若旧版则为纯 PCM，此处原样交给播放器）
             return frame
         }
         // 帧头版本判断（v1.128）：首字节 0x02 = 新帧含 4 字节预测器状态，0x01 = 旧帧无状态。
         // 用标志字节而非帧长判断，双端版本不一致时也不会误判解码偏移。
-        val hasStateHeader = frame[0] == FRAME_FLAG_ADPCM_STATE
-        val headerLen = if (hasStateHeader) 4 else 1
+        // v1.132：0x03 = 带序号帧（6 字节头），序号用于帧对齐诊断。
+        val hasSeq = frame[0] == FRAME_FLAG_ADPCM_SEQ
+        val hasStateHeader = frame[0] == FRAME_FLAG_ADPCM_STATE || hasSeq
+        val headerLen = if (hasSeq) 6 else if (hasStateHeader) 4 else 1
         var predicted: Int
         var index: Int
-        if (hasStateHeader) {
+        if (hasSeq) {
+            // 带序号帧：2B 序号 + 2B 预测器 + 1B 索引
+            val seq = (frame[1].toInt() and 0xFF) or ((frame[2].toInt() and 0xFF) shl 8)
+            predicted = (frame[3].toInt() and 0xFF) or ((frame[4].toInt() and 0xFF) shl 8)
+            if (predicted > 32767) predicted -= 65536
+            index = frame[5].toInt() and 0xFF
+            if (index > 88) index = 0
+            // 序号连续性检测：重复帧（同一序号多次收到）或乱序/丢帧（跳变）
+            if (lastDecSeq == seq) {
+                decSeqRepeats++
+            } else if (lastDecSeq != 0 && seq != ((lastDecSeq + 1) and 0xFFFF)) {
+                decSeqGaps++
+            }
+            lastDecSeq = seq
+            lastDecSum = adpcmSum(frame, 6)
+        } else if (hasStateHeader) {
             // 从帧头恢复预测器状态：即使之前丢帧，本帧从正确状态开始解，杜绝持续电流声
             predicted = (frame[1].toInt() and 0xFF) or ((frame[2].toInt() and 0xFF) shl 8)
             if (predicted > 32767) predicted -= 65536
@@ -219,13 +246,16 @@ object SystemAudioBridge {
     @Volatile private var lastEncPred = 0
     @Volatile private var lastEncIdx = 0
     @Volatile private var lastEncHead = ""
+    // 最近编码帧序号与数据字节校验和（v1.132：双端按序号对齐，checksum 对比确认传输无损）
+    @Volatile private var lastEncSeq = 0
+    @Volatile private var lastEncSum = 0
 
     /** 采集端诊断摘要（周期性由 MainActivity 上报 /diag） */
     fun captureStats(): String {
         val total = captureFrameCount
         return "capFrames=$total silent=$captureSilentCount encoded=$captureEncodedCount " +
             "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms " +
-            "snap=[$lastCapSnap] encState=[$lastEncPred,$lastEncIdx] encHead=[$lastEncHead]"
+            "snap=[$lastCapSnap] encSeq=$lastEncSeq encState=[$lastEncPred,$lastEncIdx] encHead=[$lastEncHead] encSum=$lastEncSum"
     }
 
     fun resetCaptureStats() {
@@ -233,6 +263,7 @@ object SystemAudioBridge {
         captureByteCount = 0; captureReadBytes = 0
         lastCapPeak = 0; lastCapRms = 0
         lastEncPred = 0; lastEncIdx = 0; lastEncHead = ""
+        lastEncSeq = 0; lastEncSum = 0
     }
 
     /**
@@ -383,6 +414,20 @@ object SystemAudioBridge {
     @Volatile private var lastDecPred = 0
     @Volatile private var lastDecIdx = 0
     @Volatile private var lastDecHead = ""
+    // 最近解码帧序号、数据校验和与序号连续性统计（v1.132：与 host encSeq 对齐，重复/乱序/丢帧检测）
+    @Volatile private var lastDecSeq = 0
+    @Volatile private var lastDecSum = 0
+    @Volatile private var decSeqRepeats = 0L
+    @Volatile private var decSeqGaps = 0L
+
+    /** 帧数据字节校验和（从 offset 起求和 & 0xFFFF），用于 host/viewer 同帧校验对比 */
+    private fun adpcmSum(frame: ByteArray, offset: Int): Int {
+        var sum = 0
+        for (k in offset until frame.size) {
+            sum = (sum + (frame[k].toInt() and 0xFF)) and 0xFFFF
+        }
+        return sum
+    }
 
     /** 帧前若干字节转 hex，用于 host/viewer 原始帧字节对比 */
     private fun frameHeadHex(frame: ByteArray): String {
@@ -407,7 +452,8 @@ object SystemAudioBridge {
         return "playFrames=$playFrameCount decoded=$playDecodedCount dropped=$playDroppedCount " +
             "pcmBytes=$playBytesCount peak=$lastPcmPeak rms=$lastPcmRms " +
             "snap=[$lastPcmSnap] fi=[$lastFrameInfo] " +
-            "decState=[$lastDecPred,$lastDecIdx] decHead=[$lastDecHead] " +
+            "decSeq=$lastDecSeq decState=[$lastDecPred,$lastDecIdx] decHead=[$lastDecHead] " +
+            "decSum=$lastDecSum repeats=$decSeqRepeats gaps=$decSeqGaps " +
             "track=${if (audioTrack != null) "on" else "off"}"
     }
 
@@ -415,6 +461,7 @@ object SystemAudioBridge {
         playFrameCount = 0; playDecodedCount = 0; playDroppedCount = 0; playBytesCount = 0
         lastPcmPeak = 0; lastPcmRms = 0
         lastDecPred = 0; lastDecIdx = 0; lastDecHead = ""
+        lastDecSeq = 0; lastDecSum = 0; decSeqRepeats = 0; decSeqGaps = 0
     }
 
     /** 开始播放（创建流式 AudioTrack 并 play） */

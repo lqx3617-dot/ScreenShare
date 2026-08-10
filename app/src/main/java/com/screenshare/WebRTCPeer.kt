@@ -143,6 +143,8 @@ class WebRTCPeer(
     // 系统音频 DataChannel（共享方发送 / 观看方接收）
     private var systemAudioChannel: DataChannel? = null
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
+    // v1.132：观看方已注册的音频接收通道引用（收到新音频通道时先释放旧的，防止多通道交错播放导致电流声）
+    private var audioReceiveChannel: DataChannel? = null
 
     // 控制 DataChannel（观看方 → 共享方下发指令，如切换帧率）
     private var controlChannel: DataChannel? = null
@@ -277,6 +279,13 @@ class WebRTCPeer(
         override fun onDataChannel(channel: org.webrtc.DataChannel?) {
             Log.d(TAG, "onDataChannel: ${channel?.label()}")
             if (channel?.label() == SYSTEM_AUDIO_LABEL) {
+                // v1.132：多路音频通道去重——重复收到音频通道（重连/多连接残留）时先释放旧通道，
+                // 只保留最新一路，避免多通道帧交错/重复播放导致电流声
+                val old = audioReceiveChannel
+                if (old != null && old != channel) {
+                    try { old.dispose() } catch (_: Throwable) {}
+                }
+                audioReceiveChannel = channel
                 channel.registerObserver(object : DataChannel.Observer {
                     override fun onBufferedAmountChange(previousAmount: Long) {}
                     override fun onStateChange() {
