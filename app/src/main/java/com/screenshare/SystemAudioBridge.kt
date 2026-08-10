@@ -25,9 +25,9 @@ object SystemAudioBridge {
     private const val CHUNK_SAMPLES = 960
     private const val CHUNK_BYTES = CHUNK_SAMPLES * 2
     // 静音检测（v1.121）：PCM16 采样峰值绝对值低于该阈值视为静音帧，直接丢弃不发送。
-    // 阈值 500 ≈ -36dBFS：真正的无声（无播放/暂停/切后台）才触发；音乐弱音一般高于此，避免误伤音质。
-    // 观看方 AudioTrack 无新数据时自然输出静默，因此观看方无需任何改动，向后兼容。
-    private const val SILENCE_PEAK = 500
+    // 阈值 100 ≈ -52dBFS（v1.126.1 从 500 下调）：真正的无声（无播放/暂停/切后台）才触发，
+    // 避免某些设备内录增益偏低时把"有声音"误判为静音导致视频无声。
+    private const val SILENCE_PEAK = 100
     // ADPCM 压缩（v1.124）：系统音频 48kHz 单声道 16bit = 768kbps，走 DataChannel 在弱网下严重挤占视频带宽。
     // IMA ADPCM 4bit 压缩后降至 192kbps（4:1），音质对屏幕共享场景足够。双端同步实现，带帧头标记。
     // 帧格式：首字节 0x01 表示后续为 IMA ADPCM 数据（4bit 打包，960 采样→480 字节）；0x00/其他为原始 PCM16（旧版兼容）
@@ -169,6 +169,28 @@ object SystemAudioBridge {
     // ==================== 共享方：采集系统 PCM ====================
     @Volatile private var recordThread: Thread? = null
     @Volatile private var recording = false
+    // 采集诊断统计（v1.126.1）：定位"视频无声"问题
+    @Volatile private var captureFrameCount = 0L
+    @Volatile private var captureSilentCount = 0L
+    @Volatile private var captureEncodedCount = 0L
+    @Volatile private var captureByteCount = 0L
+    @Volatile private var captureReadBytes = 0L
+    // 最近采集 PCM 振幅摘要（诊断"无声"：若采集峰值很小则确认是静音误杀或采集失败）
+    @Volatile private var lastCapPeak = 0
+    @Volatile private var lastCapRms = 0
+
+    /** 采集端诊断摘要（周期性由 MainActivity 上报 /diag） */
+    fun captureStats(): String {
+        val total = captureFrameCount
+        return "capFrames=$total silent=$captureSilentCount encoded=$captureEncodedCount " +
+            "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms"
+    }
+
+    fun resetCaptureStats() {
+        captureFrameCount = 0; captureSilentCount = 0; captureEncodedCount = 0
+        captureByteCount = 0; captureReadBytes = 0
+        lastCapPeak = 0; lastCapRms = 0
+    }
 
     /**
      * 开始内录系统音频（视频/音乐等 Media 声音）。必须在 MediaProjection 授权后调用。
@@ -226,11 +248,34 @@ object SystemAudioBridge {
                 while (recording) {
                     val n = record.read(buf, 0, CHUNK_BYTES)
                     if (n > 0 && recording) {
+                        captureFrameCount++
+                        captureReadBytes += n
+                        // 抽样计算采集振幅
+                        var peak = 0; var sumSq = 0L; var cnt = 0; var i = 0
+                        while (i + 1 < n) {
+                            val lo = buf[i].toInt() and 0xFF
+                            val hi = buf[i + 1].toInt()
+                            val s = (lo or (hi shl 8)).toShort().toInt()
+                            val a = kotlin.math.abs(s)
+                            if (a > peak) peak = a
+                            sumSq += s.toLong() * s.toLong()
+                            cnt++
+                            i += 64
+                        }
+                        lastCapPeak = peak
+                        if (cnt > 0) lastCapRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
                         // 静音检测：PCM16 小端，峰值绝对值低于阈值视为静音帧，丢弃不发省带宽。
                         // 无声时 DataChannel 不再每秒发送 96KB 数据，弱网下视频带宽更充足
-                        if (isSilent(buf, n)) continue
+                        if (isSilent(buf, n)) {
+                            captureSilentCount++
+                            continue
+                        }
                         // v1.124: 编码 IMA ADPCM 4bit（1920B → 480B + 1 帧头），弱网下节省 75% 音频带宽
-                        encodeAdpcm(buf.copyOf(n))?.let { onPcm(it) }
+                        encodeAdpcm(buf.copyOf(n))?.let {
+                            captureEncodedCount++
+                            captureByteCount += it.size
+                            onPcm(it)
+                        }
                     }
                 }
             } catch (t: Throwable) {
@@ -267,6 +312,26 @@ object SystemAudioBridge {
 
     // ==================== 观看方：播放系统 PCM ====================
     @Volatile private var audioTrack: AudioTrack? = null
+    // 播放诊断统计（v1.126.1）
+    @Volatile private var playFrameCount = 0L
+    @Volatile private var playDecodedCount = 0L
+    @Volatile private var playDroppedCount = 0L
+    @Volatile private var playBytesCount = 0L
+    // 最近一次解码 PCM 的振幅摘要（诊断"无声"：若 decoded>0 但 rms=0 则解码输出静音）
+    @Volatile private var lastPcmPeak = 0
+    @Volatile private var lastPcmRms = 0
+
+    /** 播放端诊断摘要（周期性由 MainActivity 上报 /diag） */
+    fun playbackStats(): String {
+        return "playFrames=$playFrameCount decoded=$playDecodedCount dropped=$playDroppedCount " +
+            "pcmBytes=$playBytesCount peak=$lastPcmPeak rms=$lastPcmRms " +
+            "track=${if (audioTrack != null) "on" else "off"}"
+    }
+
+    fun resetPlaybackStats() {
+        playFrameCount = 0; playDecodedCount = 0; playDroppedCount = 0; playBytesCount = 0
+        lastPcmPeak = 0; lastPcmRms = 0
+    }
 
     /** 开始播放（创建流式 AudioTrack 并 play） */
     fun startPlayback(): Boolean {
@@ -316,8 +381,31 @@ object SystemAudioBridge {
 
     fun writePcm(data: ByteArray) {
         try {
-            audioTrack?.write(data, 0, data.size)
+            playFrameCount++
+            // 抽样计算振幅（每 32 采样取 1，避免整帧遍历开销）
+            var peak = 0; var sumSq = 0L; var cnt = 0
+            var i = 0
+            while (i + 1 < data.size) {
+                val lo = data[i].toInt() and 0xFF
+                val hi = data[i + 1].toInt()
+                val s = (lo or (hi shl 8)).toShort().toInt()
+                val a = kotlin.math.abs(s)
+                if (a > peak) peak = a
+                sumSq += s.toLong() * s.toLong()
+                cnt++
+                i += 64
+            }
+            lastPcmPeak = peak
+            if (cnt > 0) lastPcmRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
+            val written = audioTrack?.write(data, 0, data.size)
+            if (written != null && written > 0) {
+                playDecodedCount++
+                playBytesCount += written
+            } else {
+                playDroppedCount++
+            }
         } catch (t: Throwable) {
+            playDroppedCount++
             Log.w(TAG, "写入 AudioTrack 失败: ${t.message}")
         }
     }

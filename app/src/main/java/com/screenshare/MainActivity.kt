@@ -73,6 +73,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var signalClient: SignalClient? = null
     private var signalMode = false
     private var signalPeerReady = false
+    // 音频诊断周期上报计数器（v1.126.1：定位"视频无声"）
+    private var lastAudioDiagTick = 0L
+    // 独立音频诊断上报定时器（host 采集端 / 观看方播放端各报各的，不依赖全屏统计循环）
+    private var audioDiagHandler: android.os.Handler? = null
+    private var audioDiagRunnable: Runnable? = null
     // host 端：对方（viewer）是否已加入房间。服务器对 host 发的是 viewer-joined 而非 peer-ready，
     // 用此标记判断"对方已加入"（关闭会议号弹窗 / 授权后不弹窗）
     private var viewerJoined = false
@@ -785,6 +790,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("⚠️ 系统音频内录启动失败（视频将无声）")
         } else {
             Log.d(TAG, "系统音频内录已启动")
+            SystemAudioBridge.resetCaptureStats()
+            startAudioDiag()
         }
         binding.tvScanResult.text = "⑤ 正在生成连接信令(SDP)..."
         // 等 ICE 收集一些候选后创建 Offer（给 ICE 一点时间收集）
@@ -1129,7 +1136,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     }
                     // 系统音频经 DataChannel 接收，ADPCM 解码后交给播放器（v1.124）
                     p.setSystemAudioListener { data ->
-                        SystemAudioBridge.decodeFrame(data)?.let { SystemAudioBridge.writePcm(it) }
+                        try {
+                            val pcm = SystemAudioBridge.decodeFrame(data)
+                            if (pcm == null) {
+                                reportDiagnostic("audio decNull len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1}")
+                            } else {
+                                SystemAudioBridge.writePcm(pcm)
+                            }
+                        } catch (t: Throwable) {
+                            // 解码异常（v1.126 加固后不崩溃，但需上报定位"视频无声"）
+                            reportDiagnostic("audio decExc ${t.javaClass.simpleName}:${t.message} len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1}")
+                        }
                     }
                     // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
                     p.setControlListener { msg ->
@@ -1346,6 +1363,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
+                SystemAudioBridge.resetPlaybackStats()
+                startAudioDiag()
             }
         }
     }
@@ -1355,6 +1374,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("连接已断开")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
+            stopAudioDiag()
             resetUI()
         }
     }
@@ -1973,6 +1993,34 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         lastLost = 0L
     }
 
+    /** 启动独立音频诊断上报（每 5 秒向服务器 /diag 上报采集或播放统计，定位"视频无声"） */
+    private fun startAudioDiag() {
+        stopAudioDiag()
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        audioDiagHandler = h
+        val r = object : Runnable {
+            override fun run() {
+                try {
+                    val role = if (isHost) "host" else "viewer"
+                    if (isHost) {
+                        reportDiagnostic("audio role=$role " + SystemAudioBridge.captureStats())
+                    } else {
+                        reportDiagnostic("audio role=$role " + SystemAudioBridge.playbackStats())
+                    }
+                } catch (_: Throwable) {}
+                if (h == audioDiagHandler) h.postDelayed(this, 5000)
+            }
+        }
+        audioDiagRunnable = r
+        h.postDelayed(r, 3000)
+    }
+
+    private fun stopAudioDiag() {
+        audioDiagRunnable?.let { audioDiagHandler?.removeCallbacks(it) }
+        audioDiagHandler = null
+        audioDiagRunnable = null
+    }
+
     // ======================== 停止 ========================
     private fun onStopClicked() {
         peer?.disconnect()
@@ -2120,6 +2168,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopAudioDiag()
         ScreenProjectionService.onReady = null
         exitFullscreen()
         releaseFullscreenRenderer()
