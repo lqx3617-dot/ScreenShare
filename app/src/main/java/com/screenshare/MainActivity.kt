@@ -1127,9 +1127,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         updateUI("❌ PeerConnection 创建失败")
                         return
                     }
-                    // 系统音频经 DataChannel 接收，PCM 交给播放器
+                    // 系统音频经 DataChannel 接收，ADPCM 解码后交给播放器（v1.124）
                     p.setSystemAudioListener { data ->
-                        SystemAudioBridge.writePcm(data)
+                        SystemAudioBridge.decodeFrame(data)?.let { SystemAudioBridge.writePcm(it) }
                     }
                     // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
                     p.setControlListener { msg ->

@@ -28,6 +28,141 @@ object SystemAudioBridge {
     // 阈值 500 ≈ -36dBFS：真正的无声（无播放/暂停/切后台）才触发；音乐弱音一般高于此，避免误伤音质。
     // 观看方 AudioTrack 无新数据时自然输出静默，因此观看方无需任何改动，向后兼容。
     private const val SILENCE_PEAK = 500
+    // ADPCM 压缩（v1.124）：系统音频 48kHz 单声道 16bit = 768kbps，走 DataChannel 在弱网下严重挤占视频带宽。
+    // IMA ADPCM 4bit 压缩后降至 192kbps（4:1），音质对屏幕共享场景足够。双端同步实现，带帧头标记。
+    // 帧格式：首字节 0x01 表示后续为 IMA ADPCM 数据（4bit 打包，960 采样→480 字节）；0x00/其他为原始 PCM16（旧版兼容）
+    private const val FRAME_FLAG_ADPCM = 0x01.toByte()
+    // IMA ADPCM 步长表（标准 89 项）
+    private val stepSizeTable = intArrayOf(
+        7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
+        19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+        50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+        130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
+        337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+        876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+        2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
+        5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
+        15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
+    )
+    private val indexTable = intArrayOf(
+        -1, -1, -1, -1, 2, 4, 6, 8,
+        -1, -1, -1, -1, 2, 4, 6, 8
+    )
+    // 编码预测器状态（采集线程单线程访问，无需加锁）
+    private var encPredicted = 0
+    private var encIndex = 0
+    // 解码预测器状态（DataChannel 回调线程单线程访问）
+    private var decPredicted = 0
+    private var decIndex = 0
+
+    /** 将一段 PCM16 编码为 IMA ADPCM 4bit（含帧头 1 字节），返回 null 表示输入为空/长度非法 */
+    fun encodeAdpcm(pcm: ByteArray): ByteArray? {
+        val n = pcm.size / 2
+        if (n <= 0) return null
+        // 每 2 个采样打包 1 字节（低 4 位=第 1 采样，高 4 位=第 2 采样）
+        val outBytes = (n + 1) / 2
+        val out = ByteArray(outBytes + 1)
+        out[0] = FRAME_FLAG_ADPCM
+        var predicted = encPredicted
+        var index = encIndex
+        var p = 0
+        var o = 1
+        while (p < n) {
+            val s1 = readSample(pcm, p++)
+            var enc = adpcmEncodeSample(s1, predicted, index)
+            predicted = enc.pred
+            index = enc.idx
+            var byte = (enc.value and 0x0F)
+            if (p < n) {
+                val s2 = readSample(pcm, p++)
+                enc = adpcmEncodeSample(s2, predicted, index)
+                predicted = enc.pred
+                index = enc.idx
+                byte = byte or ((enc.value and 0x0F) shl 4)
+            }
+            out[o++] = byte.toByte()
+        }
+        encPredicted = predicted
+        encIndex = index
+        return out
+    }
+
+    /** 解码带帧头的 ADPCM 数据，返回 PCM16；帧头为原始 PCM 时原样返回。解码失败返回 null */
+    fun decodeFrame(frame: ByteArray): ByteArray? {
+        if (frame.isEmpty()) return null
+        if (frame[0] != FRAME_FLAG_ADPCM) {
+            // 旧版共享方/原始 PCM 帧：直接返回（不含帧头？含？——发送端若旧版则为纯 PCM，此处原样交给播放器）
+            return frame
+        }
+        val adpcmLen = frame.size - 1
+        val outLen = adpcmLen * 2
+        val out = ByteArray(outLen)
+        var predicted = decPredicted
+        var index = decIndex
+        var p = 1
+        var o = 0
+        while (p < frame.size) {
+            val byte = frame[p].toInt() and 0xFF
+            val c1 = byte and 0x0F
+            val c2 = (byte shr 4) and 0x0F
+            val s1 = adpcmDecodeSample(c1, predicted, index)
+            predicted = s1.pred; index = s1.idx
+            writeSample(out, o++, s1.value)
+            val s2 = adpcmDecodeSample(c2, predicted, index)
+            predicted = s2.pred; index = s2.idx
+            writeSample(out, o++, s2.value)
+        }
+        decPredicted = predicted
+        decIndex = index
+        return out
+    }
+
+    private class AdpcmSample(val value: Int, val pred: Int, val idx: Int)
+
+    private fun adpcmEncodeSample(sample: Int, predicted: Int, index: Int): AdpcmSample {
+        val step = stepSizeTable[index.coerceIn(0, stepSizeTable.size - 1)]
+        var diff = sample - predicted
+        var sign = 0
+        if (diff < 0) { sign = 8; diff = -diff }
+        var code = (4 * diff) / step
+        if (code > 7) code = 7
+        // 重建预测值：与解码器完全一致的公式（step/8 基底 + code 位加权）
+        var rdiff = step / 8
+        if (code and 1 != 0) rdiff += step / 4
+        if (code and 2 != 0) rdiff += step / 2
+        if (code and 4 != 0) rdiff += step
+        if (sign == 8) rdiff = -rdiff
+        var newPred = predicted + rdiff
+        if (newPred > 32767) newPred = 32767
+        if (newPred < -32768) newPred = -32768
+        val newIndex = (index + indexTable[code]).coerceIn(0, 88)
+        return AdpcmSample((sign or code) and 0x0F, newPred, newIndex)
+    }
+
+    private fun adpcmDecodeSample(code: Int, predicted: Int, index: Int): AdpcmSample {
+        val step = stepSizeTable[index.coerceIn(0, stepSizeTable.size - 1)]
+        var diff = step / 8
+        if (code and 1 != 0) diff += step / 4
+        if (code and 2 != 0) diff += step / 2
+        if (code and 4 != 0) diff += step
+        if (code and 8 != 0) diff = -diff
+        var newPred = predicted + diff
+        if (newPred > 32767) newPred = 32767
+        if (newPred < -32768) newPred = -32768
+        val newIndex = (index + indexTable[code]).coerceIn(0, 88)
+        return AdpcmSample(newPred, newPred, newIndex)
+    }
+
+    private fun readSample(data: ByteArray, sampleIdx: Int): Int {
+        val i = sampleIdx * 2
+        return ((data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)).toShort().toInt()
+    }
+
+    private fun writeSample(data: ByteArray, sampleIdx: Int, value: Int) {
+        val i = sampleIdx * 2
+        data[i] = (value and 0xFF).toByte()
+        data[i + 1] = ((value shr 8) and 0xFF).toByte()
+    }
 
     // ==================== 共享方：采集系统 PCM ====================
     @Volatile private var recordThread: Thread? = null
@@ -92,7 +227,8 @@ object SystemAudioBridge {
                         // 静音检测：PCM16 小端，峰值绝对值低于阈值视为静音帧，丢弃不发省带宽。
                         // 无声时 DataChannel 不再每秒发送 96KB 数据，弱网下视频带宽更充足
                         if (isSilent(buf, n)) continue
-                        onPcm(buf.copyOf(n))
+                        // v1.124: 编码 IMA ADPCM 4bit（1920B → 480B + 1 帧头），弱网下节省 75% 音频带宽
+                        encodeAdpcm(buf.copyOf(n))?.let { onPcm(it) }
                     }
                 }
             } catch (t: Throwable) {

@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.123 会议号弹窗自动关闭修复\n① 修复根因：服务器对共享方发的是 viewer-joined 而非 peer-ready，原 onPeerReady 关闭逻辑永不触发，弹窗始终不自动关闭\n② 共享方在对方加入（viewer-joined）时立即自动关闭会议号弹窗；授权期间对方已加入则不再弹窗",
+  changelog: "v1.124 系统音频带宽优化：ADPCM 压缩\n① 系统音频（视频/音乐声）经 IMA ADPCM 4bit 压缩后发送，带宽从 768kbps 降至约 192kbps（省 75%），弱网下视频带宽更充足\n② 静音帧仍直接丢弃，无声状态零带宽；音质对屏幕共享场景足够\n③ 注意：需双端同时更新本版本，新旧混用可能无声音或杂音",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "会议号弹窗自动关闭版",
+    note: "音频压缩优化版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
