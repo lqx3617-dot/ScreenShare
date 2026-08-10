@@ -73,6 +73,9 @@ object SystemAudioBridge {
         out[1] = (startPred and 0xFF).toByte()
         out[2] = ((startPred shr 8) and 0xFF).toByte()
         out[3] = startIdx.toByte()
+        lastEncPred = startPred
+        lastEncIdx = startIdx
+        lastEncHead = frameHeadHex(out)
         var predicted = encPredicted
         var index = encIndex
         var p = 0
@@ -120,6 +123,9 @@ object SystemAudioBridge {
             predicted = decPredicted
             index = decIndex
         }
+        lastDecPred = predicted
+        lastDecIdx = index
+        lastDecHead = frameHeadHex(frame)
         val adpcmLen = frame.size - headerLen
         // 每 1 字节 ADPCM 解出 2 采样，每采样 2 字节 PCM → 输出字节数 = adpcmLen*4
         // 防御：即使帧头/长度异常也不越界，越界的采样丢弃
@@ -209,19 +215,24 @@ object SystemAudioBridge {
     @Volatile private var lastCapRms = 0
     // 最近一帧采集 PCM 前 16 采样快照（诊断电流声：与 viewer 端解码快照对比，判断失真环节）
     @Volatile private var lastCapSnap = ""
+    // 最近编码帧的帧头状态与前 8 字节（诊断：与 viewer 收到的帧逐字节对比，确认传输是否破坏 ADPCM 数据）
+    @Volatile private var lastEncPred = 0
+    @Volatile private var lastEncIdx = 0
+    @Volatile private var lastEncHead = ""
 
     /** 采集端诊断摘要（周期性由 MainActivity 上报 /diag） */
     fun captureStats(): String {
         val total = captureFrameCount
         return "capFrames=$total silent=$captureSilentCount encoded=$captureEncodedCount " +
             "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms " +
-            "snap=[$lastCapSnap]"
+            "snap=[$lastCapSnap] encState=[$lastEncPred,$lastEncIdx] encHead=[$lastEncHead]"
     }
 
     fun resetCaptureStats() {
         captureFrameCount = 0; captureSilentCount = 0; captureEncodedCount = 0
         captureByteCount = 0; captureReadBytes = 0
         lastCapPeak = 0; lastCapRms = 0
+        lastEncPred = 0; lastEncIdx = 0; lastEncHead = ""
     }
 
     /**
@@ -368,6 +379,21 @@ object SystemAudioBridge {
     @Volatile private var lastPcmSnap = ""
     // 最近一次解码的帧长度与帧头（诊断帧格式/版本错配）
     @Volatile private var lastFrameInfo = ""
+    // 最近解码帧从帧头恢复的状态与前 8 字节（与 host 发送帧 encHead 逐字节对比，确认传输是否破坏）
+    @Volatile private var lastDecPred = 0
+    @Volatile private var lastDecIdx = 0
+    @Volatile private var lastDecHead = ""
+
+    /** 帧前若干字节转 hex，用于 host/viewer 原始帧字节对比 */
+    private fun frameHeadHex(frame: ByteArray): String {
+        val sb = StringBuilder(32)
+        val n = minOf(frame.size, 8)
+        for (k in 0 until n) {
+            if (k > 0) sb.append(',')
+            sb.append(frame[k].toInt() and 0xFF)
+        }
+        return sb.toString()
+    }
 
     /** 记录最近一帧的原始信息（长度/首字节），诊断帧格式版本错配 */
     fun noteRawFrame(frame: ByteArray) {
@@ -381,12 +407,14 @@ object SystemAudioBridge {
         return "playFrames=$playFrameCount decoded=$playDecodedCount dropped=$playDroppedCount " +
             "pcmBytes=$playBytesCount peak=$lastPcmPeak rms=$lastPcmRms " +
             "snap=[$lastPcmSnap] fi=[$lastFrameInfo] " +
+            "decState=[$lastDecPred,$lastDecIdx] decHead=[$lastDecHead] " +
             "track=${if (audioTrack != null) "on" else "off"}"
     }
 
     fun resetPlaybackStats() {
         playFrameCount = 0; playDecodedCount = 0; playDroppedCount = 0; playBytesCount = 0
         lastPcmPeak = 0; lastPcmRms = 0
+        lastDecPred = 0; lastDecIdx = 0; lastDecHead = ""
     }
 
     /** 开始播放（创建流式 AudioTrack 并 play） */
