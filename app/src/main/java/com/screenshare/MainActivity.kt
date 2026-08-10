@@ -1141,6 +1141,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     // 系统音频经 DataChannel 接收，ADPCM 解码后交给播放器（v1.124）
                     p.setSystemAudioListener { data ->
                         try {
+                            SystemAudioBridge.noteRawFrame(data)
                             val pcm = SystemAudioBridge.decodeFrame(data)
                             if (pcm == null) {
                                 reportDiagnostic("audio decNull len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1}")

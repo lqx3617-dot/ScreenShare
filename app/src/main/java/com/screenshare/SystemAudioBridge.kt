@@ -207,12 +207,15 @@ object SystemAudioBridge {
     // 最近采集 PCM 振幅摘要（诊断"无声"：若采集峰值很小则确认是静音误杀或采集失败）
     @Volatile private var lastCapPeak = 0
     @Volatile private var lastCapRms = 0
+    // 最近一帧采集 PCM 前 16 采样快照（诊断电流声：与 viewer 端解码快照对比，判断失真环节）
+    @Volatile private var lastCapSnap = ""
 
     /** 采集端诊断摘要（周期性由 MainActivity 上报 /diag） */
     fun captureStats(): String {
         val total = captureFrameCount
         return "capFrames=$total silent=$captureSilentCount encoded=$captureEncodedCount " +
-            "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms"
+            "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms " +
+            "snap=[$lastCapSnap]"
     }
 
     fun resetCaptureStats() {
@@ -293,6 +296,18 @@ object SystemAudioBridge {
                         }
                         lastCapPeak = peak
                         if (cnt > 0) lastCapRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
+                        // 采样快照：首 16 个采集 PCM 采样（诊断电流声时与 viewer 端解码快照对比）
+                        if (n >= 32) {
+                            val sb = StringBuilder(96)
+                            for (k in 0 until 16) {
+                                if (k > 0) sb.append(',')
+                                val slo = buf[k*2].toInt() and 0xFF
+                                val shi = buf[k*2+1].toInt()
+                                val sv = (slo or (shi shl 8)).toShort().toInt()
+                                sb.append(sv)
+                            }
+                            lastCapSnap = sb.toString()
+                        }
                         // 静音检测：PCM16 小端，峰值绝对值低于阈值视为静音帧，丢弃不发省带宽。
                         // 无声时 DataChannel 不再每秒发送 96KB 数据，弱网下视频带宽更充足
                         if (isSilent(buf, n)) {
@@ -349,11 +364,23 @@ object SystemAudioBridge {
     // 最近一次解码 PCM 的振幅摘要（诊断"无声"：若 decoded>0 但 rms=0 则解码输出静音）
     @Volatile private var lastPcmPeak = 0
     @Volatile private var lastPcmRms = 0
+    // 最近一帧解码 PCM 的前 16 个采样值快照（诊断"电流声"：对比 host 采集波形，判断解码是否失真）
+    @Volatile private var lastPcmSnap = ""
+    // 最近一次解码的帧长度与帧头（诊断帧格式/版本错配）
+    @Volatile private var lastFrameInfo = ""
+
+    /** 记录最近一帧的原始信息（长度/首字节），诊断帧格式版本错配 */
+    fun noteRawFrame(frame: ByteArray) {
+        if (frame.isEmpty()) { lastFrameInfo = "empty"; return }
+        val flag = frame[0].toInt() and 0xFF
+        lastFrameInfo = "len=${frame.size} flag=0x${flag.toString(16)}"
+    }
 
     /** 播放端诊断摘要（周期性由 MainActivity 上报 /diag） */
     fun playbackStats(): String {
         return "playFrames=$playFrameCount decoded=$playDecodedCount dropped=$playDroppedCount " +
             "pcmBytes=$playBytesCount peak=$lastPcmPeak rms=$lastPcmRms " +
+            "snap=[$lastPcmSnap] fi=[$lastFrameInfo] " +
             "track=${if (audioTrack != null) "on" else "off"}"
     }
 
@@ -426,6 +453,18 @@ object SystemAudioBridge {
             }
             lastPcmPeak = peak
             if (cnt > 0) lastPcmRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
+            // 采样快照：首 16 个 PCM 采样，诊断电流声时对比 host 采集波形
+            if (data.size >= 32) {
+                val sb = StringBuilder(96)
+                for (k in 0 until 16) {
+                    if (k > 0) sb.append(',')
+                    val lo = data[k*2].toInt() and 0xFF
+                    val hi = data[k*2+1].toInt() and 0xFF
+                    val sv = (lo or (hi shl 8)).toShort().toInt()
+                    sb.append(sv)
+                }
+                lastPcmSnap = sb.toString()
+            }
             val written = audioTrack?.write(data, 0, data.size)
             if (written != null && written > 0) {
                 playDecodedCount++
