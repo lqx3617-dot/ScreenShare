@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.126.2 修复观看方音频解码越界导致无声\n① 诊断确认观看方解码持续越界（ArrayIndexOutOfBoundsException: length=1920; index=1920），所有帧被丢弃 → 完全无声\n② decodeFrame 加防御性边界（按采样数精确限界，异常帧安全截断），无论输入帧长度如何都不越界，正常帧解码输出与之前完全一致\n③ 解码异常上报完整堆栈，若仍有问题可精确定位到行",
+  changelog: "v1.127 修复系统音频电流声（ADPCM 丢包失步）\n① 根因：系统音频走不可靠 DataChannel，ADPCM 预测器状态跨帧累积，一旦丢一帧两端状态永久失步，持续输出电流声/噪音\n② 帧头携带预测器状态（每帧独立可解）：丢帧只影响当前 20ms，下一帧自动恢复，声音稳定清晰\n③ 重要：本版 ADPCM 帧格式升级，两端需同步更新到 v1.127（新观看方可兼容旧共享方，反向需同步升级）",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "音频修复版",
+    note: "电流声修复版（双端需同步更新）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

@@ -55,18 +55,25 @@ object SystemAudioBridge {
     private var decPredicted = 0
     private var decIndex = 0
 
-    /** 将一段 PCM16 编码为 IMA ADPCM 4bit（含帧头 1 字节），返回 null 表示输入为空/长度非法 */
+    /** 将一段 PCM16 编码为 IMA ADPCM 4bit，返回 null 表示输入为空/长度非法 */
     fun encodeAdpcm(pcm: ByteArray): ByteArray? {
         val n = pcm.size / 2
         if (n <= 0) return null
         // 每 2 个采样打包 1 字节（低 4 位=第 1 采样，高 4 位=第 2 采样）
         val outBytes = (n + 1) / 2
-        val out = ByteArray(outBytes + 1)
+        // 帧头：1 字节标记 + 2 字节预测器 + 1 字节步长索引（v1.127 起携带预测器状态，抗丢包防电流声）
+        val out = ByteArray(outBytes + 4)
         out[0] = FRAME_FLAG_ADPCM
+        // 写入本帧起始预测器状态：解码端每帧从帧头恢复，单帧丢包不再导致永久失步
+        val startPred = encPredicted
+        val startIdx = encIndex
+        out[1] = (startPred and 0xFF).toByte()
+        out[2] = ((startPred shr 8) and 0xFF).toByte()
+        out[3] = startIdx.toByte()
         var predicted = encPredicted
         var index = encIndex
         var p = 0
-        var o = 1
+        var o = 4
         while (p < n) {
             val s1 = readSample(pcm, p++)
             var enc = adpcmEncodeSample(s1, predicted, index)
@@ -94,14 +101,28 @@ object SystemAudioBridge {
             // 旧版共享方/原始 PCM 帧：直接返回（不含帧头？含？——发送端若旧版则为纯 PCM，此处原样交给播放器）
             return frame
         }
-        val adpcmLen = frame.size - 1
+        // 帧头版本判断：新帧含 4 字节预测器状态（pred_lo/pred_hi/index），旧帧无状态直接跟 ADPCM 数据。
+        // 新帧长 = 4 + 480；旧帧长 = 1 + 480。用帧长区分（兼容旧版共享方）。
+        val hasStateHeader = frame.size >= 5
+        val headerLen = if (hasStateHeader) 4 else 1
+        var predicted: Int
+        var index: Int
+        if (hasStateHeader) {
+            // 从帧头恢复预测器状态：即使之前丢帧，本帧从正确状态开始解，杜绝持续电流声
+            predicted = (frame[1].toInt() and 0xFF) or ((frame[2].toInt() and 0xFF) shl 8)
+            if (predicted > 32767) predicted -= 65536
+            index = frame[3].toInt() and 0xFF
+            if (index > 88) index = 0
+        } else {
+            predicted = decPredicted
+            index = decIndex
+        }
+        val adpcmLen = frame.size - headerLen
         // 每 1 字节 ADPCM 解出 2 采样，每采样 2 字节 PCM → 输出字节数 = adpcmLen*4
         // 防御：即使帧头/长度异常也不越界，越界的采样丢弃
         val sampleCount = adpcmLen * 2
         val out = ByteArray(sampleCount * 2)
-        var predicted = decPredicted
-        var index = decIndex
-        var p = 1
+        var p = headerLen
         var o = 0
         while (p < frame.size && o < sampleCount) {
             val byte = frame[p].toInt() and 0xFF
@@ -115,8 +136,12 @@ object SystemAudioBridge {
             predicted = s2.pred; index = s2.idx
             writeSample(out, o++, s2.value)
         }
-        decPredicted = predicted
-        decIndex = index
+        // 仅在旧帧（无状态头）时回写解码器状态，供后续旧帧延续；
+        // 新帧已自带状态，无需回写（避免与新帧状态头互相污染）
+        if (!hasStateHeader) {
+            decPredicted = predicted
+            decIndex = index
+        }
         return out
     }
 
