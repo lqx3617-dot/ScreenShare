@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.124 系统音频带宽优化：ADPCM 压缩\n① 系统音频（视频/音乐声）经 IMA ADPCM 4bit 压缩后发送，带宽从 768kbps 降至约 192kbps（省 75%），弱网下视频带宽更充足\n② 静音帧仍直接丢弃，无声状态零带宽；音质对屏幕共享场景足够\n③ 注意：需双端同时更新本版本，新旧混用可能无声音或杂音",
+  changelog: "v1.125 修复播放视频时闪退崩溃\n① 修复 v1.124 引入的音频解码数组越界（ADPCM 480 字节应解出 1920 字节 PCM，误分配 960 字节），播放持续声音时必崩溃，现已修复\n② 系统音频 ADPCM 压缩功能保留，音质与带宽优化不变",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "音频压缩优化版",
+    note: "崩溃修复版",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
