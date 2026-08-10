@@ -459,8 +459,8 @@ class WebRTCPeer(
         }
         try {
             val audioInit = DataChannel.Init().apply {
-                ordered = false
-                maxRetransmits = 0
+                // 可靠有序：杜绝乱序播放导致的电流声（v1.128 起）
+                ordered = true
             }
             val audioDc = pc.createDataChannel(SYSTEM_AUDIO_LABEL, audioInit)
             conn.systemAudioChannel = audioDc
@@ -752,13 +752,13 @@ class WebRTCPeer(
 
     // ==================== 系统音频 DataChannel ====================
 
-    /** 共享方：创建系统音频 DataChannel（低延迟：乱序、不重传） */
+    /** 共享方：创建系统音频 DataChannel（可靠有序：v1.128 起改为 ordered=true，杜绝乱序导致的电流声） */
     fun createSystemAudioChannel(): DataChannel? {
         val pc = peerConnection ?: return null
         try {
             val init = DataChannel.Init().apply {
-                ordered = false
-                maxRetransmits = 0
+                // 可靠有序：音频帧带预测器状态头抗丢帧，可靠通道杜绝乱序（不可靠通道乱序到达会按错误顺序播放→电流声）
+                ordered = true
             }
             val dc = pc.createDataChannel(SYSTEM_AUDIO_LABEL, init)
             systemAudioChannel = dc

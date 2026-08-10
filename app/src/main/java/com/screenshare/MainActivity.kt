@@ -281,23 +281,27 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } catch (_: Throwable) {}
     }
 
+    private val diagExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     /** 诊断上报：把编码器/瓶颈/丢包/延迟信息 POST 到信令服务器 /diag 落盘，便于远程定位真机问题 */
     private fun reportDiagnostic(text: String) {
-        try {
-            val base = BuildConfig.SIGNAL_URL
-                .replace("wss://", "https://").replace("ws://", "http://")
-                .trimEnd('/')
-            val url = base.substringBeforeLast('/', base)
-            val payload = "time=${System.currentTimeMillis()} role=host $text\n"
-            val body = payload.toByteArray().toRequestBody("text/plain".toMediaType())
-            val req = okhttp3.Request.Builder()
-                .url("$url/diag")
-                .post(body)
-                .build()
-            okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
-                .newCall(req).execute().close()
-        } catch (_: Throwable) {}
+        val payload = "time=${System.currentTimeMillis()} role=host $text\n"
+        diagExecutor.execute {
+            try {
+                val base = BuildConfig.SIGNAL_URL
+                    .replace("wss://", "https://").replace("ws://", "http://")
+                    .trimEnd('/')
+                val url = base.substringBeforeLast('/', base)
+                val body = payload.toByteArray().toRequestBody("text/plain".toMediaType())
+                val req = okhttp3.Request.Builder()
+                    .url("$url/diag")
+                    .post(body)
+                    .build()
+                okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                    .newCall(req).execute().close()
+            } catch (_: Throwable) {}
+        }
     }
 
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
