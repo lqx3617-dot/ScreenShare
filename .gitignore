@@ -24,3 +24,5 @@ keystore.properties
 /server/node_modules/
 # 崩溃上报日志（运行时产物，不入库）
 /server/crashes/
+# 诊断上报日志（运行时产物，不入库）
+/server/diag/

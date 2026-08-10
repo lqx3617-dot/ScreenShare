@@ -2005,9 +2005,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 try {
                     val role = if (isHost) "host" else "viewer"
                     if (isHost) {
-                        reportDiagnostic("audio role=$role " + SystemAudioBridge.captureStats())
+                        reportDiagnostic("ver=${BuildConfig.VERSION_CODE} audio role=$role " + SystemAudioBridge.captureStats())
                     } else {
-                        reportDiagnostic("audio role=$role " + SystemAudioBridge.playbackStats())
+                        reportDiagnostic("ver=${BuildConfig.VERSION_CODE} audio role=$role " + SystemAudioBridge.playbackStats())
                     }
                 } catch (_: Throwable) {}
                 if (h == audioDiagHandler) h.postDelayed(this, 5000)

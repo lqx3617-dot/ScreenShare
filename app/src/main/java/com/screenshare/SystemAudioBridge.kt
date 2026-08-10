@@ -31,7 +31,10 @@ object SystemAudioBridge {
     // ADPCM 压缩（v1.124）：系统音频 48kHz 单声道 16bit = 768kbps，走 DataChannel 在弱网下严重挤占视频带宽。
     // IMA ADPCM 4bit 压缩后降至 192kbps（4:1），音质对屏幕共享场景足够。双端同步实现，带帧头标记。
     // 帧格式：首字节 0x01 表示后续为 IMA ADPCM 数据（4bit 打包，960 采样→480 字节）；0x00/其他为原始 PCM16（旧版兼容）
+    // v1.128: 0x02 = 带 4 字节预测器状态头的 ADPCM 帧 [flag, pred_lo, pred_hi, index, adpcm...]
+    //         接收端用首字节区分格式（替代脆弱的 frame.size>=5 判断），双端版本不一致也不会错位解码
     private const val FRAME_FLAG_ADPCM = 0x01.toByte()
+    private const val FRAME_FLAG_ADPCM_STATE = 0x02.toByte()
     // IMA ADPCM 步长表（标准 89 项）
     private val stepSizeTable = intArrayOf(
         7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -63,7 +66,7 @@ object SystemAudioBridge {
         val outBytes = (n + 1) / 2
         // 帧头：1 字节标记 + 2 字节预测器 + 1 字节步长索引（v1.127 起携带预测器状态，抗丢包防电流声）
         val out = ByteArray(outBytes + 4)
-        out[0] = FRAME_FLAG_ADPCM
+        out[0] = FRAME_FLAG_ADPCM_STATE
         // 写入本帧起始预测器状态：解码端每帧从帧头恢复，单帧丢包不再导致永久失步
         val startPred = encPredicted
         val startIdx = encIndex
@@ -97,13 +100,13 @@ object SystemAudioBridge {
     /** 解码带帧头的 ADPCM 数据，返回 PCM16；帧头为原始 PCM 时原样返回。解码失败返回 null */
     fun decodeFrame(frame: ByteArray): ByteArray? {
         if (frame.isEmpty()) return null
-        if (frame[0] != FRAME_FLAG_ADPCM) {
+        if (frame[0] != FRAME_FLAG_ADPCM && frame[0] != FRAME_FLAG_ADPCM_STATE) {
             // 旧版共享方/原始 PCM 帧：直接返回（不含帧头？含？——发送端若旧版则为纯 PCM，此处原样交给播放器）
             return frame
         }
-        // 帧头版本判断：新帧含 4 字节预测器状态（pred_lo/pred_hi/index），旧帧无状态直接跟 ADPCM 数据。
-        // 新帧长 = 4 + 480；旧帧长 = 1 + 480。用帧长区分（兼容旧版共享方）。
-        val hasStateHeader = frame.size >= 5
+        // 帧头版本判断（v1.128）：首字节 0x02 = 新帧含 4 字节预测器状态，0x01 = 旧帧无状态。
+        // 用标志字节而非帧长判断，双端版本不一致时也不会误判解码偏移。
+        val hasStateHeader = frame[0] == FRAME_FLAG_ADPCM_STATE
         val headerLen = if (hasStateHeader) 4 else 1
         var predicted: Int
         var index: Int
