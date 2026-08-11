@@ -204,5 +204,6 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.133 起音频链路重写：**彻底删除 IMA ADPCM 编解码**，系统音频改为原始 PCM16 直传（48kHz 单声道 768kbps，DataChannel ordered=true），观看方 writePcm 直接写 AudioTrack，无编解码无状态，杜绝压缩/状态恢复失真。若后续电流声仍在，方向转向 DataChannel 传输层/多通道，而非编解码
   - libwebrtc Java API 的 createAudioSource 只能采集麦克风，无法注入系统内录 PCM 到标准音视频轨（无自定义 PCM AudioSource 公开 API），系统音频必须走 DataChannel 通道，此架构决策勿再尝试改为标准轨
   - 音频诊断双端上报（/diag）：host captureStats()（capFrames/sent/peak/rms/snap）、viewer playbackStats()（playFrames/decoded/dropped/pcmBytes/peak/rms/snap/track），每 5 秒由 MainActivity startAudioDiag 上报
+  - 下载服务器必须用 DOWNLOAD_BASE 环境变量启动（`DOWNLOAD_BASE=<端口>-<env域名>.monkeycode-ai.online node download-server.js`）：反代会把 Host 改写为 localhost，导致 version.json 的 url 字段返回 `https://localhost:8090/...`，手机 App 用该 url 下载时 localhost 指向手机自身必然失败；App 下载 APK 用的是 version.json 的 url 字段（UpdateChecker.downloadAndInstall），修复后需重启下载服务器生效
 
 
