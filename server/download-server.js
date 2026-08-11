@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.132 电流声根治：帧序号对齐 + 音频通道去重\n① v1.131 字节对比发现：播放端收到帧头状态极低（predicted=-12, index=8）的帧但数据代表大幅信号，帧头与数据不匹配，且播放帧数比发送帧数多约 10 帧——疑似多路音频通道交错/重复\n② 本版修复：观看方收到新音频通道时先释放旧通道，只保留最新一路，根治多通道帧交错导致的电流声\n③ 帧内新增 2 字节单调递增序号 + 数据校验和：双端按序号精确对齐，checksum 对比确认传输是否逐字节无损，同时统计重复帧（repeats）与乱序帧（gaps）数量\n④ 请双端同步更新到 v1.132（本版帧格式已升级），测试后我读取诊断日志按帧号直接对比",
+  changelog: "v1.133 音频链路重写：删除 ADPCM 压缩，改原始 PCM 直传\n① 前 5 个版本在自研 IMA ADPCM + DataChannel 链路上逐项验证（帧格式、传输、算法、通道去重均正常），真机仍持续电流声，无法定位根因\n② 本版按你的要求删代码重写音频链路：彻底删除编解码/预测器状态/帧序号/校验和，系统音频以原始 PCM16 直传（48kHz 单声道 768kbps），观看方收到什么播什么，无压缩无状态\n③ 带宽占用增大（弱网下优先保证音频，视频码率自适应），但失真根因被整体移除\n④ 请双端同步更新到 v1.133 测试",
   forced: false,
 };
 
@@ -62,7 +62,7 @@ function getVersion(host) {
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
     size: fs.statSync(APK).size,
-    note: "电流声修复版（双端需同步更新）",
+    note: "音频链路重写版（双端需同步更新）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };

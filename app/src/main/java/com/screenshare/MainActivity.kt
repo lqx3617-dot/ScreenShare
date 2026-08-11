@@ -1138,21 +1138,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         updateUI("❌ PeerConnection 创建失败")
                         return
                     }
-                    // 系统音频经 DataChannel 接收，ADPCM 解码后交给播放器（v1.124）
+                    // 系统音频经 DataChannel 接收，原始 PCM 直接交给播放器（v1.133）
                     p.setSystemAudioListener { data ->
                         try {
-                            SystemAudioBridge.noteRawFrame(data)
-                            val pcm = SystemAudioBridge.decodeFrame(data)
-                            if (pcm == null) {
-                                reportDiagnostic("audio decNull len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1}")
-                            } else {
-                                SystemAudioBridge.writePcm(pcm)
-                            }
+                            SystemAudioBridge.writePcm(data)
                         } catch (t: Throwable) {
-                            // 解码异常（v1.126 加固后不崩溃，但需上报定位"视频无声"）
+                            // 播放异常（加固后不崩溃，上报定位）
                             val sw = java.io.StringWriter()
                             t.printStackTrace(java.io.PrintWriter(sw))
-                            reportDiagnostic("audio decExc ${t.javaClass.simpleName}:${t.message} len=${data.size} first=${if (data.isNotEmpty()) data[0] else -1} stack=${sw.toString().replace('\n', '|')}")
+                            reportDiagnostic("audio playExc ${t.javaClass.simpleName}:${t.message} len=${data.size} stack=${sw.toString().replace('\n', '|')}")
                         }
                     }
                     // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
