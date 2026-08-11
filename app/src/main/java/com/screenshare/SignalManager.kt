@@ -7,12 +7,11 @@ import org.webrtc.IceCandidate
 import org.webrtc.SessionDescription
 
 /**
- * 信令管理器：把 SDP + ICE 候选编码成二维码，扫码后解码还原。
+ * 信令管理器：把 SDP + ICE 候选编码为 JSON 字符串。
  *
- * 为什么这么做：
- * - 不需要服务器、不需要 Firebase、不需要电脑
- * - 二维码能存约 3000 字节，SDP + ICE 完全够
- * - 扫完一次就建立 P2P，后续不需要再扫
+ * 两种传输方式：
+ * - 扫码模式：把 JSON 编码成二维码，扫码后解码还原，本地无服务器直连 P2P
+ * - 服务器中继：把 JSON 通过 WebSocket 信令服务器转发（signalMode）
  *
  * 二维码内容格式（JSON）：
  * {

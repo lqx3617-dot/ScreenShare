@@ -9,7 +9,7 @@ import android.media.projection.MediaProjection
 import android.util.Log
 
 /**
- * 系统音频内录/播放桥（v1.133 重写）。
+ * 系统音频内录/播放桥（v1.134 精简）。
  *
  * 背景：WebRTC Android 标准库的 AudioSource 只能采集麦克风，无法把系统内录音频
  * （视频/音乐播放的声音）注入标准音视频流。因此走 DataChannel 附加通道：
@@ -18,11 +18,11 @@ import android.util.Log
  *   - 观看方：从 DataChannel 接收 PCM → AudioTrack 播放
  * 音画为近似同步（同连接、低延迟、接收端流式播放）。
  *
- * v1.133 重写说明：彻底删除 IMA ADPCM 编解码链路（编码/解码、预测器状态头、
- * 帧序号、校验和）。此前 ADPCM 链路在真机上出现预测器状态发散、帧头与数据
- * 不匹配等异常，且无法完全定位。本版改为原始 PCM16 直传（48kHz 单声道，
- * 768kbps），观看方收到什么就播放什么，无编解码无状态，杜绝一切由压缩/
- * 状态恢复引入的失真。若弱网下带宽压力大，后续再做无状态压缩优化。
+ * v1.133 重写：彻底删除 IMA ADPCM 编解码链路，改为原始 PCM16 直传（48kHz 单声道
+ * 768kbps），观看方收到什么就播放什么，无编解码无状态，杜绝一切由压缩/状态恢复
+ * 引入的失真（此前 5 个版本的电流声无法在编解码层定位，PCM 直传后根治）。
+ * v1.134：移除 v1.130~v1.132 遗留的振幅/RMS/波形快照诊断（PCM 直传后已无诊断价值，
+ * 纯每 20ms 计算开销），保留最小状态：仅采集/播放启停，无任何周期统计。
  */
 object SystemAudioBridge {
     private const val TAG = "SystemAudioBridge"
@@ -34,29 +34,6 @@ object SystemAudioBridge {
     // ==================== 共享方：采集系统 PCM ====================
     @Volatile private var recordThread: Thread? = null
     @Volatile private var recording = false
-    // 采集诊断统计
-    @Volatile private var captureFrameCount = 0L
-    @Volatile private var captureSentCount = 0L
-    @Volatile private var captureReadBytes = 0L
-    @Volatile private var captureByteCount = 0L
-    // 最近采集 PCM 振幅摘要与快照（诊断采集端是否正常）
-    @Volatile private var lastCapPeak = 0
-    @Volatile private var lastCapRms = 0
-    @Volatile private var lastCapSnap = ""
-
-    /** 采集端诊断摘要（周期性由 MainActivity 上报 /diag） */
-    fun captureStats(): String {
-        val total = captureFrameCount
-        return "capFrames=$total sent=$captureSentCount " +
-            "readBytes=$captureReadBytes sentBytes=$captureByteCount peak=$lastCapPeak rms=$lastCapRms " +
-            "snap=[$lastCapSnap]"
-    }
-
-    fun resetCaptureStats() {
-        captureFrameCount = 0; captureSentCount = 0
-        captureReadBytes = 0; captureByteCount = 0
-        lastCapPeak = 0; lastCapRms = 0; lastCapSnap = ""
-    }
 
     /**
      * 开始内录系统音频（视频/音乐等 Media 声音）。必须在 MediaProjection 授权后调用。
@@ -114,38 +91,8 @@ object SystemAudioBridge {
                 while (recording) {
                     val n = record.read(buf, 0, CHUNK_BYTES)
                     if (n > 0 && recording) {
-                        captureFrameCount++
-                        captureReadBytes += n
-                        // 抽样计算采集振幅（每 32 采样取 1）
-                        var peak = 0; var sumSq = 0L; var cnt = 0; var i = 0
-                        while (i + 1 < n) {
-                            val lo = buf[i].toInt() and 0xFF
-                            val hi = buf[i + 1].toInt()
-                            val s = (lo or (hi shl 8)).toShort().toInt()
-                            val a = kotlin.math.abs(s)
-                            if (a > peak) peak = a
-                            sumSq += s.toLong() * s.toLong()
-                            cnt++
-                            i += 64
-                        }
-                        lastCapPeak = peak
-                        if (cnt > 0) lastCapRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
-                        // 采样快照：首 16 个采集 PCM 采样
-                        if (n >= 32) {
-                            val sb = StringBuilder(96)
-                            for (k in 0 until 16) {
-                                if (k > 0) sb.append(',')
-                                val slo = buf[k*2].toInt() and 0xFF
-                                val shi = buf[k*2+1].toInt()
-                                val sv = (slo or (shi shl 8)).toShort().toInt()
-                                sb.append(sv)
-                            }
-                            lastCapSnap = sb.toString()
-                        }
                         // v1.133：原始 PCM 直传，不做编码也不做静音丢弃（保证播放连续，无帧间隙）
                         onPcm(buf.copyOf(n))
-                        captureSentCount++
-                        captureByteCount += n
                     }
                 }
             } catch (t: Throwable) {
@@ -169,27 +116,6 @@ object SystemAudioBridge {
 
     // ==================== 观看方：播放系统 PCM ====================
     @Volatile private var audioTrack: AudioTrack? = null
-    // 播放诊断统计
-    @Volatile private var playFrameCount = 0L
-    @Volatile private var playDecodedCount = 0L
-    @Volatile private var playDroppedCount = 0L
-    @Volatile private var playBytesCount = 0L
-    // 最近一次播放 PCM 的振幅摘要与快照（诊断播放端是否正常）
-    @Volatile private var lastPcmPeak = 0
-    @Volatile private var lastPcmRms = 0
-    @Volatile private var lastPcmSnap = ""
-
-    /** 播放端诊断摘要（周期性由 MainActivity 上报 /diag） */
-    fun playbackStats(): String {
-        return "playFrames=$playFrameCount decoded=$playDecodedCount dropped=$playDroppedCount " +
-            "pcmBytes=$playBytesCount peak=$lastPcmPeak rms=$lastPcmRms " +
-            "snap=[$lastPcmSnap] track=${if (audioTrack != null) "on" else "off"}"
-    }
-
-    fun resetPlaybackStats() {
-        playFrameCount = 0; playDecodedCount = 0; playDroppedCount = 0; playBytesCount = 0
-        lastPcmPeak = 0; lastPcmRms = 0; lastPcmSnap = ""
-    }
 
     /** 开始播放（创建流式 AudioTrack 并 play） */
     fun startPlayback(): Boolean {
@@ -240,43 +166,8 @@ object SystemAudioBridge {
     /** 观看方写入一段 PCM16 到 AudioTrack（v1.133：DataChannel 收到原始 PCM 直接写入） */
     fun writePcm(data: ByteArray) {
         try {
-            playFrameCount++
-            // 抽样计算振幅（每 32 采样取 1）
-            var peak = 0; var sumSq = 0L; var cnt = 0
-            var i = 0
-            while (i + 1 < data.size) {
-                val lo = data[i].toInt() and 0xFF
-                val hi = data[i + 1].toInt()
-                val s = (lo or (hi shl 8)).toShort().toInt()
-                val a = kotlin.math.abs(s)
-                if (a > peak) peak = a
-                sumSq += s.toLong() * s.toLong()
-                cnt++
-                i += 64
-            }
-            lastPcmPeak = peak
-            if (cnt > 0) lastPcmRms = kotlin.math.sqrt(sumSq.toDouble() / cnt).toInt()
-            // 采样快照：首 16 个 PCM 采样
-            if (data.size >= 32) {
-                val sb = StringBuilder(96)
-                for (k in 0 until 16) {
-                    if (k > 0) sb.append(',')
-                    val lo = data[k*2].toInt() and 0xFF
-                    val hi = data[k*2+1].toInt() and 0xFF
-                    val sv = (lo or (hi shl 8)).toShort().toInt()
-                    sb.append(sv)
-                }
-                lastPcmSnap = sb.toString()
-            }
-            val written = audioTrack?.write(data, 0, data.size)
-            if (written != null && written > 0) {
-                playDecodedCount++
-                playBytesCount += written
-            } else {
-                playDroppedCount++
-            }
+            audioTrack?.write(data, 0, data.size)
         } catch (t: Throwable) {
-            playDroppedCount++
             Log.w(TAG, "写入 AudioTrack 失败: ${t.message}")
         }
     }

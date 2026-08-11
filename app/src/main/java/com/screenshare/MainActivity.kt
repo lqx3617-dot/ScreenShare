@@ -73,11 +73,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var signalClient: SignalClient? = null
     private var signalMode = false
     private var signalPeerReady = false
-    // 音频诊断周期上报计数器（v1.126.1：定位"视频无声"）
-    private var lastAudioDiagTick = 0L
-    // 独立音频诊断上报定时器（host 采集端 / 观看方播放端各报各的，不依赖全屏统计循环）
-    private var audioDiagHandler: android.os.Handler? = null
-    private var audioDiagRunnable: Runnable? = null
     // host 端：对方（viewer）是否已加入房间。服务器对 host 发的是 viewer-joined 而非 peer-ready，
     // 用此标记判断"对方已加入"（关闭会议号弹窗 / 授权后不弹窗）
     private var viewerJoined = false
@@ -94,6 +89,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // ICE 候选缓存（打包进信令 SDP 一起发送）
     private val iceCandidates = mutableListOf<IceCandidate>()
+    // 本机候选类型累计计数（避免每候选 O(n) 重扫全部）
+    private var candCountHost = 0
+    private var candCountSrflx = 0
+    private var candCountRelay = 0
+    private var candCountOther = 0
 
     // 远程视频渲染
     private var remoteVideoSink: VideoSink? = null
@@ -113,7 +113,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var remoteVideoTrack: VideoTrack? = null
     private var fullscreenRenderer: SurfaceViewRenderer? = null
     private var fullscreenSink: VideoSink? = null
-    private var fullscreenScaleDetector: ScaleGestureDetector? = null
     private var fullscreenScale = 1f
     @Volatile private var isFullscreen = false
     // 全屏悬浮信息条：周期拉取 WebRTC 统计并刷新显示（后台线程轮询，避免 getStats 阻塞主线程导致 ANR/闪退）
@@ -260,7 +259,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val f = java.io.File(dir, "crash-${System.currentTimeMillis()}.log")
                         f.writeText(content.toString())
                     }
-                    // 尽力上报信令服务器（诊断模式），失败则忽略
+                    // 尽力上报信令服务器（诊断模式），失败则忽略；缩短超时避免拖慢进程退出
                     try {
                         val base = BuildConfig.SIGNAL_URL
                             .replace("wss://", "https://").replace("ws://", "http://")
@@ -269,10 +268,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val body = content.toString().toByteArray().toRequestBody("text/plain".toMediaType())
                         val req = okhttp3.Request.Builder()
                             .url("$url/crash")
+                            .addHeader("x-diag-token", BuildConfig.DIAG_TOKEN)
                             .post(body)
                             .build()
-                        okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
+                        okhttp3.OkHttpClient.Builder().connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS).build()
                             .newCall(req).execute().close()
                     } catch (_: Throwable) {}
                 } catch (_: Throwable) {}
@@ -283,9 +283,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private val diagExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
+    // 复用单个 OkHttpClient（避免每次上报重建连接池/线程池）
+    private val diagClient = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
     /** 诊断上报：把编码器/瓶颈/丢包/延迟信息 POST 到信令服务器 /diag 落盘，便于远程定位真机问题 */
     private fun reportDiagnostic(text: String) {
-        val payload = "time=${System.currentTimeMillis()} role=host $text\n"
+        val role = if (isHost) "host" else "viewer"
+        val payload = "time=${System.currentTimeMillis()} role=$role $text\n"
         diagExecutor.execute {
             try {
                 val base = BuildConfig.SIGNAL_URL
@@ -295,17 +302,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 val body = payload.toByteArray().toRequestBody("text/plain".toMediaType())
                 val req = okhttp3.Request.Builder()
                     .url("$url/diag")
+                    .addHeader("x-diag-token", BuildConfig.DIAG_TOKEN)
                     .post(body)
                     .build()
-                okhttp3.OkHttpClient.Builder().connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS).build()
-                    .newCall(req).execute().close()
+                diagClient.newCall(req).execute().close()
             } catch (_: Throwable) {}
         }
     }
 
     /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
-    private fun onFpsToggleClicked() {        currentFps = if (currentFps == 60) 30 else 60
+    private fun onFpsToggleClicked() {
+        currentFps = if (currentFps == 60) 30 else 60
         binding.btnFpsToggle.text = "${currentFps}帧"
         val msg = org.json.JSONObject()
             .put("type", "fps")
@@ -384,25 +391,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> "up"
             else -> return
         }
-        // 内联坐标映射（避免每帧 JSONObject/FloatArray 分配，降低触摸延迟）
+        // 坐标映射复用 CoordinateMapper（纯函数），触点在黑边/越界返回 null
         val crop = !isFitMode
         val rw = renderer.width.toFloat()
         val rh = renderer.height.toFloat()
-        val vw = lastFrameW.toFloat()
-        val vh = lastFrameH.toFloat()
-        var left = 0f; var top = 0f; var right = rw; var bottom = rh
-        if (!crop) {
-            val scale = minOf(rw / vw, rh / vh)
-            val cw = vw * scale
-            val ch = vh * scale
-            left = (rw - cw) / 2f
-            top = (rh - ch) / 2f
-            right = left + cw
-            bottom = top + ch
-        }
-        val x = event.x
-        val y = event.y
-        if (x < left || x > right || y < top || y > bottom) {
+        val norm = CoordinateMapper.normalizeTouch(event.x, event.y, rw, rh, lastFrameW, lastFrameH, crop)
+        if (norm == null) {
             // 黑边区域：down 不产生指令，已有会话直接结束
             if (action == "down") {
                 ctrlDownSent = false
@@ -410,8 +404,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             return
         }
-        val nx = ((x - left) / (right - left)).coerceIn(0f, 1f)
-        val ny = ((y - top) / (bottom - top)).coerceIn(0f, 1f)
+        val nx = norm[0]
+        val ny = norm[1]
         when (action) {
             "down" -> {
                 ctrlPoints.clear()
@@ -764,10 +758,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.llCtrlStatus.visibility = View.VISIBLE
             updateRemoteControlStatus()
         }
-        binding.tvScanResult.text = "④ 创建音频/控制通道..."
-        // 系统音频内录：创建 DataChannel + 启动内录（复用 MediaProjection 授权）
-        p.createSystemAudioChannel()
-        p.createControlChannel()
+        binding.tvScanResult.text = "④ 启动系统音频内录..."
+        // 系统音频内录：启动内录（复用 MediaProjection 授权）；DataChannel 由各 viewer 连接随 Offer 协商创建
         // 接收观看方指令：fps 帧率切换走原有逻辑，其余控制指令交给无障碍服务执行
         p.setControlListener { msg ->
             try {
@@ -794,8 +786,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("⚠️ 系统音频内录启动失败（视频将无声）")
         } else {
             Log.d(TAG, "系统音频内录已启动")
-            SystemAudioBridge.resetCaptureStats()
-            startAudioDiag()
         }
         binding.tvScanResult.text = "⑤ 正在生成连接信令(SDP)..."
         // 等 ICE 收集一些候选后创建 Offer（给 ICE 一点时间收集）
@@ -1140,14 +1130,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     }
                     // 系统音频经 DataChannel 接收，原始 PCM 直接交给播放器（v1.133）
                     p.setSystemAudioListener { data ->
-                        try {
-                            SystemAudioBridge.writePcm(data)
-                        } catch (t: Throwable) {
-                            // 播放异常（加固后不崩溃，上报定位）
-                            val sw = java.io.StringWriter()
-                            t.printStackTrace(java.io.PrintWriter(sw))
-                            reportDiagnostic("audio playExc ${t.javaClass.simpleName}:${t.message} len=${data.size} stack=${sw.toString().replace('\n', '|')}")
-                        }
+                        SystemAudioBridge.writePcm(data)
                     }
                     // 接收共享方回发的控制提示（无障碍未开启/文本失败等）
                     p.setControlListener { msg ->
@@ -1312,24 +1295,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onIceCandidate(candidate: IceCandidate) {
         iceCandidates.add(candidate)
-        val type = when {
-            candidate.sdp.contains("typ host") -> "host"
-            candidate.sdp.contains("typ srflx") -> "srflx"
-            candidate.sdp.contains("typ relay") -> "relay"
-            else -> "other"
+        when {
+            candidate.sdp.contains("typ host") -> candCountHost++
+            candidate.sdp.contains("typ srflx") -> candCountSrflx++
+            candidate.sdp.contains("typ relay") -> candCountRelay++
+            else -> candCountOther++
         }
-        val counts = iceCandidates.groupingBy { c ->
-            when {
-                c.sdp.contains("typ host") -> "host"
-                c.sdp.contains("typ srflx") -> "srflx"
-                c.sdp.contains("typ relay") -> "relay"
-                else -> "other"
-            }
-        }.eachCount()
-        Log.d(TAG, "收到 ICE 候选: mid=${candidate.sdpMid} type=$type 总数=${iceCandidates.size} $counts")
+        Log.d(TAG, "收到 ICE 候选: mid=${candidate.sdpMid} type=${candidate.sdp.substringAfter("typ ").substringBefore(" ")} 总数=${iceCandidates.size}")
         // 诊断：实时显示本机已收集候选数量
         runOnUiThread {
-            binding.tvScanResult.text = "本机候选: ${iceCandidates.size}个 $counts"
+            binding.tvScanResult.text = "本机候选: ${iceCandidates.size}个 host=$candCountHost srflx=$candCountSrflx relay=$candCountRelay"
             binding.tvScanResult.visibility = View.VISIBLE
         }
         // Trickle ICE：SDP 已发出后，新候选即时增量发送（不等 gathering 完成）
@@ -1364,8 +1339,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
-                SystemAudioBridge.resetPlaybackStats()
-                startAudioDiag()
             }
         }
     }
@@ -1375,7 +1348,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("连接已断开")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
-            stopAudioDiag()
             resetUI()
         }
     }
@@ -1437,6 +1409,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (old.parent == binding.flRemoteVideo) {
                 binding.flRemoteVideo.removeView(old)
             }
+            old.release()
         }
 
         val renderer = SurfaceViewRenderer(this)
@@ -1650,7 +1623,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
         })
         scaleDetector.isQuickScaleEnabled = true
-        fullscreenScaleDetector = scaleDetector
 
         renderer.setOnTouchListener { _, event ->
             if (isControlMode && !isHost && event.pointerCount == 1) {
@@ -1710,7 +1682,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 停止全屏统计刷新
         stopFullscreenStats()
         fullscreenScale = 1f
-        fullscreenScaleDetector = null
 
         // 隐藏但不销毁 renderer（INVISIBLE 保留 surface，再次进入全屏瞬时切换）
         binding.flFullscreen.visibility = View.INVISIBLE
@@ -1821,7 +1792,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             r.release()
         }
         fullscreenRenderer = null
-        fullscreenScaleDetector = null
         fullscreenScale = 1f
         binding.flFullscreen.visibility = View.GONE
     }
@@ -1994,42 +1964,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         lastLost = 0L
     }
 
-    /** 启动独立音频诊断上报（每 5 秒向服务器 /diag 上报采集或播放统计，定位"视频无声"） */
-    private fun startAudioDiag() {
-        stopAudioDiag()
-        val h = android.os.Handler(android.os.Looper.getMainLooper())
-        audioDiagHandler = h
-        val r = object : Runnable {
-            override fun run() {
-                try {
-                    val role = if (isHost) "host" else "viewer"
-                    if (isHost) {
-                        reportDiagnostic("ver=${BuildConfig.VERSION_CODE} audio role=$role " + SystemAudioBridge.captureStats())
-                    } else {
-                        reportDiagnostic("ver=${BuildConfig.VERSION_CODE} audio role=$role " + SystemAudioBridge.playbackStats())
-                    }
-                } catch (_: Throwable) {}
-                if (h == audioDiagHandler) h.postDelayed(this, 5000)
-            }
-        }
-        audioDiagRunnable = r
-        h.postDelayed(r, 3000)
-    }
-
-    private fun stopAudioDiag() {
-        audioDiagRunnable?.let { audioDiagHandler?.removeCallbacks(it) }
-        audioDiagHandler = null
-        audioDiagRunnable = null
-    }
-
     // ======================== 停止 ========================
     private fun onStopClicked() {
-        peer?.disconnect()
-        peer = null
-        signalClient?.disconnect()
-        signalClient = null
-        ScreenProjectionService.stop(this)
-        ScreenCapturerFactory.clearPermission()
+        cleanupPeer()
         resetUI()
         updateUI("已停止共享")
     }
@@ -2152,10 +2089,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llSignal.visibility = View.VISIBLE
         videoRenderer?.scaleX = 1f
         videoRenderer?.scaleY = 1f
+        videoRenderer?.release()
         videoRenderer = null
         videoScaleDetector = null
         currentVideoScale = 1f
         iceCandidates.clear()
+        candCountHost = 0
+        candCountSrflx = 0
+        candCountRelay = 0
+        candCountOther = 0
+        remoteVideoTrack?.removeSink(remoteVideoSink)
         remoteVideoSink = null
         remoteVideoTrack = null
         hostSessionActive = false
@@ -2169,14 +2112,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
-        stopAudioDiag()
         ScreenProjectionService.onReady = null
         exitFullscreen()
         releaseFullscreenRenderer()
-        peer?.disconnect()
-        peer = null
-        signalClient?.disconnect()
-        signalClient = null
+        cleanupPeer()
     }
 
     /**

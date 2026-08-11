@@ -127,6 +127,7 @@ class WebRTCPeer(
     private data class ViewerConnection(
         val pc: PeerConnection,
         var videoSender: org.webrtc.RtpSender? = null,
+        var micSender: org.webrtc.RtpSender? = null,
         var systemAudioChannel: DataChannel? = null,
         var controlChannel: DataChannel? = null
     )
@@ -140,8 +141,7 @@ class WebRTCPeer(
     private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
     private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
 
-    // 系统音频 DataChannel（共享方发送 / 观看方接收）
-    private var systemAudioChannel: DataChannel? = null
+    // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
     // v1.132：观看方已注册的音频接收通道引用（收到新音频通道时先释放旧的，防止多通道交错播放导致电流声）
     private var audioReceiveChannel: DataChannel? = null
@@ -343,9 +343,6 @@ class WebRTCPeer(
 
     // ==================== V4: 多 viewer 连接管理 ====================
 
-    /** viewer 连接数（host 视角） */
-    fun viewerCount(): Int = viewerConnections.size
-
     /** 当前活跃 viewer 的 id（1 对 1 模式下取唯一 viewer；无则返回 0） */
     fun firstViewerId(): Int = viewerConnections.keys.firstOrNull() ?: 0
 
@@ -433,6 +430,15 @@ class WebRTCPeer(
                 }
             }
         }
+        // 麦克风已开启时，新 viewer 连接同步挂载麦克风音频轨（V4 下必须挂到 viewer 连接才能协商到对端）
+        localAudioTrack?.let { mic ->
+            val ms = pc.addTrack(mic)
+            if (ms == null) {
+                Log.w(TAG, "viewer#$viewerId 挂载麦克风轨失败")
+            } else {
+                conn.micSender = ms
+            }
+        }
         AppLogger.webrtc("viewer#$viewerId connection created")
         // V4: host 主连接仅作采集底座不参与协商，控制/音频 DataChannel 必须随每个
         // viewer 连接的 Offer 携带（createDataChannel 在 createOffer 前调用，随 SDP 协商），
@@ -468,8 +474,11 @@ class WebRTCPeer(
         }
         try {
             val audioInit = DataChannel.Init().apply {
-                // 可靠有序：杜绝乱序播放导致的电流声（v1.128 起）
-                ordered = true
+                // v1.133 起为原始 PCM 直传（无状态），v1.134 改无序+重传1次：
+                // 可靠有序在弱网丢包时会触发重传与队头阻塞，抬高音频延迟；无序最多重传 1 次，
+                // 偶发 20ms 掉帧/乱序因无压缩状态不会产生失真
+                ordered = false
+                maxRetransmits = 1
             }
             val audioDc = pc.createDataChannel(SYSTEM_AUDIO_LABEL, audioInit)
             conn.systemAudioChannel = audioDc
@@ -646,6 +655,17 @@ class WebRTCPeer(
             localAudioTrack = track
             micSender = sender
             track.setEnabled(true)
+            // V4: host 主连接不协商 SDP，麦克风轨必须同时挂到每个 viewer 连接
+            // （同一 AudioTrack 可 addTrack 到多个 PeerConnection），并重协商让对端收到
+            viewerConnections.forEach { (vid, conn) ->
+                val vs = conn.pc.addTrack(track)
+                if (vs != null) {
+                    conn.micSender = vs
+                    createOfferFor(vid)
+                } else {
+                    Log.w(TAG, "viewer#$vid 挂载麦克风轨失败")
+                }
+            }
             Log.d(TAG, "麦克风音频轨道已添加")
             true
         } catch (t: Throwable) {
@@ -654,7 +674,7 @@ class WebRTCPeer(
         }
     }
 
-    /** 停止麦克风：移除轨道并释放音频源（调用方随后应触发重协商） */
+    /** 停止麦克风：从主连接与所有 viewer 连接移除轨道并释放音频源（随后各 viewer 连接重协商） */
     fun stopMicAudio() {
         if (disposed) return
         val pc = peerConnection
@@ -664,6 +684,15 @@ class WebRTCPeer(
             }
         }
         micSender = null
+        viewerConnections.forEach { (vid, conn) ->
+            conn.micSender?.let { s ->
+                try { conn.pc.removeTrack(s) } catch (t: Throwable) {
+                    Log.w(TAG, "viewer#$vid 移除麦克风轨道失败: ${t.message}")
+                }
+            }
+            conn.micSender = null
+            createOfferFor(vid)
+        }
         micAudioSource?.dispose()
         micAudioSource = null
         localAudioTrack?.dispose()
@@ -761,34 +790,8 @@ class WebRTCPeer(
 
     // ==================== 系统音频 DataChannel ====================
 
-    /** 共享方：创建系统音频 DataChannel（可靠有序：v1.128 起改为 ordered=true，杜绝乱序导致的电流声） */
-    fun createSystemAudioChannel(): DataChannel? {
-        val pc = peerConnection ?: return null
-        try {
-            val init = DataChannel.Init().apply {
-                // 可靠有序：音频帧带预测器状态头抗丢帧，可靠通道杜绝乱序（不可靠通道乱序到达会按错误顺序播放→电流声）
-                ordered = true
-            }
-            val dc = pc.createDataChannel(SYSTEM_AUDIO_LABEL, init)
-            systemAudioChannel = dc
-            Log.d(TAG, "系统音频 DataChannel 已创建")
-            return dc
-        } catch (t: Throwable) {
-            Log.e(TAG, "创建系统音频 DataChannel 失败: ${t.message}")
-            return null
-        }
-    }
-
-    /** 共享方：发送一段系统音频 PCM 数据（广播到主连接 + 所有 viewer 连接） */
+    /** 共享方：发送一段系统音频 PCM 数据（广播到所有 viewer 连接；V4 下主连接不协商，无主连接通道） */
     fun sendSystemAudio(data: ByteArray) {
-        val buf = DataChannel.Buffer(java.nio.ByteBuffer.wrap(data), true)
-        systemAudioChannel?.let { dc ->
-            if (dc.state() == DataChannel.State.OPEN) {
-                try { dc.send(buf) } catch (t: Throwable) {
-                    Log.w(TAG, "发送系统音频失败: ${t.message}")
-                }
-            }
-        }
         viewerConnections.values.forEach { conn ->
             val dc = conn.systemAudioChannel
             if (dc != null && dc.state() == DataChannel.State.OPEN) {
@@ -803,27 +806,6 @@ class WebRTCPeer(
     }
 
     // ==================== 控制 DataChannel（帧率切换等） ====================
-
-    /** 共享方：创建控制 DataChannel 并注册接收观看方指令 */
-    fun createControlChannel(): DataChannel? {
-        val pc = peerConnection ?: return null
-        try {
-            // 部分可靠：无序 + 最多重传1次。丢包不阻塞后续手势指令（swipe 为完整路径，丢失可由下一指令覆盖），
-            // 网络抖动时依然保持跟手；tap/key 等低频指令丢失概率极低
-            val init = DataChannel.Init().apply {
-                ordered = false
-                maxRetransmits = 1
-            }
-            val dc = pc.createDataChannel(CONTROL_LABEL, init)
-            controlChannel = dc
-            registerControlObserver(dc)
-            Log.d(TAG, "控制 DataChannel 已创建")
-            return dc
-        } catch (t: Throwable) {
-            Log.e(TAG, "创建控制 DataChannel 失败: ${t.message}")
-            return null
-        }
-    }
 
     /** 控制数据通道是否已打开（观看方启用控制模式前检查） */
     fun controlChannelOpen(): Boolean = controlChannel?.state() == DataChannel.State.OPEN
@@ -987,7 +969,7 @@ class WebRTCPeer(
         }
 
         // 系统音频改走 DataChannel（SystemAudioBridge），不再添加麦克风音频轨道
-        Log.d(TAG, "屏幕采集已启动: ${capW}x${capH}@${captureFps}fps (码率上限25M)")
+        Log.d(TAG, "屏幕采集已启动: ${capW}x${capH}@${captureFps}fps (码率上限12M)")
         reportProgress("③e 采集就绪")
         return true
     }
@@ -1229,7 +1211,6 @@ class WebRTCPeer(
     // 腾讯会议式弱网自适应状态（v1.101）
     private var curAdaptLevel = 0
     private var recoverTimer = 0
-    private var lastAdaptDegradation: RtpParameters.DegradationPreference? = null
     private val adaptBitrateCaps = intArrayOf(12_000_000, 9_000_000, 6_000_000, 4_000_000, 2_500_000)
     // 增量丢包统计兜底（fractionLost 未上报时用累计值做差估算）
     private var lastOutSentCum = 0L
@@ -1335,7 +1316,6 @@ class WebRTCPeer(
         } else {
             RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
         }
-        lastAdaptDegradation = degradation
         try {
             videoSender?.let { rtp ->
                 val params = rtp.parameters
@@ -1380,6 +1360,31 @@ class WebRTCPeer(
     fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
         val pc = peerConnection ?: return
         if (disposed) return
+        val sender = videoSender ?: return
+        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum)
+    }
+
+    /**
+     * V4 host 端：对指定 viewer 连接执行弱网自适应（1 对 1 模式的实际视频承载连接）。
+     * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
+     * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
+     */
+    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
+        if (disposed) return
+        val conn = viewerConnections[viewerId] ?: return
+        val sender = conn.videoSender ?: return
+        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum)
+    }
+
+    /** 弱网自适应公共实现：档位状态机 + 码率/降级策略 + 采集分辨率调整（主连接与 viewer 连接共用） */
+    private fun applyNetworkAdaptation(
+        pc: PeerConnection,
+        sender: org.webrtc.RtpSender,
+        tag: String,
+        fractionLossPct: Double,
+        outSentCum: Long,
+        outLostCum: Long
+    ) {
         // 丢包率：优先用 fractionLost（远端 RTCP 直接回报，实时准确）；未上报时用增量累计做差兜底
         var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
         if (fractionLossPct < 0 && lastOutSentCum > 0) {
@@ -1415,7 +1420,7 @@ class WebRTCPeer(
             try {
                 pc.setBitrate(1_500_000, cap, cap)
             } catch (t: Throwable) {
-                Log.w(TAG, "自适应调码率失败: ${t.message}")
+                Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
             }
             // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
             val degradation = if (curAdaptLevel > 0) {
@@ -1423,16 +1428,13 @@ class WebRTCPeer(
             } else {
                 RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
             }
-            lastAdaptDegradation = degradation
             try {
-                videoSender?.let { rtp ->
-                    val params = rtp.parameters
-                    params.degradationPreference = degradation
-                    rtp.parameters = params
-                    Log.d(TAG, "弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
-                }
+                val params = sender.parameters
+                params.degradationPreference = degradation
+                sender.parameters = params
+                Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
             } catch (t: Throwable) {
-                Log.w(TAG, "自适应切分辨率策略失败: ${t.message}")
+                Log.w(TAG, "$tag 自适应切分辨率策略失败: ${t.message}")
             }
             // V3.1: 采集侧降分辨率——弱网档位>=2(码率6M)降720p、>=3(4M)降480p，减轻采集+编码双端负载；
             // 恢复档位0(12M)回升 1080p
@@ -1452,90 +1454,7 @@ class WebRTCPeer(
                         if (capturer != null) {
                             val (capW, capH) = captureSizeForLevel(targetProfile)
                             capturer.changeCaptureFormat(capW, capH, captureFps)
-                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (档位$curAdaptLevel)")
-                        }
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "采集降分辨率失败: ${t.message}")
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * V4 host 端：对指定 viewer 连接执行弱网自适应（1 对 1 模式的实际视频承载连接）。
-     * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
-     * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
-     */
-    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
-        if (disposed) return
-        val conn = viewerConnections[viewerId] ?: return
-        val pc = conn.pc
-        val sender = conn.videoSender ?: return
-        // 丢包率：优先用 fractionLost；未上报时用增量累计做差兜底
-        var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
-        if (fractionLossPct < 0 && lastOutSentCum > 0) {
-            val dSent = outSentCum - lastOutSentCum
-            val dLost = outLostCum - lastOutLostCum
-            if (dSent > 0) sendLossPct = dLost * 100.0 / dSent
-        }
-        lastOutSentCum = outSentCum
-        lastOutLostCum = outLostCum
-        val level = when {
-            sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1
-            sendLossPct >= 3.0 -> 2
-            sendLossPct >= 1.5 -> 1
-            else -> 0
-        }
-        if (level > curAdaptLevel) {
-            curAdaptLevel = level
-            recoverTimer = 0
-        } else if (level < curAdaptLevel) {
-            recoverTimer++
-            if (recoverTimer >= 3) {
-                curAdaptLevel--
-                recoverTimer = 0
-            }
-        }
-        val cap = adaptBitrateCaps[curAdaptLevel]
-        if (lastAdaptBitrateCap != cap) {
-            lastAdaptBitrateCap = cap
-            try {
-                pc.setBitrate(1_500_000, cap, cap)
-            } catch (t: Throwable) {
-                Log.w(TAG, "viewer#$viewerId 自适应调码率失败: ${t.message}")
-            }
-            val degradation = if (curAdaptLevel > 0) {
-                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
-            } else {
-                RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-            }
-            lastAdaptDegradation = degradation
-            try {
-                val params = sender.parameters
-                params.degradationPreference = degradation
-                sender.parameters = params
-                Log.d(TAG, "viewer#$viewerId 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
-            } catch (t: Throwable) {
-                Log.w(TAG, "viewer#$viewerId 自适应切策略失败: ${t.message}")
-            }
-            // 采集侧降分辨率（与主连接共用采集器，弱网降采集分辨率同时减轻两端负载）
-            // V1.120: 与编码负载自适应档位取较大值
-            val weakProfile = captureProfileForLevel(curAdaptLevel)
-            val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
-            if (targetProfile != lastCaptureProfile) {
-                val now = System.currentTimeMillis()
-                val isDowngrade = targetProfile > lastCaptureProfile
-                val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
-                if (isDowngrade || cooldownOk) {
-                    lastCaptureProfile = targetProfile
-                    lastCaptureSwitchMs = now
-                    try {
-                        val capturer = videoCapturer
-                        if (capturer != null) {
-                            val (capW, capH) = captureSizeForLevel(targetProfile)
-                            capturer.changeCaptureFormat(capW, capH, captureFps)
-                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} (viewer#$viewerId 档位$curAdaptLevel)")
+                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} ($tag 档位$curAdaptLevel)")
                         }
                     } catch (t: Throwable) {
                         Log.w(TAG, "采集降分辨率失败: ${t.message}")
@@ -1549,7 +1468,6 @@ class WebRTCPeer(
     fun resetAdaptiveState() {
         curAdaptLevel = 0
         recoverTimer = 0
-        lastAdaptDegradation = null
         lastOutSentCum = 0L
         lastOutLostCum = 0L
         lastAdaptBitrateCap = 0
@@ -1579,8 +1497,6 @@ class WebRTCPeer(
         micAudioSource = null
         localAudioTrack?.dispose()
         surfaceTextureHelper?.dispose()
-        try { systemAudioChannel?.dispose() } catch (_: Throwable) {}
-        systemAudioChannel = null
         systemAudioListener = null
         try { controlChannel?.dispose() } catch (_: Throwable) {}
         controlChannel = null

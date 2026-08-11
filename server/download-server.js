@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.133 音频链路重写：删除 ADPCM 压缩，改原始 PCM 直传\n① 前 5 个版本在自研 IMA ADPCM + DataChannel 链路上逐项验证（帧格式、传输、算法、通道去重均正常），真机仍持续电流声，无法定位根因\n② 本版按你的要求删代码重写音频链路：彻底删除编解码/预测器状态/帧序号/校验和，系统音频以原始 PCM16 直传（48kHz 单声道 768kbps），观看方收到什么播什么，无压缩无状态\n③ 带宽占用增大（弱网下优先保证音频，视频码率自适应），但失真根因被整体移除\n④ 请双端同步更新到 v1.133 测试",
+  changelog: "v1.134 全量优化：\n① 服务器加固：/diag /crash 增加鉴权、心跳超时清理僵尸连接、下载服务器异步化\n② 客户端：连接释放补全（渲染器/轨道/摄像头/服务全释放）、音频通道无序化防丢帧、麦克风多 viewer 挂轨修复、弱网自适应统一、CoordinateMapper 复用\n③ 删除音频诊断遗留代码，清理死代码，相机权限/明文流量收敛",
   forced: false,
 };
 
@@ -44,31 +44,58 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
 let cachedVersion = null;
 let cachedMtime = 0;
+let buildingVersion = null; // 正在计算的 Promise，避免并发重复计算
+const crypto = require("crypto");
 // APK 下载 URL：优先用 DOWNLOAD_BASE 环境变量（公网域名，反代会把 Host 改写为 localhost，
 // 此时用请求 Host 生成的 url 手机端无法访问），否则随请求 Host 动态生成（http/https 统一 https）
-function getVersion(host) {
-  const mtime = fs.statSync(APK).mtimeMs;
-  if (cachedVersion && cachedMtime === mtime) return cachedVersion;
+function fileMd5(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("md5");
+    const s = fs.createReadStream(file);
+    s.on("error", reject);
+    s.on("data", (c) => hash.update(c));
+    s.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+async function buildVersion(host) {
   const gradle = fs.readFileSync(GRADLE, "utf8");
   const vc = /versionCode\s*=\s*(\d+)/.exec(gradle);
   const vn = /versionName\s*=\s*"([^"]+)"/.exec(gradle);
-  const md5 = require("child_process")
-    .execSync(`md5sum "${APK}"`)
-    .toString()
-    .split(/\s+/)[0];
+  const stat = fs.statSync(APK);
+  const md5 = await fileMd5(APK);
   const base = (process.env.DOWNLOAD_BASE || host || "localhost").trim().replace(/^https?:\/\//i, "");
-  cachedVersion = {
+  return {
     versionCode: vc ? parseInt(vc[1], 10) : 0,
     versionName: vn ? vn[1] : "0",
     url: `https://${base}/ScreenShare-allarch-signed.apk`,
     md5,
-    size: fs.statSync(APK).size,
-    note: "音频链路重写版（双端需同步更新）",
+    size: stat.size,
+    note: "全量优化版（双端需同步更新）",
     forced: RELEASE_CONFIG.forced,
     changelog: RELEASE_CONFIG.changelog,
   };
-  cachedMtime = mtime;
-  return cachedVersion;
+}
+async function getVersion(host) {
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(APK).mtimeMs;
+  } catch (e) {
+    cachedVersion = null;
+    return { error: "APK not found" };
+  }
+  if (cachedVersion && cachedMtime === mtime) return cachedVersion;
+  if (!buildingVersion) {
+    buildingVersion = buildVersion(host).then((v) => {
+      cachedVersion = v;
+      cachedMtime = mtime;
+      buildingVersion = null;
+      return v;
+    }).catch((e) => {
+      buildingVersion = null;
+      throw e;
+    });
+  }
+  return buildingVersion;
 }
 
 const server = http.createServer((req, res) => {
@@ -78,9 +105,15 @@ const server = http.createServer((req, res) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${urlPath} -> ${code} (${Date.now() - t0}ms)${req.headers.range ? " range=" + req.headers.range : ""} ua=${(req.headers["user-agent"] || "").slice(0, 80)}`);
   };
   if (urlPath === "/version.json") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(getVersion(req.headers.host)));
-    done(200);
+    getVersion(req.headers.host).then((v) => {
+      res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(v || { error: "internal" }));
+      done(v && v.error ? 500 : 200);
+    }).catch(() => {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "internal" }));
+      done(500);
+    });
     return;
   }
   // 分享链接兜底页：/j?code=XXXX 展示会议号 + 打开 App + 下载 App
@@ -98,9 +131,18 @@ const server = http.createServer((req, res) => {
     done(404);
     return;
   }
+  let stat = null;
+  try {
+    stat = fs.statSync(APK);
+  } catch (e) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("apk missing");
+    done(500);
+    return;
+  }
   if (req.method === "HEAD") {
     res.writeHead(200, {
-      "Content-Length": fs.statSync(APK).size,
+      "Content-Length": stat.size,
       "Content-Type": "application/vnd.android.package-archive",
       "Accept-Ranges": "bytes",
     });
@@ -109,7 +151,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const stat = fs.statSync(APK);
   const total = stat.size;
   const range = req.headers.range;
 

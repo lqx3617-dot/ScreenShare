@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 136
-        versionName = "1.133"
+        versionCode = 137
+        versionName = "1.134"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         ndk {
@@ -43,6 +43,11 @@ android {
             "String",
             "UPDATE_URL",
             "\"${project.findProperty("screenshare.update.url") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "DIAG_TOKEN",
+            "\"${project.findProperty("screenshare.diag.token") as String? ?: ""}\""
         )
     }
 
@@ -75,14 +80,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.11.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
-    // Coroutines
+    // material/lifecycle 的传递依赖，直接声明以固定已缓存版本
+    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
-    // OkHttp —— 口令模式 WebSocket 信令
+    // 信令 WebSocket / 崩溃上报直接使用
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // 单元测试（CoordinateMapper 纯函数）
-    testImplementation("junit:junit:4.13.2")
 }

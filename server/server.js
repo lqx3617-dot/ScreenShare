@@ -34,10 +34,27 @@ const RoomManager = require("./RoomManager");
 const PORT = process.env.PORT || 8080;
 // 诊断模式：DIAG=1 时打印 SDP/候选统计（默认关闭，转发零解析零日志最快）
 const DIAG = process.env.DIAG === "1";
+// /diag 与 /crash 上报鉴权 token：与 App 构建参数 screenshare.diag.token 保持一致；
+// 未配置时拒绝所有上报（防止日志注入），部署需显式设置
+const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
+// 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
+const HEARTBEAT_TIMEOUT = 45 * 1000;
+// 所有 ws 连接（用于心跳扫描）
+const allClients = new Set();
+
+/** 校验诊断上报 token（x-diag-token header） */
+function diagAuthorized(req) {
+  return DIAG_TOKEN !== "" && req.headers["x-diag-token"] === DIAG_TOKEN;
+}
 
 const server = http.createServer((req, res) => {
   // 崩溃日志上报：App Java 层崩溃 POST 到这里落盘
   if (req.method === "POST" && req.url.startsWith("/crash")) {
+    if (!diagAuthorized(req)) {
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("forbidden");
+      return;
+    }
     let body = "";
     req.on("data", (c) => { body = (body + c).slice(-200000); });
     req.on("end", () => {
@@ -57,6 +74,11 @@ const server = http.createServer((req, res) => {
   }
   // 诊断上报：App 检测到软编/CPU瓶颈/高丢包时 POST 到这里落盘
   if (req.method === "POST" && req.url.startsWith("/diag")) {
+    if (!diagAuthorized(req)) {
+      res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("forbidden");
+      return;
+    }
     let body = "";
     req.on("data", (c) => { body = (body + c).slice(-200000); });
     req.on("end", () => {
@@ -78,6 +100,17 @@ const server = http.createServer((req, res) => {
   res.end("ScreenShare signaling server is running");
 });
 
+// 心跳超时扫描：每 30s 检查一次，超时未通信的 ws 强制断开（触发 close → 房间清理）
+setInterval(() => {
+  const now = Date.now();
+  allClients.forEach((ws) => {
+    if (now - (ws.lastSeen || now) > HEARTBEAT_TIMEOUT) {
+      console.log(`[heartbeat] ws ${ws._socketId || ""} idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
+      try { ws.terminate(); } catch (e) {}
+    }
+  });
+}, 30 * 1000).unref();
+
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 512 * 1024 });
 
 const rooms = new RoomManager();
@@ -96,8 +129,12 @@ wss.on("connection", (ws) => {
   let roomCode = null;
   let role = null; // "host" | "viewer"
   let viewerId = null;
+  ws.lastSeen = Date.now();
+  ws._socketId = ws._socket && ws._socket.remotePort;
+  allClients.add(ws);
 
   ws.on("message", (raw) => {
+    ws.lastSeen = Date.now();
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -196,6 +233,7 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    allClients.delete(ws);
     if (!roomCode) return;
     const r = rooms.onDisconnect(roomCode, role, viewerId);
     if (r.removedHost) {
