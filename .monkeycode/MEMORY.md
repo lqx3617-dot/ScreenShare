@@ -195,3 +195,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - viewer 连接初始带宽补 setBitrate(1.5/5/12M) 保守起步，与主连接一致，避免 viewer 刚加入即冲击带宽
   - 环境限制复述：公网大文件下载整包 curl 超时/截断（25MB 约需 >25s），但 Range 分块下载稳定（每块 10MB 完整），手机端下载器断点续传可正常完成；验证 APK 完整性用 Range 分块而非整包
 
+[Project Knowledge Summary]
+- Date: 2026-08-11
+- Context: Discovered by Agent while 根治电流声 v1.128~v1.132 排查 + v1.133 重写
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 电流声排查已排除的环节（勿重复验证）：帧字节错位（正常 1920→484）、乱序/重传（ordered=true）、丢帧（帧序号验证）、双端版本错配（0x01/0x02/0x03 帧标志）、编解码不对称（Python 复刻闭环 SNR 44.2dB）、播放采样率（双端 48000）、多通道交错（v1.132 已做音频 DataChannel 去重，WebRTCPeer.audioReceiveChannel 只保留最新通道）
+  - v1.133 起音频链路重写：**彻底删除 IMA ADPCM 编解码**，系统音频改为原始 PCM16 直传（48kHz 单声道 768kbps，DataChannel ordered=true），观看方 writePcm 直接写 AudioTrack，无编解码无状态，杜绝压缩/状态恢复失真。若后续电流声仍在，方向转向 DataChannel 传输层/多通道，而非编解码
+  - libwebrtc Java API 的 createAudioSource 只能采集麦克风，无法注入系统内录 PCM 到标准音视频轨（无自定义 PCM AudioSource 公开 API），系统音频必须走 DataChannel 通道，此架构决策勿再尝试改为标准轨
+  - 音频诊断双端上报（/diag）：host captureStats()（capFrames/sent/peak/rms/snap）、viewer playbackStats()（playFrames/decoded/dropped/pcmBytes/peak/rms/snap/track），每 5 秒由 MainActivity startAudioDiag 上报
+
+
