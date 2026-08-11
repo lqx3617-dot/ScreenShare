@@ -206,4 +206,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 音频诊断双端上报（/diag）：host captureStats()（capFrames/sent/peak/rms/snap）、viewer playbackStats()（playFrames/decoded/dropped/pcmBytes/peak/rms/snap/track），每 5 秒由 MainActivity startAudioDiag 上报
   - 下载服务器必须用 DOWNLOAD_BASE 环境变量启动（`DOWNLOAD_BASE=<端口>-<env域名>.monkeycode-ai.online node download-server.js`）：反代会把 Host 改写为 localhost，导致 version.json 的 url 字段返回 `https://localhost:8090/...`，手机 App 用该 url 下载时 localhost 指向手机自身必然失败；App 下载 APK 用的是 version.json 的 url 字段（UpdateChecker.downloadAndInstall），修复后需重启下载服务器生效
 
+[Project Knowledge Summary]
+- Date: 2026-08-11
+- Context: Discovered by Agent while 完成 v1.134 全量优化（审查 18 项 + 发布）
+- Category: Operations & Deployment
+- Instructions:
+  - v1.134 信令服务器必须带 DIAG_TOKEN 启动：`DIAG=1 PORT=8095 DIAG_TOKEN=<token> node server.js`，token 与 App 构建参数 `screenshare.diag.token`（在 /workspace/local.properties，git 忽略）保持一致；无 token 时 server.js 对 /diag /crash 全部返回 403（客户端上报会失败），务必双端同步配置
+  - 已删除音频诊断双端上报（v1.134 删 startAudioDiag/stopAudioDiag/振幅/波形快照），/diag 路由保留但客户端不再上报；diag.log 是 v1.130-132 历史数据，勿再依赖其格式
+  - 构建配置 v1.134 结论：okhttp（4.12.0）、constraintlayout、coroutines 是 material/lifecycle/WebRTC 的传递依赖，直接声明以固定版本，**不可移除**（移除后离线构建解析传递版本失败）；R8 未开启（native .so 占体积大头、WebRTC 反射风险高，收益低）
+  - 候选统计已改累计计数（candCountHost/Srflx/Relay），onConnectionFailed 里 groupingBy 单次计算保留
+  - v1.134 签名 APK md5=911a38ccb01e5481e51b179e61230d73，versionCode=137，commit 660450d 已推送
+
 
