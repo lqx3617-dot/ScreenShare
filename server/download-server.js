@@ -44,7 +44,8 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
 let cachedVersion = null;
 let cachedMtime = 0;
-// APK 下载 URL：随请求 Host 动态生成（http/https 由反代层决定，这里统一输出 https 公网地址）
+// APK 下载 URL：优先用 DOWNLOAD_BASE 环境变量（公网域名，反代会把 Host 改写为 localhost，
+// 此时用请求 Host 生成的 url 手机端无法访问），否则随请求 Host 动态生成（http/https 统一 https）
 function getVersion(host) {
   const mtime = fs.statSync(APK).mtimeMs;
   if (cachedVersion && cachedMtime === mtime) return cachedVersion;
@@ -55,7 +56,7 @@ function getVersion(host) {
     .execSync(`md5sum "${APK}"`)
     .toString()
     .split(/\s+/)[0];
-  const base = (host || "").trim() || "localhost";
+  const base = (process.env.DOWNLOAD_BASE || host || "localhost").trim().replace(/^https?:\/\//i, "");
   cachedVersion = {
     versionCode: vc ? parseInt(vc[1], 10) : 0,
     versionName: vn ? vn[1] : "0",
