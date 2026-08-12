@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复视频通话无画面：① 开摄像头/麦克风改为统一一次协商，避免双重 Offer 竞态导致对端协商失败；② 修复 host 端收不到对方摄像头轨（补 onTrack 回调）",
+  changelog: "会议式两级界面：① App 启动进入会议连接页，可创建房间或输入会议号加入；② 连接后进入全屏沉浸会议室，画面最大化；③ 底部悬浮工具条（麦克风/摄像头/结束会议）+ 更多面板收纳相册/远程控制/帧率/比例/全屏/拍照/控制键；④ 退出会议返回连接页",
   forced: false,
 };
 

@@ -2,7 +2,6 @@ package com.screenshare
 
 import android.Manifest
 import android.app.Activity
-import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -12,7 +11,6 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -30,8 +28,6 @@ import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -66,6 +62,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         private const val PERM_REQUEST_ALBUM = 102
         private const val PERM_REQUEST_CAMERA = 103
         private const val PERM_REQUEST_VIDEO_CALL = 104
+
+        const val EXTRA_MEETING_ACTION = "extra_meeting_action"
+        const val EXTRA_MEETING_CODE = "extra_meeting_code"
+        const val ACTION_CREATE = "create"
+        const val ACTION_JOIN = "join"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -73,6 +74,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var peer: WebRTCPeer? = null
     @Volatile private var isHost = false
     private var hostSessionActive = false
+    // 主动离开会议标记：避免 cleanupPeer 触发 onDisconnected 时重复跳转连接页
+    @Volatile private var leavingMeeting = false
 
     // 口令共享（信令服务器模式）
     private var signalClient: SignalClient? = null
@@ -186,20 +189,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         eglBaseContext = EglBase.create().eglBaseContext
 
-        // iOS 液态玻璃：为玻璃卡片/按钮应用背景模糊（backdrop blur）
+        // 液态玻璃：为玻璃卡片/按钮应用背景模糊（backdrop blur）
         applyLiquidGlass(
             binding.llStatus,
-            binding.llSignal,
-            binding.btnSignalHost,
-            binding.btnSignalJoin,
             binding.btnStop
         )
-
-        // 科技感入场动画：标题区/状态卡/会议区错峰淡入上滑
-        val fadeIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide)
-        binding.llTitle.startAnimation(android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide))
-        binding.llStatus.startAnimation(fadeIn)
-        binding.llSignal.startAnimation(android.view.animation.AnimationUtils.loadAnimation(this, R.anim.anim_fade_slide))
 
         checkPermissions()
 
@@ -207,8 +201,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         UpdateChecker.check(this)
 
         binding.btnStop.setOnClickListener { onStopClicked() }
-        binding.btnSignalHost.setOnClickListener { onSignalHostClicked() }
-        binding.btnSignalJoin.setOnClickListener { onSignalJoinClicked() }
+        binding.btnToolbarMore.setOnClickListener { toggleMorePanel() }
+        binding.btnCameraCapture.setOnClickListener { onCameraCaptureClicked() }
         binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(this, manual = true) }
         binding.btnFullscreen.setOnClickListener { enterFullscreen() }
         binding.btnExitFullscreen.setOnClickListener { exitFullscreen() }
@@ -228,14 +222,67 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnCtrlLock.setOnClickListener { onCtrlLockClicked() }
 
-        // 分享链接唤起：冷启动时解析 screenshare://join?code=XXXX
-        handleShareLink(intent)
+        // 会议入口：MeetingActivity 携带 action+code 跳转而来，或分享链接冷启动直达
+        handleMeetingIntent(intent)
+    }
+
+    /**
+     * 会议入口分流：
+     * 1. MeetingActivity 跳转（action=create/join + code）→ 直接进入对应连接流程
+     * 2. 分享链接冷启动 screenshare://join?code=XXXX → 直接加入
+     * 3. 无会议 intent → 返回连接页兜底
+     */
+    private fun handleMeetingIntent(intent: Intent?) {
+        val action = intent?.getStringExtra(EXTRA_MEETING_ACTION)
+        val code = intent?.getStringExtra(EXTRA_MEETING_CODE)
+        if (action == ACTION_CREATE && !code.isNullOrEmpty()) {
+            if (hostSessionActive || signalMode) {
+                // 已在会议中：不重复创建
+                return
+            }
+            binding.llStatus.visibility = View.VISIBLE
+            signalCode = code
+            signalMode = true
+            isHost = true
+            hostSessionActive = true
+            signalPeerReady = false
+            viewerJoined = false
+            signalPendingOfferData = null
+            signalSdpSent = false
+            updateUI("正在创建会议...")
+            connectSignal(code, asHost = true)
+            return
+        }
+        if (action == ACTION_JOIN && !code.isNullOrEmpty()) {
+            if (hostSessionActive || signalMode) {
+                return
+            }
+            binding.llStatus.visibility = View.VISIBLE
+            joinMeetingWithCode(code)
+            return
+        }
+        // 分享链接冷启动：复用现有解析
+        val uri = intent?.data
+        if (uri != null && uri.scheme == "screenshare") {
+            handleShareLink(intent)
+            return
+        }
+        // 无会议意图：兜底返回连接页（正常不会发生，MainActivity 仅由 MeetingActivity 或分享链接进入）
+        binding.root.post {
+            if (!isFinishing && !isDestroyed) {
+                leavingMeeting = true
+                cleanupPeer()
+                resetUI()
+                finish()
+                startActivity(Intent(this, MeetingActivity::class.java))
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleShareLink(intent)
+        handleMeetingIntent(intent)
     }
 
     /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
@@ -633,7 +680,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateVideoCallButton() {
         binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
         binding.btnCamera.setTextColor(
-            if (videoCallOn) Color.parseColor("#FF12865C") else Color.parseColor("#FF111827")
+            if (videoCallOn) Color.parseColor("#FF12865C") else Color.parseColor("#FFFFFFFF")
         )
     }
 
@@ -950,7 +997,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnMic.setTextColor(
             when {
-                !on -> Color.parseColor("#FF111827")
+                !on -> Color.parseColor("#FFFFFFFF")
                 micMuted -> Color.parseColor("#FFD13232")
                 else -> Color.parseColor("#FF12865C")
             }
@@ -1184,8 +1231,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (isHost) {
             updateUI("✅ 屏幕共享进行中...")
             startStatusBreathing()
-            binding.btnStop.visibility = View.VISIBLE
-            binding.btnStop.isEnabled = true
+            enterMeetingUI()
             binding.btnMic.visibility = View.VISIBLE
             binding.btnCamera.visibility = View.VISIBLE
             updateMicButton()
@@ -1243,29 +1289,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
 
     // ======================== 会议号连接（信令服务器） ========================
-
-    /** 快速会议：自动生成 4 位数字会议号，弹窗展示可复制，创建房间并开始共享 */
-    private fun onSignalHostClicked() {
-        // 生成 4 位数字会议号（类似腾讯会议）
-        val code = generateMeetingCode()
-        signalCode = code
-        signalMode = true
-        isHost = true
-        hostSessionActive = true
-        signalPeerReady = false
-        viewerJoined = false
-        signalPendingOfferData = null
-        signalSdpSent = false
-
-        binding.btnSignalHost.isEnabled = false
-        binding.btnSignalJoin.isEnabled = false
-
-        // 先建立信令连接（核心流程优先，避免任何弹窗异常影响连接）
-        updateUI("正在创建会议...")
-        connectSignal(code, asHost = true)
-        // 会议号弹窗延后到屏幕授权完成后显示（见 onActivityResult），
-        // 避免会议号弹窗与系统授权框叠放导致授权框被遮挡、用户漏点"立即开始"
-    }
 
     /** 弹窗展示生成的会议号，支持一键复制到剪贴板 */
     private fun showMeetingCodeDialog(code: String) {
@@ -1338,40 +1361,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         meetingCodeDialog = null
     }
 
-    /** 加入会议：弹出美化后的自定义输入弹窗，输入 4 位会议号后加入 */
-    private fun onSignalJoinClicked() {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setContentView(R.layout.dialog_join_meeting)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
-
-        val input = dialog.findViewById<EditText>(R.id.etMeetingCode)
-        // 键盘「完成」键等同于点击加入
-        input.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
-                dialog.findViewById<Button>(R.id.btnJoinSubmit).performClick()
-                true
-            } else false
-        }
-
-        dialog.findViewById<Button>(R.id.btnJoinSubmit).setOnClickListener {
-            val code = input.text.toString().trim()
-            if (!validateSignalCode(code)) {
-                // 会议号非法：震一下提示，保持弹窗继续输入
-                input.requestFocus()
-                input.selectAll()
-                return@setOnClickListener
-            }
-            dialog.dismiss()
-            joinMeetingWithCode(code)
-        }
-        dialog.findViewById<TextView>(R.id.btnJoinCancel).setOnClickListener { dialog.dismiss() }
-
-        dialog.show()
-        input.postDelayed({ input.requestFocus() }, 200)
-    }
-
     /** 携带会议号执行加入会议流程（Host 视角为 false） */
     private fun joinMeetingWithCode(code: String) {
         signalCode = code
@@ -1385,9 +1374,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         signalSdpSent = false
         authorizationRequested = false
 
-        binding.btnSignalHost.isEnabled = false
-        binding.btnSignalJoin.isEnabled = false
-
+        binding.llStatus.visibility = View.VISIBLE
         updateUI("正在加入会议（$code）...")
         connectSignal(code, asHost = false)
     }
@@ -1411,7 +1398,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun connectSignal(code: String, asHost: Boolean) {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
+            leavingMeeting = true
             resetUI()
+            if (!isFinishing && !isDestroyed) {
+                restoreSystemBars()
+                startActivity(Intent(this, MeetingActivity::class.java))
+                finish()
+            }
             return
         }
         val client = SignalClient(BuildConfig.SIGNAL_URL, object : SignalClient.Listener {
@@ -1492,8 +1485,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             override fun onHostLeft() {
                 runOnUiThread {
                     updateUI("❌ 共享方已离开")
-                    cleanupPeer()
-                    resetUI()
+                    handleMeetingFailure()
                 }
             }
 
@@ -1510,8 +1502,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             override fun onError(message: String) {
                 runOnUiThread {
                     updateUI("❌ $message")
-                    cleanupPeer()
-                    resetUI()
+                    handleMeetingFailure()
                 }
             }
 
@@ -1519,8 +1510,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 runOnUiThread {
                     if (signalMode) {
                         updateUI("❌ 信令连接已关闭: $reason")
-                        cleanupPeer()
-                        resetUI()
+                        handleMeetingFailure()
                     }
                 }
             }
@@ -1615,7 +1605,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun cleanupPeer() {
         stopAdaptiveLoop()
         albumCancel = true
-        binding.btnAlbum.visibility = View.GONE
         peer?.disconnect()
         peer = null
         signalClient?.disconnect()
@@ -1795,8 +1784,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             dismissMeetingCodeDialog()
             // 状态点呼吸发光，增强已连接的科技感反馈
             startStatusBreathing()
-            binding.btnStop.visibility = View.VISIBLE
-            binding.btnStop.isEnabled = true
+            enterMeetingUI()
             binding.btnMic.visibility = View.VISIBLE
             binding.btnCamera.visibility = View.VISIBLE
             updateMicButton()
@@ -1822,6 +1810,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
             resetUI()
+            // 会议异常断开：返回连接页（主动离开时不重复跳转）
+            if (!leavingMeeting && !isFinishing && !isDestroyed) {
+                restoreSystemBars()
+                startActivity(Intent(this, MeetingActivity::class.java))
+                finish()
+            }
         }
     }
 
@@ -1913,6 +1907,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         videoScaleDetector = scaleDetector
 
         renderer.setOnTouchListener { v, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) onVideoTapDown()
+            if (event.actionMasked == MotionEvent.ACTION_UP) onVideoTapUp()
             if (isControlMode && !isHost && event.pointerCount == 1) {
                 handleControlTouch(event, renderer)
                 true
@@ -2050,11 +2046,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
 
         // 隐藏所有其他 UI
-        binding.llTitle.visibility = View.GONE
         binding.llStatus.visibility = View.GONE
         binding.flRemoteVideo.visibility = View.GONE
         binding.tvZoomHint.visibility = View.GONE
-        binding.llSignal.visibility = View.GONE
+        binding.llToolbar.visibility = View.GONE
+        binding.llMorePanel.visibility = View.GONE
         binding.tvScanResult.visibility = View.GONE
         binding.btnStop.visibility = View.GONE
         binding.btnFullscreen.visibility = View.GONE
@@ -2151,6 +2147,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         scaleDetector.isQuickScaleEnabled = true
 
         renderer.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) onVideoTapDown()
+            if (event.actionMasked == MotionEvent.ACTION_UP) onVideoTapUp()
             if (isControlMode && !isHost && event.pointerCount == 1) {
                 handleControlTouch(event, renderer)
                 true
@@ -2215,22 +2213,22 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         unbindFullscreenSink()
 
         // 恢复 UI（根据当前状态显示应显示的）
-        binding.llTitle.visibility = View.VISIBLE
         binding.llStatus.visibility = View.VISIBLE
+        binding.llToolbar.visibility = View.VISIBLE
         if (remoteVideoTrack != null) {
             binding.flRemoteVideo.visibility = View.VISIBLE
             binding.tvZoomHint.visibility = View.VISIBLE
             binding.btnFullscreen.visibility = View.VISIBLE
-            // 控制按钮移回视频框内（顶部左侧）
+            // 控制按钮移回更多面板（左列）
             val lp = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
             lp.setMargins(0, 0, 0, 0)
-            moveView(binding.llVideoBtns, binding.flRemoteVideo, lp)
+            moveView(binding.llVideoBtns, binding.llMorePanel, lp)
 
-            // 完整/铺满按钮移回视频框右上角
+            // 完整/铺满按钮移回更多面板（中列）
             binding.btnAspectToggle.visibility = View.VISIBLE
             val rlp = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2238,12 +2236,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             )
             rlp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
             rlp.setMargins(0, 10, 10, 0)
-            moveView(binding.btnAspectToggle, binding.flRemoteVideo, rlp)
+            moveView(binding.btnAspectToggle, binding.llRemoteRight, rlp)
 
             // 恢复控制按钮原始尺寸
             restoreFullscreenButtons()
         }
-        binding.llSignal.visibility = View.VISIBLE
         if (peer != null) {
             binding.btnStop.visibility = View.VISIBLE
         }
@@ -2532,11 +2529,125 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         adaptiveThread = null
     }
 
-    // ======================== 停止 ========================
+    // ======================== 结束会议 ========================
     private fun onStopClicked() {
+        AlertDialog.Builder(this, R.style.Theme_ScreenShare_Dialog)
+            .setTitle("结束会议")
+            .setMessage("确定要结束当前会议吗？")
+            .setPositiveButton("结束", { _, _ -> leaveMeeting("已结束会议") })
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 结束会议：清理会话并返回会议连接页 */
+    private fun leaveMeeting(message: String) {
+        leavingMeeting = true
+        stopToolbarAutoHide()
         cleanupPeer()
         resetUI()
-        updateUI("已停止共享")
+        updateUI(message)
+        if (isFinishing || isDestroyed) return
+        restoreSystemBars()
+        startActivity(Intent(this, MeetingActivity::class.java))
+        finish()
+    }
+
+    /** 会议异常结束：清理并返回连接页 */
+    private fun handleMeetingFailure() {
+        leavingMeeting = true
+        cleanupPeer()
+        resetUI()
+        if (isFinishing || isDestroyed) return
+        restoreSystemBars()
+        startActivity(Intent(this, MeetingActivity::class.java))
+        finish()
+    }
+
+    // ======================== 悬浮工具条 ========================
+
+    /** 更多面板展开/收起 */
+    private fun toggleMorePanel() {
+        val show = binding.llMorePanel.visibility != View.VISIBLE
+        binding.llMorePanel.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    /** 工具条「拍照」：调起共享方摄像头拍照并上传（viewer 主动发起，等价原 btnCameraCapture） */
+    private fun onCameraCaptureClicked() {
+        val p = peer ?: return
+        p.sendControl("""{"type":"camera","action":"capture","mode":"both"}""")
+        Toast.makeText(this, "已请求共享方拍照", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 进入会议后进入沉浸全屏并显示工具条 */
+    private fun enterMeetingUI() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { c ->
+                c.hide(WindowInsets.Type.systemBars())
+                c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility =
+                (View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
+        }
+        binding.llStatus.visibility = View.VISIBLE
+        binding.llToolbar.visibility = View.VISIBLE
+        startToolbarAutoHide()
+    }
+
+    /** 退出会议沉浸（返回连接页前恢复系统栏） */
+    private fun restoreSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.systemBars())
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+        }
+    }
+
+    // 工具条自动隐藏（3 秒无操作隐藏，点击画面唤出）
+    private var toolbarHideRunnable: Runnable? = null
+    private var toolbarHideStarted = false
+    private var toolbarTapDownTime = 0L
+
+    private fun startToolbarAutoHide() {
+        if (toolbarHideStarted) return
+        toolbarHideStarted = true
+        scheduleToolbarHide()
+    }
+
+    private fun scheduleToolbarHide() {
+        binding.root.removeCallbacks(toolbarHideRunnable)
+        val r = Runnable {
+            if (!isControlMode && binding.llMorePanel.visibility != View.VISIBLE) {
+                binding.llToolbar.visibility = View.GONE
+            }
+        }
+        toolbarHideRunnable = r
+        binding.root.postDelayed(r, 3000)
+    }
+
+    private fun stopToolbarAutoHide() {
+        toolbarHideStarted = false
+        binding.root.removeCallbacks(toolbarHideRunnable)
+    }
+
+    /** 画面点击唤出工具条：在 renderer 触摸监听的 ACTION_DOWN/UP 中调用 */
+    private fun onVideoTapDown() {
+        toolbarTapDownTime = android.os.SystemClock.uptimeMillis()
+    }
+
+    private fun onVideoTapUp() {
+        val dt = android.os.SystemClock.uptimeMillis() - toolbarTapDownTime
+        if (dt < 200) {
+            binding.llToolbar.visibility = View.VISIBLE
+            scheduleToolbarHide()
+        }
     }
 
     // ======================== Activity Result ========================
@@ -2559,9 +2670,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             startHostSession()
         } else if (requestCode == ScreenCapturerFactory.REQUEST_MEDIA_PROJECTION) {
-            // 用户取消/拒绝了屏幕共享授权，明确提示（不再静默卡住）
-            updateUI("❌ 未授权屏幕共享，对方将无法看到画面，请重新创建会议")
+            // 用户取消/拒绝了屏幕共享授权，明确提示（不再静默卡住），返回连接页
             Toast.makeText(this, "未授权屏幕共享，对方将无法看到画面", Toast.LENGTH_LONG).show()
+            leavingMeeting = true
+            cleanupPeer()
+            resetUI()
+            updateUI("❌ 未授权屏幕共享")
+            if (!isFinishing && !isDestroyed) {
+                restoreSystemBars()
+                startActivity(Intent(this, MeetingActivity::class.java))
+                finish()
+            }
         }
     }
 
@@ -2635,9 +2754,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         exitFullscreen()
         releaseFullscreenRenderer()
         releaseCameraPip()
-        binding.btnSignalHost.isEnabled = true
-        binding.btnSignalJoin.isEnabled = true
         binding.btnStop.visibility = View.GONE
+        binding.llToolbar.visibility = View.GONE
+        binding.llMorePanel.visibility = View.GONE
         binding.flRemoteVideo.visibility = View.GONE
         binding.tvScanResult.visibility = View.GONE
         binding.tvZoomHint.visibility = View.GONE
@@ -2655,9 +2774,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         videoCallOn = false
         binding.btnCamera.visibility = View.GONE
         binding.btnMic.visibility = View.GONE
-        binding.llTitle.visibility = View.VISIBLE
         binding.llStatus.visibility = View.VISIBLE
-        binding.llSignal.visibility = View.VISIBLE
         videoRenderer?.scaleX = 1f
         videoRenderer?.scaleY = 1f
         videoRenderer?.release()
