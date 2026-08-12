@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复平板拍照失败：JPEG 输出尺寸改用不超过 1920 的常规尺寸（部分平板对超大尺寸/无预览配置报 Function not implemented）",
+  changelog: "修复平板拍照失败：会话增加预览 Surface（SurfaceTexture）流，规避平板 HAL 拒绝仅 JPEG 无预览配置的 Function not implemented",
   forced: false,
 };
 

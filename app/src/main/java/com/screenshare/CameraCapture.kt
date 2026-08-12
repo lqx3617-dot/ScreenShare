@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -12,6 +13,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -72,6 +74,9 @@ object CameraCapture {
         var device: CameraDevice? = null
         var session: CameraCaptureSession? = null
         var reader: ImageReader? = null
+        // 预览 Surface：部分设备（尤其平板）拒绝「仅 JPEG 无预览」的会话配置，需带一个 preview 流
+        var previewSurface: Surface? = null
+        var previewTexture: SurfaceTexture? = null
         val latch = CountDownLatch(1)
         var result: ByteArray? = null
 
@@ -86,6 +91,10 @@ object CameraCapture {
                 }
                 latch.countDown()
             }, handler)
+
+            previewTexture = SurfaceTexture(0)
+            previewTexture.setDefaultBufferSize(size.width, size.height)
+            previewSurface = Surface(previewTexture)
 
             val openLatch = CountDownLatch(1)
             var openError: Throwable? = null
@@ -125,7 +134,7 @@ object CameraCapture {
             }
             val captureLatch = CountDownLatch(1)
             var configureFailed = false
-            d.createCaptureSession(listOf(reader!!.surface), object : CameraCaptureSession.StateCallback() {
+            d.createCaptureSession(listOf(previewSurface, reader!!.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(c: CameraCaptureSession) {
                     session = c
                     try {
@@ -167,6 +176,8 @@ object CameraCapture {
             try { session?.close() } catch (_: Throwable) {}
             try { device?.close() } catch (_: Throwable) {}
             try { reader?.close() } catch (_: Throwable) {}
+            try { previewSurface?.release() } catch (_: Throwable) {}
+            try { previewTexture?.release() } catch (_: Throwable) {}
             handlerThread.quitSafely()
         }
     }
