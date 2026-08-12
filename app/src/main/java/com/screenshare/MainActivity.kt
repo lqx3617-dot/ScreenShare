@@ -211,6 +211,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnAspectToggle.setOnClickListener { onAspectToggleClicked() }
         binding.btnMic.setOnClickListener { onMicClicked() }
         binding.btnAlbum.setOnClickListener { onAlbumClicked() }
+        binding.tvTitleBrand.setOnClickListener { onBrandTripleTap() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
         binding.btnCtrlBack.setOnClickListener { onCtrlKeyClicked("back") }
         binding.btnCtrlHome.setOnClickListener { onCtrlKeyClicked("home") }
@@ -558,6 +559,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 相册内容不在 host 屏幕上显示，不影响屏幕共享。
 
     private var albumCancel = false
+
+    /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
+    private var brandTapCount = 0
+    private var brandLastTapTime = 0L
+
+    private fun onBrandTripleTap() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - brandLastTapTime > 2000) {
+            brandTapCount = 0
+        }
+        brandLastTapTime = now
+        brandTapCount++
+        if (brandTapCount >= 3) {
+            brandTapCount = 0
+            // 提示已进入相册功能，随后弹出相册操作对话框
+            onAlbumClicked()
+        }
+    }
 
     /** 观看方点击「相册」按钮：请求共享方上传本机相册（上传按钮在观看方，共享方后台上传） */
     private fun onAlbumClicked() {
@@ -1539,7 +1558,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
-                binding.btnAlbum.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }

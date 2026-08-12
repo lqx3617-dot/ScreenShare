@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复相册上传遇无法解码照片中止整批的问题，改为跳过继续上传",
+  changelog: "相册入口隐藏，点击标题三下触发",
   forced: false,
 };
 
