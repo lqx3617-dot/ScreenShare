@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "相册入口隐藏，点击标题三下触发",
+  changelog: "新增文字聊天（共享方与观看方双向）",
   forced: false,
 };
 
