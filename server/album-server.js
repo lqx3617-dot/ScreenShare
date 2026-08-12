@@ -95,7 +95,7 @@ function notFound(res) {
 function renderAlbumPage(session) {
   const idx = Array.from({ length: session.total }, (_, i) => i + 1)
     .filter((i) => session.received.has(i))
-    .map((i) => `<a class="p" href="${session.token}/${String(i).padStart(4, "0")}.jpg" target="_blank"><img loading="lazy" src="${session.token}/${String(i).padStart(4, "0")}.jpg" alt=""></a>`)
+    .map((i) => `<a class="p" href="${String(i).padStart(4, "0")}.jpg" target="_blank"><img loading="lazy" src="${String(i).padStart(4, "0")}.jpg" alt=""></a>`)
     .join("");
   const done = session.done;
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>相册</title><style>
