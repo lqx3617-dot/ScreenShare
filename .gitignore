@@ -26,3 +26,8 @@ keystore.properties
 /server/crashes/
 # 诊断上报日志（运行时产物，不入库）
 /server/diag/
+
+# 相册上传数据（用户隐私照片，不入库）
+/albums/
+# 签名 APK 归档
+/apk/
