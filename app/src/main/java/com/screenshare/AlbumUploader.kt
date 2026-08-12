@@ -100,11 +100,20 @@ object AlbumUploader {
         val token = createResp.getString("token")
 
         var uploaded = 0
+        var skipped = 0
         val total = uris.size
         try {
             for (uri in uris) {
                 if (cancel()) throw java.io.IOException("已取消")
-                val b64 = compressToBase64(context, uri)
+                // 单张照片无法解码（损坏/特殊格式/云同步占位）时跳过该张继续，不中止整批
+                val b64 = try {
+                    compressToBase64(context, uri)
+                } catch (t: Throwable) {
+                    skipped++
+                    Log.w(TAG, "跳过第 ${uploaded + 1} 张（无法解码）: ${t.message}")
+                    listener.onProgress(++uploaded, total)
+                    continue
+                }
                 var ok = false
                 for (attempt in 1..3) {
                     if (cancel()) throw java.io.IOException("已取消")
@@ -130,6 +139,8 @@ object AlbumUploader {
                 uploaded++
                 listener.onProgress(uploaded, total)
             }
+            // 全部照片都无法解码：按空相册处理
+            if (skipped == total) throw EmptyAlbumException()
         } catch (t: Throwable) {
             // 尽力 finish，让服务端会话进入完成态可查看（已上传部分）
             try {
