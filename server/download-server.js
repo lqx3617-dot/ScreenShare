@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.136 新增相册上传查看：\n① 共享方在共享界面点「上传相册」，后台读取本机整个相册（不在屏幕上显示，不影响共享画面）\n② 照片压缩到 2048px 后上传到照片服务器，生成带随机 token 的网页链接，一键复制发送\n③ 观看方用手机浏览器打开链接即可查看网页版相册（缩略图网格 + 点击全屏看原图，24 小时有效）\n④ 请双端同步更新到 v1.136 测试",
+  changelog: "更新弹窗不再显示更新说明文案",
   forced: false,
 };
 

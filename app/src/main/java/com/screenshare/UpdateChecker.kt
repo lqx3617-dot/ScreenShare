@@ -106,20 +106,16 @@ object UpdateChecker {
     }
 
     /**
-     * 更新提示：展示版本对比、更新说明（changelog/note）与包大小；
+     * 更新提示：展示版本对比与包大小；不展示更新说明文案。
      * forced=true 时禁止跳过（无「暂不」按钮），仅提供「立即更新」。
      */
     private fun promptUpdate(context: Context, info: JSONObject) {
         val forced = info.optBoolean("forced", false)
         val versionName = info.optString("versionName", "新")
         val sizeText = formatSize(info.optLong("size", 0L))
-        val changelog = info.optString("changelog", "")
-            .ifEmpty { info.optString("note", "有新版本可用") }
         val msg = buildString {
             append("当前版本 v${BuildConfig.VERSION_NAME} → 新版本 v$versionName")
             if (sizeText.isNotEmpty() && sizeText != "0 B") append("（$sizeText）")
-            append("\n\n更新说明：\n")
-            append(changelog)
             if (forced) append("\n\n此版本为强制更新，请尽快完成更新。")
         }
         val builder = AlertDialog.Builder(context)
