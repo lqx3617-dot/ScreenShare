@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "修复平板拍照失败：会话增加预览 Surface（SurfaceTexture）流，规避平板 HAL 拒绝仅 JPEG 无预览配置的 Function not implemented",
+  changelog: "修复拍照黑图：先启动预览流让自动曝光收敛（600ms）再抓拍 JPEG",
   forced: false,
 };
 

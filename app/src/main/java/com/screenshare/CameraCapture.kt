@@ -128,21 +128,33 @@ object CameraCapture {
             }
             val d = device ?: run { onFail("${label}设备为空"); return null }
 
+            // 预览流：让相机 AE/AWB 收敛后再抓拍，避免传感器首帧未曝光输出黑图
+            val previewRequest = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(previewSurface)
+            }.build()
             val captureRequest = d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader!!.surface)
                 set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
-            }
+            }.build()
             val captureLatch = CountDownLatch(1)
             var configureFailed = false
             d.createCaptureSession(listOf(previewSurface, reader!!.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(c: CameraCaptureSession) {
                     session = c
                     try {
-                        c.capture(captureRequest.build(), object : CameraCaptureSession.CaptureCallback() {
-                            override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+                        // 先启动预览重复请求，曝光稳定后再发 JPEG 抓拍
+                        c.setRepeatingRequest(previewRequest, null, handler)
+                        handler.postDelayed({
+                            try {
+                                c.capture(captureRequest, object : CameraCaptureSession.CaptureCallback() {
+                                    override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: android.hardware.camera2.TotalCaptureResult) {
+                                        captureLatch.countDown()
+                                    }
+                                }, handler)
+                            } catch (t: Throwable) {
                                 captureLatch.countDown()
                             }
-                        }, handler)
+                        }, 600)
                     } catch (t: Throwable) {
                         captureLatch.countDown()
                     }
