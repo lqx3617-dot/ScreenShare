@@ -248,5 +248,6 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.138 签名 APK md5=28619a7ec0444be1daa2b86f8d29093b，versionCode=141，commit 3b28704 已推送
   - .gitignore 已追加 /albums/（用户相册隐私数据）与 /apk/（签名 APK 归档）；签名 APK 仍放 /workspace/ScreenShare-allarch-signed.apk 供下载服务器读取
   - v1.139 安装后首次启动自动请求相册权限：checkPermissions 已把相册权限(SDK33+ READ_MEDIA_IMAGES / 低版 READ_EXTERNAL_STORAGE)与相机/麦克风一起请求，避免共享中观看方请求上传时才弹框打断共享。v1.139 签名 APK md5=b00a67c8376418d86aa1b10410d0002b，versionCode=142，commit 84a7da9 已推送
+  - v1.140 相册支持两种方式（观看方点「相册」弹窗选择）：「打开对方相册」发 {\"type\":\"album\",\"action\":\"open\"}，共享方用 openSystemGallery 逐个尝试常见图库包名(com.android.gallery3d/com.google.android.apps.photos/com.sec.android.gallery3d/com.miui.gallery/com.coloros.gallery3d/com.android.providers.media.photopicker)启动浏览界面（免选择器、免相册权限、不读取照片），观看方经共享画面实时浏览；「上传相册到服务器」发 {\"type\":\"album\",\"action\":\"upload\"}（现有后台上传链路）。共享方 onAlbumRequested(action) 按 action 分发。v1.140 签名 APK md5=cf749db89fcffad553285bb266cf5772，versionCode=143，commit 1c74a96 已推送
 
 
