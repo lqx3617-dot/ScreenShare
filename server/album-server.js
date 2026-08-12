@@ -130,11 +130,16 @@ const server = http.createServer((req, res) => {
         const session = { token, createdAt: Date.now(), total: 0, received: new Set(), done: false };
         sessions.set(token, session);
         fs.mkdirSync(sessionDir(token), { recursive: true });
+        persistSession(session);
+        console.log(`[album] ${new Date().toISOString()} create ${token}`);
         return json(res, 200, { token });
       }
       const token = String(body.token || "");
       const session = loadSession(token);
-      if (!session) return json(res, 404, { error: "session not found" });
+      if (!session) {
+        console.log(`[album] ${new Date().toISOString()} session-not-found action=${action} token=${token}`);
+        return json(res, 404, { error: "session not found" });
+      }
       if (action === "upload") {
         const index = parseInt(body.index, 10);
         const data = String(body.data || "");
@@ -147,18 +152,24 @@ const server = http.createServer((req, res) => {
           session.received.add(index);
           session.total = Math.max(session.total, index);
           persistSession(session);
+          console.log(`[album] ${new Date().toISOString()} upload ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
           return json(res, 200, { ok: true, received: session.received.size, total: session.total });
         } catch (e) {
+          console.log(`[album] ${new Date().toISOString()} upload-write-fail ${token} idx=${index}: ${e.message}`);
           return json(res, 500, { error: "write failed" });
         }
       }
       if (action === "finish") {
         session.done = true;
         persistSession(session);
+        console.log(`[album] ${new Date().toISOString()} finish ${token}`);
         return json(res, 200, { ok: true, url: `https://${url.host}/${token}/` });
       }
       return json(res, 400, { error: "unknown action" });
-    }).catch((e) => json(res, 400, { error: e.message }));
+    }).catch((e) => {
+      console.log(`[album] ${new Date().toISOString()} body-error: ${e.message}`);
+      json(res, 400, { error: e.message });
+    });
     return;
   }
 
