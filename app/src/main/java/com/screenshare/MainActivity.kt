@@ -575,6 +575,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var cameraUploadCancel = false
     // 相机权限申请时等待的拍照模式（权限授权后据此继续）
     private var pendingCameraFrontOnly = false
+    // 是否已请求过相机权限（区分「从未请求」与「永久拒绝」）
+    private var cameraPermissionRequested = false
 
     /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
     private var brandTapCount = 0
@@ -709,10 +711,41 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             pendingCameraFrontOnly = frontOnly
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
+            requestCameraPermissionOrGuide()
             return
         }
         startCameraCapture(frontOnly)
+    }
+
+    /** 相机权限申请：能弹系统授权框就直接请求；已永久拒绝则引导去系统设置开启 */
+    private fun requestCameraPermissionOrGuide() {
+        if (!cameraPermissionRequested || ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+            cameraPermissionRequested = true
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
+            return
+        }
+        showCameraPermissionGuide()
+    }
+
+    /** 引导用户到系统设置开启相机权限 */
+    private fun showCameraPermissionGuide() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("需要相机权限")
+            .setMessage("远程拍照需要在系统设置中允许本应用使用相机。请点击「去设置」并开启相机权限。")
+            .setPositiveButton("去设置") { _, _ ->
+                try {
+                    startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", packageName, null)
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (t: Throwable) {
+                    Toast.makeText(this, "无法打开设置，请手动到应用权限中开启相机", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 后台拍照（后置+前置或仅前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
