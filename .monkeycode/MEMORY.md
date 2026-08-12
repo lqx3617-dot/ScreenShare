@@ -236,4 +236,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - 权限版本差异：Android 13+ 用 READ_MEDIA_IMAGES，Android 12- 用 READ_EXTERNAL_STORAGE（Manifest maxSdkVersion=32）；主界面 checkPermissions 仍请求 CAMERA 但 Manifest 已删该权限（v1.134），属无害遗留
   - v1.136 签名 APK md5=30bbcc0e411f8d59b714ff6c5432bc5c，versionCode=139，commit eabcc3c 已推送；spec 位于 .monkeycode/specs/album-upload-view/
 
+[Project Knowledge Summary]
+- Date: 2026-08-12
+- Context: Discovered by Agent while 实现 v1.137 更新弹窗去说明与 v1.138 相册上传改观看方触发
+- Category: Operations & Deployment
+- Instructions:
+  - v1.137 更新弹窗已移除 changelog 展示（UpdateChecker.promptUpdate 只留版本对比+包大小+强制更新提示），RELEASE_CONFIG.changelog 仅作内部记录
+  - v1.137 签名 APK md5=2b38cfafb1501c9879f5303bd45acaf6，versionCode=140，commit a86228e 已推送
+  - 相册网页黑屏根因（v1.138 前修复）：album-server.js renderAlbumPage 的 img/href 曾用 `token/0001.jpg` 相对路径，页面在 `/TOKEN/` 下会被解析为 `/TOKEN/TOKEN/0001.jpg`→404→黑底整屏黑；须用纯文件名相对路径。修复 commit 1ceab8d（纯服务器端，App 无需升级）
+  - v1.138 相册交互改为：上传按钮在观看方（llVideoBtns 内「相册」），观看方点击发控制指令 `{"type":"album","action":"upload"}`，共享方收到后检查相册权限（无则申请，系统弹窗）→ 后台静默上传（无进度对话框、不打断共享）→ 完成/失败回发 `{"type":"album-result","url"|"error":...}`，观看方 handleControlReply 弹窗展示链接。共享方已删本地上传按钮
+  - v1.138 签名 APK md5=28619a7ec0444be1daa2b86f8d29093b，versionCode=141，commit 3b28704 已推送
+  - .gitignore 已追加 /albums/（用户相册隐私数据）与 /apk/（签名 APK 归档）；签名 APK 仍放 /workspace/ScreenShare-allarch-signed.apk 供下载服务器读取
+
 
