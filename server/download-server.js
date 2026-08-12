@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "新增双向视频通话：开启摄像头互相看到对方人脸（右上角小窗）；开摄像头自动开麦、关摄像头自动关麦，也可单独用麦克风语音对讲",
+  changelog: "修复视频通话无画面：① 开摄像头/麦克风改为统一一次协商，避免双重 Offer 竞态导致对端协商失败；② 修复 host 端收不到对方摄像头轨（补 onTrack 回调）",
   forced: false,
 };
 

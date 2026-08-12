@@ -439,6 +439,12 @@ class WebRTCPeer(
                     listener.onViewerCameraTrack(viewerId, track)
                 }
             }
+            override fun onTrack(transceiver: RtpTransceiver?) {
+                val vt = transceiver?.receiver?.track() as? VideoTrack
+                if (vt != null) {
+                    listener.onViewerCameraTrack(viewerId, vt)
+                }
+            }
             override fun onDataChannel(channel: org.webrtc.DataChannel?) {
                 handleViewerDataChannel(viewerId, channel)
             }
@@ -723,7 +729,7 @@ class WebRTCPeer(
      * 成功后调用方需触发 [renegotiate] 让对端收到含音频轨道的新 Offer。
      * @return true 表示轨道已添加；false 表示失败（调用方应提示用户）。
      */
-    fun startMicAudio(): Boolean {
+    fun startMicAudio(negotiate: Boolean = true): Boolean {
         if (disposed) return false
         val pc = peerConnection ?: return false
         if (micAudioSource != null) return true
@@ -748,12 +754,12 @@ class WebRTCPeer(
             micSender = sender
             track.setEnabled(true)
             // V4: host 主连接不协商 SDP，麦克风轨必须同时挂到每个 viewer 连接
-            // （同一 AudioTrack 可 addTrack 到多个 PeerConnection），并重协商让对端收到
+            // （同一 AudioTrack 可 addTrack 到多个 PeerConnection）
             viewerConnections.forEach { (vid, conn) ->
                 val vs = conn.pc.addTrack(track)
                 if (vs != null) {
                     conn.micSender = vs
-                    createOfferFor(vid)
+                    if (negotiate) createOfferFor(vid)
                 } else {
                     Log.w(TAG, "viewer#$vid 挂载麦克风轨失败")
                 }
@@ -766,8 +772,8 @@ class WebRTCPeer(
         }
     }
 
-    /** 停止麦克风：从主连接与所有 viewer 连接移除轨道并释放音频源（随后各 viewer 连接重协商） */
-    fun stopMicAudio() {
+    /** 停止麦克风：从主连接与所有 viewer 连接移除轨道并释放音频源 */
+    fun stopMicAudio(negotiate: Boolean = true) {
         if (disposed) return
         val pc = peerConnection
         micSender?.let { s ->
@@ -783,7 +789,7 @@ class WebRTCPeer(
                 }
             }
             conn.micSender = null
-            createOfferFor(vid)
+            if (negotiate) createOfferFor(vid)
         }
         micAudioSource?.dispose()
         micAudioSource = null
@@ -805,10 +811,12 @@ class WebRTCPeer(
 
     /**
      * 开启视频通话摄像头：用 Camera2 采集前端摄像头 → camera_track。
-     * host 端挂到每个 viewer 连接并重协商；viewer 端挂到主连接并主动发 Offer 重协商。
+     * host 端挂到每个 viewer 连接；viewer 端挂到主连接。
+     * @param negotiate true=挂载后立即对各 viewer 重协商（独立开启时用）；false=仅挂载，
+     *   由调用方在摄像头+麦克风都挂好后统一触发一次重协商（避免多次 Offer 竞态导致对端协商失败）
      * @return true 表示摄像头已启动；false 表示失败（调用方应提示用户）
      */
-    fun startCameraVideo(): Boolean {
+    fun startCameraVideo(negotiate: Boolean = true): Boolean {
         if (disposed) return false
         if (cameraVideoTrack != null) return true
         return try {
@@ -829,13 +837,13 @@ class WebRTCPeer(
             cameraCapturer = capturer
             cameraVideoSource = source
             cameraVideoTrack = track
-            // host 端：摄像头轨挂到每个 viewer 连接（同一轨可挂多条连接），并重协商让对端收到
+            // host 端：摄像头轨挂到每个 viewer 连接（同一轨可挂多条连接）
             if (viewerConnections.isNotEmpty()) {
                 viewerConnections.forEach { (vid, conn) ->
                     val sender = conn.pc.addTrack(track)
                     if (sender != null) {
                         cameraViewerSenders[vid] = sender
-                        createOfferFor(vid)
+                        if (negotiate) createOfferFor(vid)
                     } else {
                         Log.w(TAG, "viewer#$vid 挂载摄像头轨失败")
                     }
@@ -900,6 +908,20 @@ class WebRTCPeer(
         if (peerConnection == null) return
         Log.d(TAG, "触发重协商 (renegotiate)")
         createOffer()
+    }
+
+    /**
+     * 统一重协商：host 端对每个 viewer 连接发 Offer；viewer 端对主连接发 Offer。
+     * 视频通话开/关时在摄像头轨与麦克风轨全部挂载/移除后只调用一次，
+     * 避免多次 createOfferFor 竞态导致对端协商失败（v1.156 视频通话无画面根因）。
+     */
+    fun renegotiateVideoCall() {
+        if (disposed) return
+        if (viewerConnections.isNotEmpty()) {
+            viewerConnections.keys.forEach { createOfferFor(it) }
+        } else {
+            renegotiate()
+        }
     }
 
     /**

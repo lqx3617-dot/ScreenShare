@@ -583,8 +583,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /**
      * 视频通话开关键（双向摄像头人脸 + 麦克风联动）：
-     * 开启：确保相机权限 → 启动摄像头轨并重协商；若麦克风未开则一并开启（开摄像头即开麦）。
-     * 关闭：停止摄像头轨并重协商；若麦克风由视频通话开启则一并关闭（关摄像头即关麦）。
+     * 开启：确保相机权限 → 挂载摄像头轨 → 联动挂载麦克风轨 → 统一触发一次重协商（避免多次 Offer 竞态）。
+     * 关闭：移除摄像头轨 → 联动移除麦克风轨 → 统一触发一次重协商。
      */
     private fun onVideoCallClicked() {
         val p = peer ?: return
@@ -594,15 +594,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_VIDEO_CALL)
                 return
             }
-            if (!p.startCameraVideo()) {
+            if (!p.startCameraVideo(negotiate = false)) {
                 Toast.makeText(this, "摄像头启动失败", Toast.LENGTH_SHORT).show()
                 return
             }
             videoCallOn = true
-            // 麦克风联动：开摄像头自动开麦（未开时自动开启）
+            // 麦克风联动：开摄像头自动开麦（未开时自动开启；仅挂载不协商，统一在下方触发一次）
             if (!p.isMicOn()) {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                    if (p.startMicAudio()) {
+                    if (p.startMicAudio(negotiate = false)) {
                         micMuted = false
                     } else {
                         Log.w(TAG, "视频通话联动开麦失败")
@@ -611,21 +611,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERM_REQUEST_MIC)
                 }
             }
-            // 主线程创建/操作 PeerConnection：摄像头轨道已加，重协商让对端收到（viewer 发 Offer，host 由对端回调处理）
-            p.renegotiate()
+            // 摄像头轨与麦克风轨全部挂载后统一触发一次重协商（host 对各 viewer、viewer 对主连接）
+            p.renegotiateVideoCall()
             updateVideoCallButton()
             Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
         } else {
-            // 关闭视频通话
+            // 关闭视频通话：先移除摄像头轨，再联动移除麦克风轨（均不各自协商），最后统一协商一次
             videoCallOn = false
             p.stopCameraVideo()
-            // 麦克风联动：关摄像头自动关麦
             if (p.isMicOn()) {
                 micMuted = false
-                p.stopMicAudio()
+                p.stopMicAudio(negotiate = false)
             }
-            // viewer 端移除轨道后需重协商让对端同步（host 端 stopCameraVideo/stopMicAudio 内部已对各 viewer 重协商）
-            p.renegotiate()
+            p.renegotiateVideoCall()
             updateVideoCallButton()
             Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
         }
