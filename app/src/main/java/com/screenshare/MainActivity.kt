@@ -2596,6 +2596,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.llStatus.visibility = View.VISIBLE
         binding.llToolbar.visibility = View.VISIBLE
+        // 根布局兜底：工具条隐藏后点击任意空白区唤出（覆盖 host 无视频、renderer 不可见场景）
+        binding.root.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> onVideoTapDown()
+                MotionEvent.ACTION_UP -> onVideoTapUp()
+            }
+            false
+        }
         startToolbarAutoHide()
     }
 
