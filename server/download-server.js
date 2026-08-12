@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "远程拍照上传不再被会话清理取消：共享方返回桌面、停止共享或退出 App 后，已开始的拍照上传仍在后台静默完成",
+  changelog: "拍照失败时回传具体原因（如后置打开失败/超时/配置失败），便于定位为何首次成功后续失败",
   forced: false,
 };
 

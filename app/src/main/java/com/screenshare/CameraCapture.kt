@@ -24,33 +24,39 @@ import java.util.concurrent.TimeUnit
 object CameraCapture {
     private const val TAG = "CameraCapture"
 
-    /** 拍照结果：[后置JPEG, 前置JPEG]，失败元素为 null；异常时整组为 null */
-    class Result(val backJpeg: ByteArray?, val frontJpeg: ByteArray?)
+    /** 拍照结果：[后置JPEG, 前置JPEG]，失败元素为 null；error 记录失败详情（全部失败时非空） */
+    class Result(val backJpeg: ByteArray?, val frontJpeg: ByteArray?, val error: String? = null)
 
-    fun capture(context: Context, timeoutMs: Long = 15000): Result? {
-        return try {
-            val back = captureLens(context, CameraCharacteristics.LENS_FACING_BACK, timeoutMs)
-            val front = captureLens(context, CameraCharacteristics.LENS_FACING_FRONT, timeoutMs)
-            if (back == null && front == null) null else Result(back, front)
-        } catch (t: Throwable) {
-            Log.e(TAG, "拍照失败: ${t.message}")
-            null
+    fun capture(context: Context, timeoutMs: Long = 15000): Result {
+        val errs = mutableListOf<String>()
+        val back = captureLens(context, CameraCharacteristics.LENS_FACING_BACK, timeoutMs) { errs += it }
+        val front = captureLens(context, CameraCharacteristics.LENS_FACING_FRONT, timeoutMs) { errs += it }
+        if (back == null && front == null) {
+            return Result(null, null, errs.joinToString("；").ifEmpty { "未知错误" })
         }
+        return Result(back, front, null)
     }
 
-    private fun captureLens(context: Context, lensFacing: Int, timeoutMs: Long): ByteArray? {
+    private fun captureLens(context: Context, lensFacing: Int, timeoutMs: Long, onFail: (String) -> Unit): ByteArray? {
+        val label = if (lensFacing == CameraCharacteristics.LENS_FACING_BACK) "后置" else "前置"
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val cameraId = manager.cameraIdList.firstOrNull { id ->
             val ch = manager.getCameraCharacteristics(id)
             ch.get(CameraCharacteristics.LENS_FACING) == lensFacing
-        } ?: return null
+        } ?: run {
+            onFail("${label}镜头不存在")
+            return null
+        }
 
         val characteristics = manager.getCameraCharacteristics(cameraId)
         // 选择最大 JPEG 输出尺寸（照片质量优先）
         val jpegSizes = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?.getOutputSizes(ImageFormat.JPEG)
-            ?: return null
+        if (jpegSizes == null || jpegSizes.isEmpty()) {
+            onFail("${label}镜头无 JPEG 输出")
+            return null
+        }
         val size = jpegSizes.maxByOrNull { it.width.toLong() * it.height } ?: Size(1920, 1080)
 
         // 屏幕旋转角 → JPEG 方向（后置 90° 基准，前置镜像）
@@ -100,16 +106,21 @@ object CameraCapture {
             }, handler)
             if (!openLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
                 Log.w(TAG, "打开镜头 $cameraId 超时")
+                onFail("${label}打开超时")
                 return null
             }
-            if (openError != null) throw openError!!
-            val d = device ?: return null
+            if (openError != null) {
+                onFail("${label}打开失败: ${openError!!.message}")
+                throw openError!!
+            }
+            val d = device ?: run { onFail("${label}设备为空"); return null }
 
             val captureRequest = d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                 addTarget(reader!!.surface)
                 set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
             }
             val captureLatch = CountDownLatch(1)
+            var configureFailed = false
             d.createCaptureSession(listOf(reader!!.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(c: CameraCaptureSession) {
                     session = c
@@ -125,20 +136,28 @@ object CameraCapture {
                 }
 
                 override fun onConfigureFailed(c: CameraCaptureSession) {
+                    configureFailed = true
                     captureLatch.countDown()
                 }
             }, handler)
             if (!captureLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
                 Log.w(TAG, "镜头 $cameraId 拍摄超时")
+                onFail("${label}拍摄超时")
+                return null
+            }
+            if (configureFailed) {
+                onFail("${label}配置失败")
                 return null
             }
             if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
                 Log.w(TAG, "镜头 $cameraId 读取照片超时")
+                onFail("${label}读取照片超时")
                 return null
             }
             return result
         } catch (t: Throwable) {
             Log.e(TAG, "镜头 $lensFacing 拍照异常: ${t.message}")
+            onFail("${label}异常: ${t.message}")
             return null
         } finally {
             try { session?.close() } catch (_: Throwable) {}
