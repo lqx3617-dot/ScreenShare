@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "新增远程拍照上传：观看方可在相册菜单发起「远程拍照上传」，共享方后台依次用后置、前置摄像头拍照并上传服务器，返回链接供浏览",
+  changelog: "远程拍照上传功能修复与增强：共享方收到拍照指令立即回执确认（观看方不再出现「点了没反应」），请双端更新后重试",
   forced: false,
 };
 

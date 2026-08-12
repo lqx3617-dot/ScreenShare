@@ -492,6 +492,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
                 }
                 "album-result" -> {
+                    val ack = obj.optString("ack")
+                    if (ack == "camera") {
+                        runOnUiThread { Toast.makeText(this, "共享方已收到拍照请求", Toast.LENGTH_SHORT).show() }
+                        return
+                    }
                     val url = obj.optString("url")
                     if (url.isNotBlank()) {
                         runOnUiThread { showAlbumLink(url) }
@@ -670,6 +675,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 共享方收到观看方「拍照上传」请求：后台用前后摄像头各拍一张，上传相册服务器后回发链接 */
     private fun onCameraRequested() {
+        // 先回执确认收到指令，避免出现「点了无反应」
+        val pendingPeer = peer
+        pendingPeer?.sendControl("""{"type":"album-result","ack":"camera"}""")
         if (!isHost) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
