@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 138
-        versionName = "1.135"
+        versionCode = 139
+        versionName = "1.136"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         ndk {
@@ -43,6 +43,11 @@ android {
             "String",
             "UPDATE_URL",
             "\"${project.findProperty("screenshare.update.url") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "ALBUM_URL",
+            "\"${project.findProperty("screenshare.album.url") as String? ?: ""}\""
         )
         buildConfigField(
             "String",

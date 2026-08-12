@@ -6,12 +6,14 @@ import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -61,6 +63,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         private const val TAG = "MainActivity"
         private const val PERM_REQUEST_CODE = 100
         private const val PERM_REQUEST_MIC = 101
+        private const val PERM_REQUEST_ALBUM = 102
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -207,6 +210,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnFpsToggle.setOnClickListener { onFpsToggleClicked() }
         binding.btnAspectToggle.setOnClickListener { onAspectToggleClicked() }
         binding.btnMic.setOnClickListener { onMicClicked() }
+        binding.btnAlbum.setOnClickListener { onAlbumClicked() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
         binding.btnCtrlBack.setOnClickListener { onCtrlKeyClicked("back") }
         binding.btnCtrlHome.setOnClickListener { onCtrlKeyClicked("home") }
@@ -538,6 +542,117 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
+    // ======================== 相册上传查看 ========================
+    // host 后台读取本机相册 → 压缩上传照片服务器 → 生成链接供 viewer 浏览器查看。
+    // 相册内容不在 host 屏幕上显示，不影响屏幕共享。
+
+    private var albumCancel = false
+
+    private fun onAlbumClicked() {
+        if (!isHost) return
+        // 相册权限：Android 13+ 用 READ_MEDIA_IMAGES，低版本用 READ_EXTERNAL_STORAGE
+        val perm = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(perm), PERM_REQUEST_ALBUM)
+            return
+        }
+        startAlbumUpload()
+    }
+
+    /** 权限结果分发：相册权限授权成功则开始上传 */
+    private fun onAlbumPermissionResult(granted: Boolean) {
+        if (granted) {
+            startAlbumUpload()
+        } else {
+            Toast.makeText(this, "未授权相册权限，无法上传照片", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** 相册上传主流程：后台线程执行，进度回调回主线程更新对话框 */
+    private fun startAlbumUpload() {
+        val baseUrl = BuildConfig.ALBUM_URL
+        if (baseUrl.isBlank()) {
+            Toast.makeText(this, "相册服务器未配置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        albumCancel = false
+        // 上传对话框：显示进度 + 取消
+        val dialog = android.app.ProgressDialog(this).apply {
+            setMessage("正在读取并上传相册...")
+            setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+            setCancelable(true)
+            setOnCancelListener { albumCancel = true }
+        }
+        dialog.show()
+        val ctx = this
+        Thread {
+            try {
+                AlbumUploader.uploadAlbum(
+                    ctx, baseUrl,
+                    object : AlbumUploader.Listener {
+                        override fun onProgress(current: Int, total: Int) {
+                            runOnUiThread {
+                                if (dialog.isShowing) {
+                                    dialog.max = total
+                                    dialog.progress = current
+                                    dialog.setMessage("正在上传 $current/$total 张")
+                                }
+                            }
+                        }
+
+                        override fun onComplete(link: String) {
+                            runOnUiThread {
+                                if (dialog.isShowing) dialog.dismiss()
+                                showAlbumLink(link)
+                            }
+                        }
+
+                        override fun onError(message: String) {
+                            runOnUiThread {
+                                if (dialog.isShowing) dialog.dismiss()
+                                Toast.makeText(ctx, "相册上传失败: $message", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    cancel = { albumCancel }
+                )
+            } catch (t: Throwable) {
+                val msg = t.message ?: "未知错误"
+                runOnUiThread {
+                    if (dialog.isShowing) dialog.dismiss()
+                    if (t is AlbumUploader.EmptyAlbumException) {
+                        Toast.makeText(ctx, "相册没有照片", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(ctx, "相册上传失败: $msg", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** 展示相册链接，一键复制到剪贴板 */
+    private fun showAlbumLink(link: String) {
+        val clip = android.content.ClipData.newPlainText("相册链接", link)
+        (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("相册已上传")
+            .setMessage("链接已复制到剪贴板，发给对方用浏览器打开即可查看：\n\n$link")
+            .setPositiveButton("打开链接") { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                } catch (t: Throwable) {
+                    Toast.makeText(this, "无可用浏览器", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+
     /** 同步麦克风按钮文案与颜色：开启=绿色，静音=红色，未开启=默认 */
     private fun updateMicButton() {
         val p = peer
@@ -667,6 +782,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             } else {
                 Toast.makeText(this, "未授权麦克风权限，无法开启语音", Toast.LENGTH_SHORT).show()
             }
+        } else if (requestCode == PERM_REQUEST_ALBUM) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            onAlbumPermissionResult(granted)
         }
     }
 
@@ -687,6 +805,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     private fun startHostSession() {
         sessionCoreStarted = false
+        // 相册上传仅共享方（host）可用：后台读取本机相册上传，观看方凭链接查看
+        binding.btnAlbum.visibility = View.VISIBLE
         // 诊断进度：显示在 tvScanResult（独立区域，不被状态栏 updateUI 覆盖）
         binding.tvScanResult.text = "① 已授权，启动共享服务..."
         binding.tvScanResult.visibility = View.VISIBLE
@@ -822,6 +942,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         signalPeerReady = false
         viewerJoined = false
         signalPendingOfferData = null
+        // 相册上传仅共享方（host）可用：后台读取本机相册上传，观看方凭链接查看
+        binding.btnAlbum.visibility = View.VISIBLE
 
         binding.btnSignalHost.isEnabled = false
         binding.btnSignalJoin.isEnabled = false
@@ -1171,6 +1293,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun cleanupPeer() {
         stopAdaptiveLoop()
+        albumCancel = true
+        binding.btnAlbum.visibility = View.GONE
         peer?.disconnect()
         peer = null
         signalClient?.disconnect()
