@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "相机权限未授权时主动引导授权：优先弹系统授权框，已永久拒绝则引导跳转系统设置开启相机权限",
+  changelog: "拍照失败原因改用对话框完整显示（不再被 Toast 截断），便于查看具体错误码",
   forced: false,
 };
 

@@ -494,13 +494,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 "album-result" -> {
                     val ack = obj.optString("ack")
                     if (ack.isNotBlank()) {
-                        val tip = when (ack) {
-                            "camera" -> "共享方已收到拍照请求"
-                            "capturing" -> "共享方正在后台拍照..."
-                            "shot-failed" -> "共享方拍照失败: ${obj.optString("error", "未知错误")}"
-                            else -> "共享方处理中"
+                        when (ack) {
+                            "camera" -> runOnUiThread { Toast.makeText(this, "共享方已收到拍照请求", Toast.LENGTH_SHORT).show() }
+                            "capturing" -> runOnUiThread { Toast.makeText(this, "共享方正在后台拍照...", Toast.LENGTH_SHORT).show() }
+                            "shot-failed" -> {
+                                val reason = obj.optString("error", "未知错误")
+                                runOnUiThread {
+                                    android.app.AlertDialog.Builder(this)
+                                        .setTitle("共享方拍照失败")
+                                        .setMessage("失败原因：\n$reason")
+                                        .setPositiveButton("知道了", null)
+                                        .show()
+                                }
+                            }
+                            else -> runOnUiThread { Toast.makeText(this, "共享方处理中", Toast.LENGTH_SHORT).show() }
                         }
-                        runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
                         return
                     }
                     val url = obj.optString("url")
