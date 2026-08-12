@@ -1323,6 +1323,14 @@ class WebRTCPeer(
                 rtp.parameters = params
                 Log.d(TAG, "编码负载自适应: ${if (down) "降720p" else "回升1080p"} 策略=$degradation")
             }
+            // V4：1 对 1 模式视频实际承载在 viewer 连接，同步设置其 sender 的降级策略
+            viewerConnections.values.forEach { conn ->
+                conn.videoSender?.let { rtp ->
+                    val params = rtp.parameters
+                    params.degradationPreference = degradation
+                    rtp.parameters = params
+                }
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "编码负载切策略失败: ${t.message}")
         }

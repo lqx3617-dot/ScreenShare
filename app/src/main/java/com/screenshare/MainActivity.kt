@@ -125,6 +125,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 增量丢包统计基准（后台线程读写）
     private var lastLostTotal = 0L
     private var lastLost = 0L
+    // 弱网/编码负载自适应线程：与全屏状态无关，连接建立即运行（修复"非全屏打开视频软件卡顿"）
+    private var adaptiveThread: android.os.HandlerThread? = null
+    private var adaptiveHandler: android.os.Handler? = null
+    private var adaptiveRunnable: Runnable? = null
     // 诊断上报去重签名（值变化才重报）
     @Volatile private var lastDiagSig = ""
 
@@ -1166,6 +1170,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     private fun cleanupPeer() {
+        stopAdaptiveLoop()
         peer?.disconnect()
         peer = null
         signalClient?.disconnect()
@@ -1320,6 +1325,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onConnected() {
         runOnUiThread {
+            // 连接建立即启动独立弱网/编码自适应（与全屏状态无关），保证非全屏观看动态画面不卡
+            startAdaptiveLoop()
             updateUI("✅ 已连接！屏幕共享进行中...")
             // 兜底关闭会议号弹窗（P2P 建立后不应残留遮挡画面）
             dismissMeetingCodeDialog()
@@ -1345,6 +1352,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDisconnected() {
         runOnUiThread {
+            stopAdaptiveLoop()
             updateUI("连接已断开")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
@@ -1845,25 +1853,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val w = json.optInt("inW", 0); val h = json.optInt("inH", 0)
                             if (w > 0) "$w×$h" else "--"
                         }
-                        // 腾讯会议式弱网自适应：共享方按远端回报的发送丢包率自动降质保流畅（v1.103）
-                        // fractionLost 由 remote-inbound-rtp 直接给出（0~100），未上报为 -1 时走增量兜底
-                        // V4 host：1 对 1 模式下实际视频承载在 viewer 连接，弱网自适应作用于该连接
-                        val outLost = json.optLong("outLost", 0)
-                        val outSent = json.optLong("outSent", 0)
-                        val outLossPct = json.optDouble("outLossPct", -1.0)
+                        // 弱网/编码负载自适应已由独立 adaptive-worker 线程处理（startAdaptiveLoop），
+                        // 全屏线程只负责悬浮信息条 UI 刷新，避免重复降质
                         if (isHostView) {
-                            val activeVid = peer?.firstViewerId() ?: 0
-                            if (activeVid > 0) {
-                                peer?.adaptViewerNetwork(activeVid, outLossPct, outSent, outLost)
-                            } else {
-                                peer?.adaptToNetwork(outLossPct, outSent, outLost)
-                            }
-                            // V1.120: 编码负载自适应——开视频软件等动态画面时硬编跟不上，
-                            // 即使网络不丢包也主动降采集分辨率保帧率（用实际承载视频连接的 outFps/qualityLimit）
-                            peer?.adaptToEncoderLoad(
-                                json.optInt("outFps", 0),
-                                json.optString("qualityLimit", "")
-                            )
+                            // V4 host：1 对 1 模式下实际视频承载在 viewer 连接
+                            // （自适应作用于该连接的丢包/编码负载，见 startAdaptiveLoop）
                         }
                         // 观看方丢包率：增量计算（上次统计到本次的新丢包 / 新接收总量），避免累计值不敏感
                         val lost = json.optLong("lost", 0)
@@ -1962,6 +1956,62 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         lastStatsTime = 0L
         lastLostTotal = 0L
         lastLost = 0L
+    }
+
+    // ======================== 独立弱网/编码自适应 ========================
+
+    /**
+     * 启动与全屏状态无关的弱网/编码负载自适应轮询（连接建立即调用）。
+     * 修复 v1.120 自适应机制绑定在全屏统计线程的问题：普通观看界面（如 host 播放视频软件）
+     * 不进入全屏时动态画面掉帧无人降质，viewer 端卡顿。
+     * host 端实际视频承载在 viewer 连接（V4），统计与降质均作用于该连接。
+     */
+    private fun startAdaptiveLoop() {
+        stopAdaptiveLoop()
+        lastLostTotal = 0L
+        lastLost = 0L
+        val thread = android.os.HandlerThread("adaptive-worker")
+        thread.start()
+        adaptiveThread = thread
+        val handler = android.os.Handler(thread.looper)
+        adaptiveHandler = handler
+        val runnable = object : Runnable {
+            override fun run() {
+                if (isHost) {
+                    try {
+                        val vid = peer?.firstViewerId() ?: 0
+                        val raw = if (vid > 0) peer?.collectViewerStats(vid) else peer?.collectStats()
+                        raw?.let {
+                            val json = org.json.JSONObject(it)
+                            val outLost = json.optLong("outLost", 0)
+                            val outSent = json.optLong("outSent", 0)
+                            val outLossPct = json.optDouble("outLossPct", -1.0)
+                            val outFps = json.optInt("outFps", 0)
+                            val qualityLimit = json.optString("qualityLimit", "")
+                            if (vid > 0) {
+                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost)
+                            } else {
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost)
+                            }
+                            peer?.adaptToEncoderLoad(outFps, qualityLimit)
+                        }
+                    } catch (t: Throwable) {
+                        android.util.Log.w(TAG, "自适应轮询异常: ${t.message}")
+                    }
+                }
+                handler.postDelayed(this, 1500)
+            }
+        }
+        adaptiveRunnable = runnable
+        handler.post(runnable)
+    }
+
+    private fun stopAdaptiveLoop() {
+        adaptiveRunnable?.let { adaptiveHandler?.removeCallbacks(it) }
+        adaptiveHandler = null
+        adaptiveRunnable = null
+        adaptiveThread?.quitSafely()
+        adaptiveThread = null
     }
 
     // ======================== 停止 ========================

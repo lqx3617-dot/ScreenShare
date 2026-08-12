@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "v1.134 全量优化：\n① 服务器加固：/diag /crash 增加鉴权、心跳超时清理僵尸连接、下载服务器异步化\n② 客户端：连接释放补全（渲染器/轨道/摄像头/服务全释放）、音频通道无序化防丢帧、麦克风多 viewer 挂轨修复、弱网自适应统一、CoordinateMapper 复用\n③ 删除音频诊断遗留代码，清理死代码，相机权限/明文流量收敛",
+  changelog: "v1.135 修复非全屏观看视频软件卡顿：\n① 根因：弱网/编码负载自适应此前只绑定在全屏统计线程（v1.120 机制），普通观看界面不进入全屏时完全不触发，host 播放视频软件等动态画面时编码跟不上、viewer 端掉帧卡顿\n② 本版把自适应抽成独立后台线程（adaptive-worker），连接建立即运行、与全屏状态无关，覆盖非全屏场景\n③ 同步修正 V4 模式 degradationPreference 只设在主连接、未作用于实际承载视频的 viewer 连接的问题\n④ 请双端同步更新到 v1.135 测试",
   forced: false,
 };
 
