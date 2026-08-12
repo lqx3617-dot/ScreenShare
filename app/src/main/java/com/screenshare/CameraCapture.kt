@@ -27,9 +27,10 @@ object CameraCapture {
     /** 拍照结果：[后置JPEG, 前置JPEG]，失败元素为 null；error 记录失败详情（全部失败时非空） */
     class Result(val backJpeg: ByteArray?, val frontJpeg: ByteArray?, val error: String? = null)
 
-    fun capture(context: Context, timeoutMs: Long = 15000): Result {
+    /** frontOnly=true 时只拍前置镜头 */
+    fun capture(context: Context, timeoutMs: Long = 15000, frontOnly: Boolean = false): Result {
         val errs = mutableListOf<String>()
-        val back = captureLens(context, CameraCharacteristics.LENS_FACING_BACK, timeoutMs) { errs += it }
+        val back = if (frontOnly) null else captureLens(context, CameraCharacteristics.LENS_FACING_BACK, timeoutMs) { errs += it }
         val front = captureLens(context, CameraCharacteristics.LENS_FACING_FRONT, timeoutMs) { errs += it }
         if (back == null && front == null) {
             return Result(null, null, errs.joinToString("；").ifEmpty { "未知错误" })

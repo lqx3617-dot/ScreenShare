@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "拍照失败时回传具体原因（如后置打开失败/超时/配置失败），便于定位为何首次成功后续失败",
+  changelog: "远程拍照支持选择「仅前置」模式（绕过可能被占用的后置镜头），便于排查后台相机限制",
   forced: false,
 };
 

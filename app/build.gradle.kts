@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 152
-        versionName = "1.149"
+        versionCode = 153
+        versionName = "1.150"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         ndk {

