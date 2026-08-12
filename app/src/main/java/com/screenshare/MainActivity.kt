@@ -212,8 +212,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnMic.setOnClickListener { onMicClicked() }
         binding.btnAlbum.setOnClickListener { onAlbumClicked() }
         binding.tvTitleBrand.setOnClickListener { onBrandTripleTap() }
-        binding.btnChatHost.setOnClickListener { openChat() }
-        binding.btnChatViewer.setOnClickListener { openChat() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
         binding.btnCtrlBack.setOnClickListener { onCtrlKeyClicked("back") }
         binding.btnCtrlHome.setOnClickListener { onCtrlKeyClicked("home") }
@@ -500,7 +498,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
                     }
                 }
-                "chat" -> onChatReceived(obj.optString("text", ""))
             }
         } catch (t: Throwable) {
             Log.e(TAG, "解析控制回执失败: ${t.message}")
@@ -735,117 +732,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             .setNegativeButton("关闭", null)
             .show()
-    }
-
-    // ======================== 文字聊天 ========================
-    // 聊天消息经控制数据通道双向收发：{"type":"chat","text":"..."}
-    // 观看方发送走主连接 controlChannel，共享方发送广播到各 viewer 连接。
-
-    /** 聊天历史：我方/对方消息行（已格式化的展示文本） */
-    private val chatLines = ArrayList<String>()
-    private var chatDialog: android.app.AlertDialog? = null
-    private var chatEdit: android.widget.EditText? = null
-    private var chatScroll: android.widget.ScrollView? = null
-
-    /** 打开/刷新聊天对话框（两端共用） */
-    private fun openChat() {
-        val p = peer
-        if (p == null) {
-            Toast.makeText(this, "未连接，无法聊天", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (chatDialog?.isShowing == true) {
-            refreshChatView()
-            return
-        }
-        val padding = (14 * resources.displayMetrics.density).toInt()
-        val msgView = android.widget.TextView(this).apply {
-            text = if (chatLines.isEmpty()) "还没有消息，说点什么吧" else chatLines.joinToString("\n")
-            textSize = 15f
-            setTextColor(0xFFE8EAED.toInt())
-            setLineSpacing(4f, 1f)
-            setPadding(padding, padding, padding, padding)
-        }
-        chatScroll = android.widget.ScrollView(this).apply {
-            addView(msgView)
-        }
-        chatEdit = android.widget.EditText(this).apply {
-            hint = "输入消息..."
-            isSingleLine = true
-            setTextColor(0xFFE8EAED.toInt())
-            setHintTextColor(0xFF8A8F98.toInt())
-        }
-        val sendBtn = android.widget.Button(this).apply {
-            text = "发送"
-            setOnClickListener { sendChat() }
-        }
-        val inputRow = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            addView(chatEdit, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(sendBtn, android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        val content = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            addView(chatScroll, android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(inputRow, android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-        chatDialog = android.app.AlertDialog.Builder(this)
-            .setTitle(if (isHost) "聊天（与观看方）" else "聊天（与共享方）")
-            .setView(content)
-            .setPositiveButton("关闭", null)
-            .setOnDismissListener { chatDialog = null }
-            .create()
-        chatDialog!!.apply {
-            setOnShowListener {
-                val w = android.view.WindowManager.LayoutParams()
-                w.copyFrom(this@MainActivity.window!!.attributes)
-                w.width = (resources.displayMetrics.widthPixels * 0.85).toInt()
-                w.height = (resources.displayMetrics.heightPixels * 0.55).toInt()
-                this@MainActivity.window!!.attributes = w
-            }
-            show()
-        }
-        refreshChatView()
-    }
-
-    /** 发送当前输入框内容 */
-    private fun sendChat() {
-        val text = chatEdit?.text?.toString()?.trim().orEmpty()
-        if (text.isEmpty()) return
-        val p = peer
-        if (p == null || !p.controlChannelOpen()) {
-            Toast.makeText(this, "连接未建立，无法发送", Toast.LENGTH_SHORT).show()
-            return
-        }
-        p.sendControl("""{"type":"chat","text":"${escapeJson(text)}"}""")
-        appendChatLine(isHost, text)
-        chatEdit?.setText("")
-    }
-
-    /** 追加聊天行并刷新对话框（isMine=true 表示我方消息） */
-    private fun appendChatLine(isMine: Boolean, text: String) {
-        val who = if (isHost) "共享方" else "观看方"
-        chatLines.add("[$who] $text")
-        refreshChatView()
-    }
-
-    /** 收到对方聊天消息（来自控制通道） */
-    private fun onChatReceived(text: String) {
-        runOnUiThread { appendChatLine(isHost.not(), text) }
-    }
-
-    private fun refreshChatView() {
-        val scroll = chatScroll
-        if (scroll == null || scroll.childCount == 0) return
-        val msgView = scroll.getChildAt(0) as? android.widget.TextView ?: return
-        msgView.text = chatLines.joinToString("\n")
-        scroll.post { scroll.fullScroll(android.view.View.FOCUS_DOWN) }
-    }
-
-    /** JSON 字符串转义，防止聊天内容破坏控制通道消息 */
-    private fun escapeJson(s: String): String = org.json.JSONObject().put("t", s).toString().let { json ->
-        // 取出 {"t":"..."} 中引号内的内容
-        json.substringAfter("\"t\":\"").substringBeforeLast("\"")
     }
 
 
@@ -1094,7 +980,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
-                    "chat" -> onChatReceived(obj.optString("text", ""))
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
@@ -1499,9 +1384,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         stopAdaptiveLoop()
         albumCancel = true
         binding.btnAlbum.visibility = View.GONE
-        binding.btnChatHost.visibility = View.GONE
-        binding.btnChatViewer.visibility = View.GONE
-        chatDialog?.dismiss()
         peer?.disconnect()
         peer = null
         signalClient?.disconnect()
@@ -1671,13 +1553,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (isHost) {
                 // 共享方本地不显示预览视频（自己看屏幕即可），仅更新控制状态 UI
                 binding.llCtrlStatus.visibility = View.VISIBLE
-                binding.btnChatHost.visibility = View.VISIBLE
                 updateRemoteControlStatus()
             } else {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
-                binding.btnChatViewer.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }
