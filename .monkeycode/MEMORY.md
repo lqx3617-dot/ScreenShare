@@ -217,4 +217,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - 候选统计已改累计计数（candCountHost/Srflx/Relay），onConnectionFailed 里 groupingBy 单次计算保留
   - v1.134 签名 APK md5=911a38ccb01e5481e51b179e61230d73，versionCode=137，commit 660450d 已推送
 
+[Project Knowledge Summary]
+- Date: 2026-08-11
+- Context: Discovered by Agent while 修复 v1.135 非全屏观看视频软件卡顿
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 自适应机制历史陷阱：v1.120 的弱网/编码负载自适应被绑定在全屏统计线程（startFullscreenStats + enterFullscreen），**非全屏观看时不触发**。排查"非全屏卡顿"类问题时先检查统计/自适应是否依赖 isFullscreen。v1.135 已抽独立 adaptive-worker 线程（startAdaptiveLoop，连接建立即运行，onConnected 启动/cleanupPeer 与 onDisconnected 停止）
+  - V4 host 架构要点：1 对 1 模式实际视频承载在 viewer 连接（conn.videoSender/conn.pc），对主连接 videoSender 设置的 degradationPreference/码率不生效；降质逻辑必须作用于 viewer 连接（adaptViewerNetwork 传 conn.sender；applyEncoderLoadProfile 需遍历 viewerConnections 同步设 degradationPreference）
+  - v1.135 签名 APK md5=19804f4cfcd536e092644660ac3efc69，versionCode=138，commit c48771f 已推送；若用户反馈非全屏动态画面仍卡，检查方向：viewer 连接 outFps/qualityLimit 是否统计到、采集分辨率降级是否生效
+
 
