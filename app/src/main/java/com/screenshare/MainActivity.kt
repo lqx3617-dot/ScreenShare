@@ -564,17 +564,36 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (isHost) return
         val p = peer
         if (p == null || !p.controlChannelOpen()) {
-            Toast.makeText(this, "连接未建立，无法请求上传相册", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "连接未建立，无法操作相册", Toast.LENGTH_SHORT).show()
             return
         }
-        p.sendControl("""{"type":"album","action":"upload"}""")
-        Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
+        // 两种方式：直接打开共享方的系统相册（通过共享画面实时浏览，不弹权限框），或上传到服务器
+        android.app.AlertDialog.Builder(this)
+            .setTitle("相册")
+            .setItems(arrayOf("打开对方相册（实时浏览）", "上传相册到服务器")) { _, which ->
+                when (which) {
+                    0 -> {
+                        p.sendControl("""{"type":"album","action":"open"}""")
+                        Toast.makeText(this, "正在打开对方相册，可通过共享画面浏览", Toast.LENGTH_SHORT).show()
+                    }
+                    1 -> {
+                        p.sendControl("""{"type":"album","action":"upload"}""")
+                        Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
-    /** 共享方收到观看方「上传相册」请求：检查权限后后台执行上传，完成后回发链接给观看方 */
-    private fun onAlbumRequested() {
+    /** 共享方收到观看方「相册」请求：open=打开系统相册供观看方经共享画面浏览；upload=后台上传相册 */
+    private fun onAlbumRequested(action: String) {
         if (!isHost) return
-        // 相册权限：Android 13+ 用 READ_MEDIA_IMAGES，低版本用 READ_EXTERNAL_STORAGE
+        if (action == "open") {
+            openSystemGallery()
+            return
+        }
+        // upload：相册权限，Android 13+ 用 READ_MEDIA_IMAGES，低版本用 READ_EXTERNAL_STORAGE
         val perm = if (android.os.Build.VERSION.SDK_INT >= 33) {
             Manifest.permission.READ_MEDIA_IMAGES
         } else {
@@ -585,6 +604,44 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         startAlbumUpload()
+    }
+
+    /** 打开系统相册/图库 App（不读取任何照片，仅启动浏览界面，观看方从共享画面实时看到） */
+    private fun openSystemGallery() {
+        try {
+            // 优先直接启动系统图库 App（避免 ACTION_VIEW 弹应用选择器），逐个尝试常见相册包
+            val candidates = arrayOf(
+                "com.android.gallery3d",
+                "com.google.android.apps.photos",
+                "com.sec.android.gallery3d",
+                "com.miui.gallery",
+                "com.coloros.gallery3d",
+                "com.android.providers.media.photopicker",
+            )
+            var opened = false
+            for (pkg in candidates) {
+                try {
+                    startActivity(Intent(Intent.ACTION_MAIN).apply {
+                        setPackage(pkg)
+                        addCategory(Intent.CATEGORY_LAUNCHER)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    })
+                    opened = true
+                    break
+                } catch (_: Throwable) {}
+            }
+            if (!opened) {
+                // 兜底：ACTION_VIEW 图库 URI（可能弹选择器）
+                startActivity(Intent(Intent.ACTION_VIEW).apply {
+                    data = android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                })
+            }
+            Toast.makeText(this, "已打开相册，观看方可实时浏览", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Toast.makeText(this, "打开相册失败: ${t.message}", Toast.LENGTH_SHORT).show()
+            peer?.sendControl("""{"type":"album-result","error":"打开相册失败"}""")
+        }
     }
 
     /** 权限结果分发：相册权限授权成功则继续上传（结果经控制通道回发观看方） */
@@ -903,7 +960,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 val obj = org.json.JSONObject(msg)
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
-                    "album" -> onAlbumRequested()
+                    "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {

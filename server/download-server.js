@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "安装后首次启动自动请求相册权限",
+  changelog: "相册支持实时浏览（共享画面直看对方相册）与上传服务器两种方式",
   forced: false,
 };
 
