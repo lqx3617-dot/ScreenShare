@@ -105,6 +105,23 @@
                 android:visibility="gone" />
 
             <TextView
+                android:id="@+id/btnCamera"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="视频"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:gravity="center"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:layout_marginStart="8dp"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/btnMic"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -406,6 +423,28 @@
             android:visibility="gone" />
 
     </LinearLayout>
+
+    <!-- 视频通话 PIP 小窗：显示对方摄像头人脸（host 与 viewer 通用，浮在右上角） -->
+    <FrameLayout
+        android:id="@+id/flCameraPip"
+        android:layout_width="120dp"
+        android:layout_height="160dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_video_frame"
+        android:elevation="30dp"
+        android:visibility="gone">
+        <TextView
+            android:id="@+id/tvCameraPipHint"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="对方摄像头"
+            android:textSize="11sp"
+            android:textColor="@color/text_hint"
+            android:background="#88000000" />
+    </FrameLayout>
 
     <!-- 全屏叠加层：在 FrameLayout 最外层，覆盖所有内容 -->
     <FrameLayout

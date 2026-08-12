@@ -65,6 +65,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         private const val PERM_REQUEST_MIC = 101
         private const val PERM_REQUEST_ALBUM = 102
         private const val PERM_REQUEST_CAMERA = 103
+        private const val PERM_REQUEST_VIDEO_CALL = 104
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -151,6 +152,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 麦克风（会议内双向对讲）：false=已开启且未静音，true=已开启但静音
     private var micMuted = false
 
+    // 视频通话（双向摄像头人脸）：true=已开启视频通话（摄像头+麦克风联动）
+    private var videoCallOn = false
+
     // 远程控制（观看方控制共享方）：true=控制模式（单指触摸下发控制指令）
     private var isControlMode = false
 
@@ -211,6 +215,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnFpsToggle.setOnClickListener { onFpsToggleClicked() }
         binding.btnAspectToggle.setOnClickListener { onAspectToggleClicked() }
         binding.btnMic.setOnClickListener { onMicClicked() }
+        binding.btnCamera.setOnClickListener { onVideoCallClicked() }
         binding.btnAlbum.setOnClickListener { onAlbumClicked() }
         binding.tvTitleBrand.setOnClickListener { onBrandTripleTap() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
@@ -572,6 +577,66 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateMicButton()
             Toast.makeText(this, if (micMuted) "麦克风已静音" else "已取消静音", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // ======================== 视频通话（双向摄像头） ========================
+
+    /**
+     * 视频通话开关键（双向摄像头人脸 + 麦克风联动）：
+     * 开启：确保相机权限 → 启动摄像头轨并重协商；若麦克风未开则一并开启（开摄像头即开麦）。
+     * 关闭：停止摄像头轨并重协商；若麦克风由视频通话开启则一并关闭（关摄像头即关麦）。
+     */
+    private fun onVideoCallClicked() {
+        val p = peer ?: return
+        if (!videoCallOn) {
+            // 开启视频通话：先确保相机权限
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_VIDEO_CALL)
+                return
+            }
+            if (!p.startCameraVideo()) {
+                Toast.makeText(this, "摄像头启动失败", Toast.LENGTH_SHORT).show()
+                return
+            }
+            videoCallOn = true
+            // 麦克风联动：开摄像头自动开麦（未开时自动开启）
+            if (!p.isMicOn()) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    if (p.startMicAudio()) {
+                        micMuted = false
+                    } else {
+                        Log.w(TAG, "视频通话联动开麦失败")
+                    }
+                } else {
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERM_REQUEST_MIC)
+                }
+            }
+            // 主线程创建/操作 PeerConnection：摄像头轨道已加，重协商让对端收到（viewer 发 Offer，host 由对端回调处理）
+            p.renegotiate()
+            updateVideoCallButton()
+            Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
+        } else {
+            // 关闭视频通话
+            videoCallOn = false
+            p.stopCameraVideo()
+            // 麦克风联动：关摄像头自动关麦
+            if (p.isMicOn()) {
+                micMuted = false
+                p.stopMicAudio()
+            }
+            // viewer 端移除轨道后需重协商让对端同步（host 端 stopCameraVideo/stopMicAudio 内部已对各 viewer 重协商）
+            p.renegotiate()
+            updateVideoCallButton()
+            Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 同步视频通话按钮文案与颜色：开启=绿色，关闭=默认 */
+    private fun updateVideoCallButton() {
+        binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
+        binding.btnCamera.setTextColor(
+            if (videoCallOn) Color.parseColor("#FF12865C") else Color.parseColor("#FF111827")
+        )
     }
 
     // ======================== 相册上传查看 ========================
@@ -1024,6 +1089,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 peer?.sendControl("""{"type":"album-result","error":"共享方未授权相机权限"}""")
                 Toast.makeText(this, "未授权相机权限，无法拍照", Toast.LENGTH_LONG).show()
             }
+        } else if (requestCode == PERM_REQUEST_VIDEO_CALL) {
+            // 视频通话相机权限结果：授权成功则开启视频通话（麦克风联动在开启流程内处理）
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                onVideoCallClicked()
+            } else {
+                Toast.makeText(this, "未授权相机权限，无法开启视频通话", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -1116,7 +1189,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.btnStop.visibility = View.VISIBLE
             binding.btnStop.isEnabled = true
             binding.btnMic.visibility = View.VISIBLE
+            binding.btnCamera.visibility = View.VISIBLE
             updateMicButton()
+            updateVideoCallButton()
             binding.llCtrlStatus.visibility = View.VISIBLE
             updateRemoteControlStatus()
         }
@@ -1478,10 +1553,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val (sdp, candidates) = decoded
         when (sdp.type) {
             SessionDescription.Type.OFFER -> {
-                // 观看方收到 Offer：无连接时创建 PeerConnection 并回复 Answer；
-                // 已存在连接时（麦克风开关触发的重协商 Offer）复用现有 peer，直接更新远端描述
+                // host 收到 viewer 主动重协商 Offer（viewer 开摄像头/麦克风）：应答并回复 Answer
                 if (isHost) {
-                    updateUI("❌ 角色错配：共享方不应收到 Offer")
+                    if (viewerId > 0 && peer != null) {
+                        peer!!.handleViewerOffer(viewerId, sdp, candidates)
+                    } else {
+                        updateUI("❌ 角色错配：共享方不应收到 Offer")
+                    }
                     return
                 }
                 updateUI("正在建立连接...")
@@ -1507,9 +1585,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 candidates.forEach { p.addIceCandidate(it) }
             }
             SessionDescription.Type.ANSWER -> {
-                // 共享方收到指定 viewer 的 Answer：完成该 viewer 的 P2P 连接
+                // 观看方收到 host 对其主动重协商（开摄像头/麦克风）的 Answer：应用到已有连接
                 if (!isHost) {
-                    updateUI("❌ 角色错配：观看方不应收到 Answer")
+                    val p = peer
+                    if (p == null) {
+                        updateUI("❌ 连接已失效，请重新发起共享")
+                        return
+                    }
+                    p.setRemoteDescription(sdp)
+                    candidates.forEach { p.addIceCandidate(it) }
                     return
                 }
                 if (viewerId > 0) {
@@ -1634,6 +1718,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
+    /** host：viewer 主动重协商（开摄像头/麦克风）时，将其 Answer 转发给该 viewer */
+    override fun onViewerOfferIncoming(viewerId: Int, sdp: SessionDescription) {
+        if (signalMode) {
+            // 候选走增量路径（onViewerIceCandidate 带 viewerId 发送），Answer 不携带主连接候选
+            signalClient?.sendRelay(SignalManager.encodeAnswer(sdp, emptyList()), viewerId)
+        }
+    }
+
+    /** viewer：收到 host 的摄像头视频轨 → 显示到 PIP 小窗 */
+    override fun onRemoteCameraTrack(videoTrack: VideoTrack) {
+        runOnUiThread { setupCameraPip(videoTrack) }
+    }
+
+    /** host：收到 viewer 的摄像头视频轨 → 显示到 PIP 小窗 */
+    override fun onViewerCameraTrack(viewerId: Int, videoTrack: VideoTrack) {
+        runOnUiThread { setupCameraPip(videoTrack) }
+    }
+
     /** host：新 viewer 加入——创建独立连接并发送 Offer */
     private fun handleViewerJoined(viewerId: Int) {
         if (!isHost) return
@@ -1698,7 +1800,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.btnStop.visibility = View.VISIBLE
             binding.btnStop.isEnabled = true
             binding.btnMic.visibility = View.VISIBLE
+            binding.btnCamera.visibility = View.VISIBLE
             updateMicButton()
+            updateVideoCallButton()
 
             if (isHost) {
                 // 共享方本地不显示预览视频（自己看屏幕即可），仅更新控制状态 UI
@@ -1867,6 +1971,59 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         // 预创建常驻全屏 renderer（隐藏状态下保留 surface），点全屏时瞬间显示
         prepareFullscreenRenderer()
+    }
+
+    // ======================== 视频通话 PIP 小窗 ========================
+
+    private var cameraPipTrack: VideoTrack? = null
+    private var cameraPipSink: VideoSink? = null
+    private var cameraPipRenderer: SurfaceViewRenderer? = null
+
+    /**
+     * 视频通话 PIP：把对方的摄像头人脸画面渲染到右上角小窗。
+     * host 与 viewer 通用（onRemoteCameraTrack / onViewerCameraTrack 都走这里）。
+     */
+    private fun setupCameraPip(track: VideoTrack) {
+        // 移除旧的 PIP sink / renderer，避免重连时残留
+        val oldTrack = cameraPipTrack
+        cameraPipSink?.let { oldTrack?.removeSink(it) }
+        cameraPipTrack = track
+        cameraPipRenderer?.let { old ->
+            if (old.parent == binding.flCameraPip) {
+                binding.flCameraPip.removeView(old)
+            }
+            old.release()
+        }
+        val renderer = SurfaceViewRenderer(this)
+        renderer.init(eglBaseContext, null)
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+        renderer.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        binding.flCameraPip.addView(renderer, 0)
+        cameraPipRenderer = renderer
+        binding.tvCameraPipHint.visibility = View.GONE
+        binding.flCameraPip.visibility = View.VISIBLE
+
+        cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
+        track.addSink(cameraPipSink!!)
+    }
+
+    /** 清理视频通话 PIP 小窗（断开/重置时调用） */
+    private fun releaseCameraPip() {
+        cameraPipSink?.let { cameraPipTrack?.removeSink(it) }
+        cameraPipSink = null
+        cameraPipTrack = null
+        cameraPipRenderer?.let { r ->
+            if (r.parent == binding.flCameraPip) {
+                binding.flCameraPip.removeView(r)
+            }
+            r.release()
+        }
+        cameraPipRenderer = null
+        binding.flCameraPip.visibility = View.GONE
+        binding.tvCameraPipHint.visibility = View.VISIBLE
     }
 
     // ======================== 全屏观看 ========================
@@ -2479,6 +2636,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun resetUI() {
         exitFullscreen()
         releaseFullscreenRenderer()
+        releaseCameraPip()
         binding.btnSignalHost.isEnabled = true
         binding.btnSignalJoin.isEnabled = true
         binding.btnStop.visibility = View.GONE
@@ -2496,6 +2654,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         ctrlDownSent = false
         currentFps = 60
         micMuted = false
+        videoCallOn = false
+        binding.btnCamera.visibility = View.GONE
         binding.btnMic.visibility = View.GONE
         binding.llTitle.visibility = View.VISIBLE
         binding.llStatus.visibility = View.VISIBLE

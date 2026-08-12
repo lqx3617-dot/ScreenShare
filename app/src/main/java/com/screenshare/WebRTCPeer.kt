@@ -5,6 +5,8 @@ import android.media.projection.MediaProjection
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
+import org.webrtc.Camera2Enumerator
+import org.webrtc.CameraVideoCapturer
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.DataChannel
@@ -21,6 +23,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoCapturer
+import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 
 /**
@@ -40,6 +43,7 @@ class WebRTCPeer(
         private const val TAG = "WebRTCPeer"
         const val SYSTEM_AUDIO_LABEL = "system-audio"
         const val CONTROL_LABEL = "control"
+        const val CAMERA_TRACK_ID = "camera_track"
 
         // STUN：公共服务器，让两端通过公网地址映射直连（覆盖大多数家用/移动网络场景）
         private val STUN_URLS = listOf(
@@ -103,6 +107,8 @@ class WebRTCPeer(
         /** 重连超过上限，连接彻底失败——用于 UI 给出可操作的诊断提示 */
         fun onConnectionFailed() {}
         fun onRemoteVideoTrack(videoTrack: VideoTrack)
+        /** 摄像头视频轨（远端 camera_track，视频通话人脸）。与屏幕轨同连接到达，按 track id 区分 */
+        fun onRemoteCameraTrack(videoTrack: VideoTrack) {}
         fun onIceGatheringComplete() {}
         /** ICE 状态变化（CHECKING/CONNECTED/FAILED...），用于 UI 显示诊断信息 */
         fun onIceState(state: String) {}
@@ -110,6 +116,10 @@ class WebRTCPeer(
         fun onViewerIceCandidate(viewerId: Int, candidate: IceCandidate) {}
         fun onViewerOfferReady(viewerId: Int, sdp: SessionDescription) {}
         fun onViewerRestarted(viewerId: Int) {}
+        /** viewer 主动重协商 Offer（开摄像头/麦克风时 viewer 发 Offer，host 需应答） */
+        fun onViewerOfferIncoming(viewerId: Int, sdp: SessionDescription) {}
+        /** host 端收到该 viewer 的远端摄像头视频轨 */
+        fun onViewerCameraTrack(viewerId: Int, videoTrack: VideoTrack) {}
         /** DataChannel 事件诊断（label + 状态变化），viewer 端用于确认控制/音频通道是否建立 */
         fun onDataChannelInfo(info: String) {}
     }
@@ -156,6 +166,17 @@ class WebRTCPeer(
     // 麦克风语音（会议内双向对讲）：标准 WebRTC 音频轨道
     private var micAudioSource: AudioSource? = null
     private var micSender: org.webrtc.RtpSender? = null
+
+    // 视频通话摄像头（camera_track）：前端摄像头实时采集，人脸画面。与屏幕轨（screen_track）并存，
+    // host 端挂到每个 viewer 连接、viewer 端挂到主连接；对端按 track id 区分渲染到 PIP 小窗
+    private var cameraCapturer: CameraVideoCapturer? = null
+    private var cameraVideoSource: VideoSource? = null
+    private var cameraVideoTrack: VideoTrack? = null
+    private var cameraSurfaceTextureHelper: SurfaceTextureHelper? = null
+    // host 端：每个 viewer 连接的摄像头发送器（同摄像头轨可 addTrack 到多条连接）
+    private val cameraViewerSenders = mutableMapOf<Int, org.webrtc.RtpSender>()
+    // viewer 端：主连接的摄像头发送器
+    private var cameraSender: org.webrtc.RtpSender? = null
 
     // ===== V3.1: WebRTC 连接状态管理 =====
     enum class ConnectionStatus { CONNECTING, CONNECTED, RECONNECTING, FAILED }
@@ -272,7 +293,13 @@ class WebRTCPeer(
 
         @Deprecated("Deprecated in Java")
         override fun onAddStream(stream: MediaStream?) {
-            stream?.videoTracks?.firstOrNull()?.let { listener.onRemoteVideoTrack(it) }
+            stream?.videoTracks?.firstOrNull()?.let { track ->
+                if (track.id() == CAMERA_TRACK_ID) {
+                    listener.onRemoteCameraTrack(track)
+                } else {
+                    listener.onRemoteVideoTrack(track)
+                }
+            }
         }
         @Deprecated("Deprecated in Java")
         override fun onRemoveStream(stream: MediaStream?) {}
@@ -319,12 +346,22 @@ class WebRTCPeer(
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
             val track = receiver?.track() as? VideoTrack
             if (track != null) {
-                listener.onRemoteVideoTrack(track)
+                if (track.id() == CAMERA_TRACK_ID) {
+                    listener.onRemoteCameraTrack(track)
+                } else {
+                    listener.onRemoteVideoTrack(track)
+                }
             }
         }
         override fun onTrack(track: RtpTransceiver?) {
             val vt = track?.receiver?.track() as? VideoTrack
-            if (vt != null) listener.onRemoteVideoTrack(vt)
+            if (vt != null) {
+                if (vt.id() == CAMERA_TRACK_ID) {
+                    listener.onRemoteCameraTrack(vt)
+                } else {
+                    listener.onRemoteVideoTrack(vt)
+                }
+            }
         }
     }
 
@@ -395,6 +432,13 @@ class WebRTCPeer(
             override fun onAddStream(stream: MediaStream?) {}
             @Deprecated("Deprecated in Java")
             override fun onRemoveStream(stream: MediaStream?) {}
+            override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                val track = receiver?.track() as? VideoTrack
+                if (track != null) {
+                    // host 端 viewer 连接收的远端视频轨即 viewer 的摄像头画面
+                    listener.onViewerCameraTrack(viewerId, track)
+                }
+            }
             override fun onDataChannel(channel: org.webrtc.DataChannel?) {
                 handleViewerDataChannel(viewerId, channel)
             }
@@ -437,6 +481,15 @@ class WebRTCPeer(
                 Log.w(TAG, "viewer#$viewerId 挂载麦克风轨失败")
             } else {
                 conn.micSender = ms
+            }
+        }
+        // 视频通话摄像头已开启时，新 viewer 连接同步挂载摄像头轨
+        cameraVideoTrack?.let { cam ->
+            val cs = pc.addTrack(cam)
+            if (cs == null) {
+                Log.w(TAG, "viewer#$viewerId 挂载摄像头轨失败")
+            } else {
+                cameraViewerSenders[viewerId] = cs
             }
         }
         AppLogger.webrtc("viewer#$viewerId connection created")
@@ -530,7 +583,46 @@ class WebRTCPeer(
         candidates.forEach { pc.addIceCandidate(it) }
     }
 
-    /** 为指定 viewer 投递 ICE 候选（host 端；对端 Answer 未就绪时缓冲） */
+    /**
+     * 处理 viewer 主动发起的重协商 Offer（viewer 开摄像头/麦克风时触发）。
+     * host 端为该 viewer 连接应用远端描述并生成 Answer，交回 MainActivity 转发。
+     */
+    fun handleViewerOffer(viewerId: Int, sdp: SessionDescription, candidates: List<IceCandidate>) {
+        val conn = viewerConnections[viewerId] ?: run {
+            Log.e(TAG, "handleViewerOffer: viewer#$viewerId 连接不存在")
+            return
+        }
+        val pc = conn.pc
+        pc.setRemoteDescription(object : SdpObserver {
+            override fun onSetSuccess() {
+                // 应用远端描述后自动生成 Answer（Trickle ICE：SDP 先回，候选随后增量）
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                }
+                pc.createAnswer(object : SdpObserver {
+                    override fun onCreateSuccess(answer: SessionDescription) {
+                        pc.setLocalDescription(object : SdpObserver {
+                            override fun onSetSuccess() {
+                                val ld = pc.localDescription
+                                listener.onViewerOfferIncoming(viewerId, ld ?: answer)
+                            }
+                            override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId answer setLocalDescription 失败: $error") }
+                            override fun onCreateSuccess(p0: SessionDescription?) {}
+                            override fun onCreateFailure(p0: String?) {}
+                        }, answer)
+                    }
+                    override fun onCreateFailure(error: String?) { Log.e(TAG, "viewer#$viewerId createAnswer 失败: $error") }
+                    override fun onSetSuccess() {}
+                    override fun onSetFailure(error: String?) {}
+                }, MediaConstraints())
+            }
+            override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId 重协商 setRemoteDescription 失败: $error") }
+            override fun onCreateSuccess(p0: SessionDescription?) {}
+            override fun onCreateFailure(p0: String?) {}
+        }, sdp)
+        candidates.forEach { pc.addIceCandidate(it) }
+    }
     private val pendingViewerCandidates = mutableMapOf<Int, MutableList<IceCandidate>>()
 
     fun addViewerIce(viewerId: Int, candidate: IceCandidate) {
@@ -708,6 +800,96 @@ class WebRTCPeer(
 
     /** 是否已开启麦克风 */
     fun isMicOn(): Boolean = micAudioSource != null
+
+    // ==================== 视频通话摄像头（实时人脸画面） ====================
+
+    /**
+     * 开启视频通话摄像头：用 Camera2 采集前端摄像头 → camera_track。
+     * host 端挂到每个 viewer 连接并重协商；viewer 端挂到主连接并主动发 Offer 重协商。
+     * @return true 表示摄像头已启动；false 表示失败（调用方应提示用户）
+     */
+    fun startCameraVideo(): Boolean {
+        if (disposed) return false
+        if (cameraVideoTrack != null) return true
+        return try {
+            val factory = getFactory()
+            val enumerator = Camera2Enumerator(context)
+            // 视频通话默认用前置摄像头（对方面向自己）；无前置则退回第一个可用
+            val deviceName = (enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) })
+                ?: enumerator.deviceNames.firstOrNull()
+                ?: return false
+            cameraSurfaceTextureHelper = SurfaceTextureHelper.create("CameraVideo", eglBaseContext)
+            val source = factory.createVideoSource(false)
+            val capturer = enumerator.createCapturer(deviceName, null)
+            capturer.initialize(cameraSurfaceTextureHelper, context, source.capturerObserver)
+            // 640x480 足够人脸通话清晰度且带宽友好（屏幕共享已是 1080p 主码流）
+            capturer.startCapture(640, 480, 30)
+            val track = factory.createVideoTrack(CAMERA_TRACK_ID, source)
+            track.setEnabled(true)
+            cameraCapturer = capturer
+            cameraVideoSource = source
+            cameraVideoTrack = track
+            // host 端：摄像头轨挂到每个 viewer 连接（同一轨可挂多条连接），并重协商让对端收到
+            if (viewerConnections.isNotEmpty()) {
+                viewerConnections.forEach { (vid, conn) ->
+                    val sender = conn.pc.addTrack(track)
+                    if (sender != null) {
+                        cameraViewerSenders[vid] = sender
+                        createOfferFor(vid)
+                    } else {
+                        Log.w(TAG, "viewer#$vid 挂载摄像头轨失败")
+                    }
+                }
+            } else {
+                // viewer 端：摄像头轨挂到主连接，随后由调用方 renegotiate() 发起 Offer
+                val pc = peerConnection
+                val sender = pc?.addTrack(track)
+                if (sender == null) {
+                    Log.e(TAG, "addTrack 摄像头失败")
+                    stopCameraVideo()
+                    return false
+                }
+                cameraSender = sender
+            }
+            Log.d(TAG, "视频通话摄像头已启动: $deviceName 640x480@30")
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "启动摄像头失败: ${t.message}")
+            stopCameraVideo()
+            false
+        }
+    }
+
+    /** 停止视频通话摄像头：从所有连接移除轨道并释放采集资源 */
+    fun stopCameraVideo() {
+        cameraSender?.let { s ->
+            try { peerConnection?.removeTrack(s) } catch (t: Throwable) {
+                Log.w(TAG, "移除摄像头轨道失败: ${t.message}")
+            }
+        }
+        cameraSender = null
+        viewerConnections.forEach { (vid, conn) ->
+            cameraViewerSenders.remove(vid)?.let { s ->
+                try { conn.pc.removeTrack(s) } catch (t: Throwable) {
+                    Log.w(TAG, "viewer#$vid 移除摄像头轨道失败: ${t.message}")
+                }
+            }
+        }
+        cameraViewerSenders.clear()
+        cameraVideoTrack?.dispose()
+        cameraVideoTrack = null
+        cameraVideoSource?.dispose()
+        cameraVideoSource = null
+        cameraCapturer?.stopCapture()
+        cameraCapturer?.dispose()
+        cameraCapturer = null
+        cameraSurfaceTextureHelper?.dispose()
+        cameraSurfaceTextureHelper = null
+        Log.d(TAG, "视频通话摄像头已停止")
+    }
+
+    /** 是否已开启视频通话摄像头 */
+    fun isCameraOn(): Boolean = cameraVideoTrack != null
 
     /**
      * 重协商：基于当前连接状态重新生成 Offer 并发出（供开启/关闭麦克风后更新 SDP）。
@@ -1501,6 +1683,7 @@ class WebRTCPeer(
         videoCapturer?.stopCapture()
         videoCapturer?.dispose()
         localVideoTrack?.dispose()
+        stopCameraVideo()
         try { micAudioSource?.dispose() } catch (_: Throwable) {}
         micAudioSource = null
         localAudioTrack?.dispose()
