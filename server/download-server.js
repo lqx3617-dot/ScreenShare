@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "拍照失败原因改用对话框完整显示（不再被 Toast 截断），便于查看具体错误码",
+  changelog: "修复平板拍照失败：JPEG 输出尺寸改用不超过 1920 的常规尺寸（部分平板对超大尺寸/无预览配置报 Function not implemented）",
   forced: false,
 };
 

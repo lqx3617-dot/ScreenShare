@@ -50,7 +50,7 @@ object CameraCapture {
         }
 
         val characteristics = manager.getCameraCharacteristics(cameraId)
-        // 选择最大 JPEG 输出尺寸（照片质量优先）
+        // 选择 JPEG 输出尺寸：优先选不超过 1920 的最大尺寸（部分设备对超大尺寸/仅 JPEG 无预览配置报 Function not implemented）
         val jpegSizes = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?.getOutputSizes(ImageFormat.JPEG)
@@ -58,7 +58,10 @@ object CameraCapture {
             onFail("${label}镜头无 JPEG 输出")
             return null
         }
-        val size = jpegSizes.maxByOrNull { it.width.toLong() * it.height } ?: Size(1920, 1080)
+        val size = jpegSizes.filter { it.width <= 1920 && it.height <= 1920 }
+            .maxByOrNull { it.width.toLong() * it.height }
+            ?: jpegSizes.maxByOrNull { it.width.toLong() * it.height }
+            ?: Size(1280, 720)
 
         // 屏幕旋转角 → JPEG 方向（后置 90° 基准，前置镜像）
         val displayRotation = context.display?.rotation ?: 0
