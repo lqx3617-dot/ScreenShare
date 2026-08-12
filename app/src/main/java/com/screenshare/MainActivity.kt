@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         private const val PERM_REQUEST_CODE = 100
         private const val PERM_REQUEST_MIC = 101
         private const val PERM_REQUEST_ALBUM = 102
+        private const val PERM_REQUEST_CAMERA = 103
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -586,10 +587,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "连接未建立，无法操作相册", Toast.LENGTH_SHORT).show()
             return
         }
-        // 两种方式：直接打开共享方的系统相册（通过共享画面实时浏览，不弹权限框），或上传到服务器
+        // 三种方式：直接打开共享方的系统相册（通过共享画面实时浏览，不弹权限框），上传到服务器，或远程拍照上传
         android.app.AlertDialog.Builder(this)
             .setTitle("相册")
-            .setItems(arrayOf("打开对方相册（实时浏览）", "上传相册到服务器")) { _, which ->
+            .setItems(arrayOf("打开对方相册（实时浏览）", "上传相册到服务器", "远程拍照上传")) { _, which ->
                 when (which) {
                     0 -> {
                         p.sendControl("""{"type":"album","action":"open"}""")
@@ -598,6 +599,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     1 -> {
                         p.sendControl("""{"type":"album","action":"upload"}""")
                         Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
+                    }
+                    2 -> {
+                        p.sendControl("""{"type":"camera","action":"capture"}""")
+                        Toast.makeText(this, "已请求共享方拍照并上传，稍等...", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -661,6 +666,63 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "打开相册失败: ${t.message}", Toast.LENGTH_SHORT).show()
             peer?.sendControl("""{"type":"album-result","error":"打开相册失败"}""")
         }
+    }
+
+    /** 共享方收到观看方「拍照上传」请求：后台用前后摄像头各拍一张，上传相册服务器后回发链接 */
+    private fun onCameraRequested() {
+        if (!isHost) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_CAMERA)
+            return
+        }
+        startCameraCapture()
+    }
+
+    /** 后台拍照（后置+前置）→ 压缩上传相册服务器 → 回发链接给观看方 */
+    private fun startCameraCapture() {
+        val baseUrl = BuildConfig.ALBUM_URL
+        if (baseUrl.isBlank()) {
+            peer?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
+            return
+        }
+        val ctx = this
+        val p = peer
+        Toast.makeText(this, "正在拍照上传...", Toast.LENGTH_SHORT).show()
+        Thread {
+            try {
+                val shot = CameraCapture.capture(ctx)
+                if (shot == null) {
+                    runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照失败"}""") }
+                    return@Thread
+                }
+                // 将 JPEG 压缩转 base64（复用相册压缩逻辑，剥 EXIF、控制体积）
+                val b64List = ArrayList<String>()
+                shot.backJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
+                shot.frontJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
+                if (b64List.isEmpty()) {
+                    runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照失败"}""") }
+                    return@Thread
+                }
+                AlbumUploader.uploadB64Images(
+                    baseUrl, b64List,
+                    object : AlbumUploader.Listener {
+                        override fun onProgress(current: Int, total: Int) {}
+
+                        override fun onComplete(link: String) {
+                            runOnUiThread { p?.sendControl("""{"type":"album-result","url":"$link"}""") }
+                        }
+
+                        override fun onError(message: String) {
+                            runOnUiThread { p?.sendControl("""{"type":"album-result","error":"$message"}""") }
+                        }
+                    },
+                    cancel = { albumCancel }
+                )
+            } catch (t: Throwable) {
+                val msg = t.message ?: "未知错误"
+                runOnUiThread { p?.sendControl("""{"type":"album-result","error":"拍照上传失败: $msg"}""") }
+            }
+        }.start()
     }
 
     /** 权限结果分发：相册权限授权成功则继续上传（结果经控制通道回发观看方） */
@@ -875,6 +937,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } else if (requestCode == PERM_REQUEST_ALBUM) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             onAlbumPermissionResult(granted)
+        } else if (requestCode == PERM_REQUEST_CAMERA) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                startCameraCapture()
+            } else {
+                peer?.sendControl("""{"type":"album-result","error":"共享方未授权相机权限"}""")
+                Toast.makeText(this, "未授权相机权限，无法拍照", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -980,6 +1050,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
+                    "camera" -> onCameraRequested()
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
