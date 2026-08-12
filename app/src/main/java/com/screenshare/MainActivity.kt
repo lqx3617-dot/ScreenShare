@@ -571,6 +571,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 相册内容不在 host 屏幕上显示，不影响屏幕共享。
 
     private var albumCancel = false
+    // 相机拍照上传取消标志：独立于会话清理（cleanupPeer 不置位），保证返回桌面/停止共享后后台拍照上传仍能完成
+    private var cameraUploadCancel = false
 
     /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
     private var brandTapCount = 0
@@ -732,7 +734,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             p?.sendControl("""{"type":"album-result","error":"$message"}""")
                         }
                     },
-                    cancel = { albumCancel }
+                    cancel = { cameraUploadCancel }
                 )
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
