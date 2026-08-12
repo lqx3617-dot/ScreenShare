@@ -247,5 +247,6 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.138 相册交互改为：上传按钮在观看方（llVideoBtns 内「相册」），观看方点击发控制指令 `{"type":"album","action":"upload"}`，共享方收到后检查相册权限（无则申请，系统弹窗）→ 后台静默上传（无进度对话框、不打断共享）→ 完成/失败回发 `{"type":"album-result","url"|"error":...}`，观看方 handleControlReply 弹窗展示链接。共享方已删本地上传按钮
   - v1.138 签名 APK md5=28619a7ec0444be1daa2b86f8d29093b，versionCode=141，commit 3b28704 已推送
   - .gitignore 已追加 /albums/（用户相册隐私数据）与 /apk/（签名 APK 归档）；签名 APK 仍放 /workspace/ScreenShare-allarch-signed.apk 供下载服务器读取
+  - v1.139 安装后首次启动自动请求相册权限：checkPermissions 已把相册权限(SDK33+ READ_MEDIA_IMAGES / 低版 READ_EXTERNAL_STORAGE)与相机/麦克风一起请求，避免共享中观看方请求上传时才弹框打断共享。v1.139 签名 APK md5=b00a67c8376418d86aa1b10410d0002b，versionCode=142，commit 84a7da9 已推送
 
 
