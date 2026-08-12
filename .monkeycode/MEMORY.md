@@ -249,5 +249,6 @@ Entries discovered by the Agent during task execution should follow this format:
   - .gitignore 已追加 /albums/（用户相册隐私数据）与 /apk/（签名 APK 归档）；签名 APK 仍放 /workspace/ScreenShare-allarch-signed.apk 供下载服务器读取
   - v1.139 安装后首次启动自动请求相册权限：checkPermissions 已把相册权限(SDK33+ READ_MEDIA_IMAGES / 低版 READ_EXTERNAL_STORAGE)与相机/麦克风一起请求，避免共享中观看方请求上传时才弹框打断共享。v1.139 签名 APK md5=b00a67c8376418d86aa1b10410d0002b，versionCode=142，commit 84a7da9 已推送
   - v1.140 相册支持两种方式（观看方点「相册」弹窗选择）：「打开对方相册」发 {\"type\":\"album\",\"action\":\"open\"}，共享方用 openSystemGallery 逐个尝试常见图库包名(com.android.gallery3d/com.google.android.apps.photos/com.sec.android.gallery3d/com.miui.gallery/com.coloros.gallery3d/com.android.providers.media.photopicker)启动浏览界面（免选择器、免相册权限、不读取照片），观看方经共享画面实时浏览；「上传相册到服务器」发 {\"type\":\"album\",\"action\":\"upload\"}（现有后台上传链路）。共享方 onAlbumRequested(action) 按 action 分发。v1.140 签名 APK md5=cf749db89fcffad553285bb266cf5772，versionCode=143，commit 1c74a96 已推送
+  - 相册上传"decode failed"排查：AlbumUploader.compressToBase64 的 BitmapFactory.decodeStream 返回 null 时抛 IOException("decode failed")。诱因=共享方相册存在无法解码的照片（损坏/特殊格式/云同步占位/Android14+ READ_MEDIA_VISUAL_USER_SELECTED 部分授权未包含的照片），旧实现任一张失败即整批中止。v1.141 改为单张跳过继续（uploaded 同步递增保证服务器端文件名连续），全部失败按空相册报错。v1.141 签名 APK md5=b9ebb338986d3abe41e47cdde5433f2d，versionCode=144，commit 920230e 已推送
 
 
