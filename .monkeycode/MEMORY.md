@@ -226,4 +226,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - V4 host 架构要点：1 对 1 模式实际视频承载在 viewer 连接（conn.videoSender/conn.pc），对主连接 videoSender 设置的 degradationPreference/码率不生效；降质逻辑必须作用于 viewer 连接（adaptViewerNetwork 传 conn.sender；applyEncoderLoadProfile 需遍历 viewerConnections 同步设 degradationPreference）
   - v1.135 签名 APK md5=19804f4cfcd536e092644660ac3efc69，versionCode=138，commit c48771f 已推送；若用户反馈非全屏动态画面仍卡，检查方向：viewer 连接 outFps/qualityLimit 是否统计到、采集分辨率降级是否生效
 
+[Project Knowledge Summary]
+- Date: 2026-08-12
+- Context: Discovered by Agent while 实现 v1.136 相册上传查看功能
+- Category: Operations & Deployment
+- Instructions:
+  - 相册服务器：`node /workspace/server/album-server.js`，端口 8096，公网 `https://8096-6d639d2de20eb686.monkeycode-ai.online`，存储 `/workspace/albums/<token>/`，会话 24h 过期自动清理；接口 create/upload/finish/status，网页 `/albums/<token>/`（App 侧用 `<token>/`，服务器 URL 拼接自 host）。**无 token 一律 404，不提供列表**
+  - 相册上传链路：host 后台 MediaStore 读取 → compressToBase64（2048px/JPEG85，剥 EXIF）→ POST JSON base64 单张上传 → finish 返回链接；单张失败重试 3 次，取消时仍 finish（已上传部分可看）
+  - 权限版本差异：Android 13+ 用 READ_MEDIA_IMAGES，Android 12- 用 READ_EXTERNAL_STORAGE（Manifest maxSdkVersion=32）；主界面 checkPermissions 仍请求 CAMERA 但 Manifest 已删该权限（v1.134），属无害遗留
+  - v1.136 签名 APK md5=30bbcc0e411f8d59b714ff6c5432bc5c，versionCode=139，commit eabcc3c 已推送；spec 位于 .monkeycode/specs/album-upload-view/
+
 
