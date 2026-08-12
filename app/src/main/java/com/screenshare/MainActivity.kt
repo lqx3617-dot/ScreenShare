@@ -758,6 +758,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             needed.add(Manifest.permission.CAMERA)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
             needed.add(Manifest.permission.RECORD_AUDIO)
+        // 相册权限：安装后首次启动自动请求，避免共享过程中观看方请求上传时才弹框打断共享
+        val albumPerm = if (android.os.Build.VERSION.SDK_INT >= 33) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (ContextCompat.checkSelfPermission(this, albumPerm) != PackageManager.PERMISSION_GRANTED)
+            needed.add(albumPerm)
 
         if (needed.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, needed.toTypedArray(), PERM_REQUEST_CODE)
@@ -769,7 +777,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (requestCode == PERM_REQUEST_CODE) {
             val denied = permissions.zip(grantResults.toTypedArray()).filter { it.second != PackageManager.PERMISSION_GRANTED }
             if (denied.isNotEmpty()) {
-                Toast.makeText(this, "需要相机和麦克风权限才能共享屏幕", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "需要相机、麦克风和相册权限才能使用完整功能", Toast.LENGTH_LONG).show()
             }
         } else if (requestCode == PERM_REQUEST_MIC) {
             // 麦克风权限结果：授权成功则直接开启麦克风（与点击按钮走相同流程）

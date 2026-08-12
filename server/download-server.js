@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "相册上传按钮移到观看方，观看方点击后共享方后台静默上传",
+  changelog: "安装后首次启动自动请求相册权限",
   forced: false,
 };
 
