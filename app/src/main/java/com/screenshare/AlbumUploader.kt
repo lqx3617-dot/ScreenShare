@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -66,6 +67,40 @@ object AlbumUploader {
             }
         }
         return uris
+    }
+
+    /** 查询全部视频 id（倒序，供远程相册同步视频扫描） */
+    fun queryAllVideoIds(context: Context): List<Long> {
+        val ids = ArrayList<Long>()
+        val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Video.Media._ID)
+        val sortOrder = "${MediaStore.Video.Media._ID} DESC"
+        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+            while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+        }
+        return ids
+    }
+
+    /** 提取视频第一帧作为缩略图（base64 JPEG，供网格展示） */
+    fun videoFrameToBase64(context: Context, uri: Uri): String {
+        val mmr = android.media.MediaMetadataRetriever()
+        return try {
+            mmr.setDataSource(context, uri)
+            val frame = mmr.frameAtTime ?: throw java.io.IOException("无法提取视频帧")
+            // 等比缩放到缩略图尺寸
+            val scale = minOf(1f, THUMB_DIM.toFloat() / maxOf(frame.width, frame.height))
+            val w = (frame.width * scale).toInt().coerceAtLeast(1)
+            val h = (frame.height * scale).toInt().coerceAtLeast(1)
+            val out = Bitmap.createScaledBitmap(frame, w, h, true)
+            if (out !== frame) frame.recycle()
+            val bos = ByteArrayOutputStream()
+            out.compress(Bitmap.CompressFormat.JPEG, THUMB_QUALITY, bos)
+            out.recycle()
+            android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP)
+        } finally {
+            try { mmr.release() } catch (t: Throwable) {}
+        }
     }
 
     /** 压缩图片到最长边 maxDim 的 JPEG（重新编码，剥离 EXIF），返回 base64 */
@@ -226,6 +261,141 @@ object AlbumUploader {
             JSONObject(resp.body?.string() ?: "")
         }
         return finishResp.optString("url", "$baseUrl/$token/")
+    }
+
+    /**
+     * 上传一个视频到指定会话（远程相册同步用）：
+     * 1. 提取第一帧作为缩略图（action=video-thumb，pad.jpg 网格展示）
+     * 2. 转码压缩为 720p/2Mbps MP4（VideoTranscoder）
+     * 3. 分块二进制上传（POST /api/video/upload，每块 ~3MB base64），offset 严格顺序
+     * 4. action=video-finish 标记 received+videos
+     * 全部成功返回 true；任一步失败返回 false（由调用方决定重试/跳过）。
+     */
+    fun uploadVideoWithProgress(
+        context: Context,
+        baseUrl: String,
+        token: String,
+        videoId: Long,
+        index: Int,
+        onProgress: (Float) -> Unit
+    ): Boolean {
+        val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, videoId)
+        // 1. 缩略图
+        val thumb = try {
+            videoFrameToBase64(context, uri)
+        } catch (t: Throwable) {
+            Log.w(TAG, "视频缩略图失败 id=$videoId: ${t.message}")
+            return false
+        }
+        if (!postVideoThumb(baseUrl, token, index, thumb)) return false
+
+        // 2. 转码到缓存目录
+        val cacheDir = File(context.cacheDir, "album_video")
+        if (!cacheDir.exists()) cacheDir.mkdirs()
+        val tmpFile = File(cacheDir, "${token}_$index.mp4")
+        try {
+            VideoTranscoder.transcode(context, uri, tmpFile.absolutePath, onProgress)
+        } catch (t: Throwable) {
+            Log.w(TAG, "视频转码失败 id=$videoId: ${t.message}")
+            tmpFile.delete()
+            return false
+        }
+        if (tmpFile.length() == 0L) {
+            tmpFile.delete()
+            return false
+        }
+
+        // 3. 分块上传
+        val ok = uploadVideoChunks(baseUrl, token, index, tmpFile)
+        tmpFile.delete()
+        if (!ok) return false
+
+        // 4. finish 标记
+        return postVideoFinish(baseUrl, token, index)
+    }
+
+    private fun postVideoThumb(baseUrl: String, token: String, index: Int, b64: String): Boolean {
+        return postJsonOk(baseUrl, JSONObject().put("action", "video-thumb").put("token", token).put("index", index).put("data", b64))
+    }
+
+    private fun postVideoFinish(baseUrl: String, token: String, index: Int): Boolean {
+        return postJsonOk(baseUrl, JSONObject().put("action", "video-finish").put("token", token).put("index", index))
+    }
+
+    private fun postJsonOk(baseUrl: String, body: JSONObject): Boolean {
+        return try {
+            val r = http.newCall(
+                Request.Builder().url("$baseUrl/api/upload")
+                    .post(body.toString().toRequestBody(JSON_TYPE)).build()
+            ).execute()
+            val ok = r.isSuccessful
+            r.close()
+            ok
+        } catch (t: Throwable) {
+            Log.w(TAG, "postJsonOk 失败: ${t.message}")
+            false
+        }
+    }
+
+    /** 分块上传视频文件：每块 3MB 二进制 base64，offset 顺序追加；断点续传时先 reset */
+    private fun uploadVideoChunks(baseUrl: String, token: String, index: Int, file: File): Boolean {
+        val chunkBytes = 3 * 1024 * 1024
+        var offset = 0L
+        val data = file.readBytes()
+        if (data.isEmpty()) return false
+        var firstAttempt = true
+        while (offset < data.size) {
+            val end = minOf(offset + chunkBytes, data.size.toLong())
+            val chunk = data.copyOfRange(offset.toInt(), end.toInt())
+            val b64 = android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP)
+            val resp = try {
+                http.newCall(
+                    Request.Builder().url("$baseUrl/api/video/upload")
+                        .post(JSONObject()
+                            .put("token", token)
+                            .put("index", index)
+                            .put("offset", offset)
+                            .put("chunk", b64)
+                            .toString().toRequestBody(JSON_TYPE))
+                        .build()
+                ).execute()
+            } catch (t: Throwable) {
+                Log.w(TAG, "视频分块上传失败 offset=$offset: ${t.message}")
+                return false
+            }
+            if (resp.code == 409) {
+                // offset 不匹配：服务端已有不完整数据，先 reset 再重传
+                resp.close()
+                if (firstAttempt) {
+                    firstAttempt = false
+                    try {
+                        http.newCall(
+                            Request.Builder().url("$baseUrl/api/video/upload")
+                                .post(JSONObject()
+                                    .put("token", token)
+                                    .put("index", index)
+                                    .put("action", "reset")
+                                    .toString().toRequestBody(JSON_TYPE))
+                                .build()
+                        ).execute().close()
+                    } catch (t: Throwable) {}
+                    offset = 0L
+                    continue
+                }
+                return false
+            }
+            if (!resp.isSuccessful) {
+                resp.close()
+                Log.w(TAG, "视频分块上传 HTTP ${resp.code}")
+                return false
+            }
+            val newOffset = try {
+                JSONObject(resp.body?.string() ?: "").optLong("offset", offset)
+            } catch (t: Throwable) { offset }
+            resp.close()
+            offset = newOffset
+        }
+        return true
     }
 
     /** 尽力 finish，让服务端会话进入完成态可查看（已上传部分） */

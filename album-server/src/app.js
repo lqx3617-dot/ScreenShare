@@ -113,6 +113,35 @@ app.post("/api/upload", (req, res) => {
     }
   }
 
+  if (action === "video-thumb") {
+    // 视频缩略图：网格展示用，与照片共用 pad.jpg 通道；received 标记由后续 video-finish 完成
+    const index = parseInt(body.index, 10);
+    const data = String(body.data || "");
+    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    if (!data) return json(res, 400, { error: "empty data" });
+    try {
+      const buf = Buffer.from(data, "base64");
+      fs.writeFileSync(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
+      console.log(`[album] ${new Date().toISOString()} video-thumb ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      console.log(`[album] ${new Date().toISOString()} video-thumb-write-fail ${token} idx=${index}: ${e.message}`);
+      return json(res, 500, { error: "write failed" });
+    }
+  }
+
+  if (action === "video-finish") {
+    // 视频全部字节上传完成：received + videos 标记（缩略图已存），total 取最大 index
+    const index = parseInt(body.index, 10);
+    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    session.received.add(index);
+    session.videos.add(index);
+    session.total = Math.max(session.total, index);
+    db.saveSession(session);
+    console.log(`[album] ${new Date().toISOString()} video-finish ${token} idx=${index}`);
+    return json(res, 200, { ok: true, received: session.received.size, total: session.total });
+  }
+
   if (action === "original") {
     const index = parseInt(body.index, 10);
     const data = String(body.data || "");
@@ -142,6 +171,85 @@ app.post("/api/upload", (req, res) => {
   }
 
   return json(res, 400, { error: "unknown action" });
+});
+
+// ==================== 视频分块上传 / 播放流 ====================
+// 视频文件较大，不经过 base64 JSON，直接二进制分块追加：
+//   POST /api/video/upload body={token, index, offset, chunk(base64)}  每块二进制(转码后分块)
+//   GET  /api/video?token=<t>&index=N  → 视频流（支持 Range，观看方拖动进度）
+const VIDEO_CHUNK = 3 * 1024 * 1024; // 单块目标 3MB 二进制
+
+app.post("/api/video/upload", (req, res) => {
+  const body = req.body || {};
+  const token = String(body.token || "");
+  const index = parseInt(body.index, 10);
+  const session = loadSession(token);
+  if (!session) return json(res, 404, { error: "session not found" });
+  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+
+  if (body.action === "reset") {
+    // 断点续传失败重新开始时清空已写文件
+    try {
+      fs.rmSync(path.join(sessionDir(token), "video", `${pad(index)}.mp4`), { force: true });
+    } catch (e) {}
+    return json(res, 200, { ok: true });
+  }
+
+  const chunk = body.chunk;
+  if (!chunk || typeof chunk !== "string") return json(res, 400, { error: "empty chunk" });
+  try {
+    const buf = Buffer.from(chunk, "base64");
+    if (buf.length === 0) return json(res, 400, { error: "empty chunk" });
+    const dir = path.join(sessionDir(token), "video");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${pad(index)}.mp4`);
+    // offset 断言：必须与当前文件长度一致（顺序写入），不一致说明客户端丢块
+    const offset = parseInt(body.offset, 10) || 0;
+    let cur = 0;
+    try {
+      cur = fs.statSync(file).size;
+    } catch (e) {}
+    if (cur !== offset) {
+      return json(res, 409, { error: "offset mismatch", expected: cur, got: offset });
+    }
+    fs.appendFileSync(file, buf);
+    console.log(`[album] ${new Date().toISOString()} video-chunk ${token} idx=${index} offset=${offset}+${buf.length}`);
+    return json(res, 200, { ok: true, offset: cur + buf.length });
+  } catch (e) {
+    console.log(`[album] ${new Date().toISOString()} video-chunk-fail ${token} idx=${index}: ${e.message}`);
+    return json(res, 500, { error: "write failed" });
+  }
+});
+
+app.get("/api/video", (req, res) => {
+  const token = String(req.query.token || "");
+  const index = parseInt(req.query.index, 10);
+  const session = loadSession(token);
+  if (!session) return json(res, 404, { error: "session not found" });
+  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  const file = path.join(sessionDir(token), "video", `${pad(index)}.mp4`);
+  if (!fileExists(file)) return json(res, 404, { error: "video not ready" });
+  const stat = fs.statSync(file);
+  const range = req.headers.range;
+  let start = 0, end = stat.size - 1, code = 200;
+  const headers = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": stat.size, "Cache-Control": "public, max-age=86400" };
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    if (m && (m[1] || m[2])) {
+      start = m[1] ? parseInt(m[1], 10) : 0;
+      end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+      if (start > end || start >= stat.size) {
+        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+        return res.end();
+      }
+      end = Math.min(end, stat.size - 1);
+      code = 206;
+      headers["Content-Length"] = end - start + 1;
+      headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
+    }
+  }
+  res.writeHead(code, headers);
+  fs.createReadStream(file, { start, end }).pipe(res);
 });
 
 // ==================== GET 状态/按需原图/轮询 ====================
@@ -200,6 +308,7 @@ app.get("/api/albums", (req, res) => {
       token: s.token,
       total: s.total,
       received: s.received,
+      videos: s.videos,
       done: s.done,
       createdAt: s.createdAt,
       device: s.device,

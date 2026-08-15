@@ -21,6 +21,7 @@ import android.widget.ProgressBar
 import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -90,7 +91,7 @@ class MainActivity : AppCompatActivity() {
 
         rvGrid.layoutManager = GridLayoutManager(this, 3)
         rvGrid.adapter = adapter
-        adapter.onThumbClick = { index -> showFullScreen(index) }
+        adapter.onThumbClick = { index -> onThumbClick(index) }
         adapter.onThumbLongClick = { index -> saveImage(index) }
 
         findViewById<View>(R.id.btn_back).setOnClickListener {
@@ -389,6 +390,44 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 网格点击：视频播放，照片全屏查看 */
+    private fun onThumbClick(position: Int) {
+        val photo = adapter.photoAt(position) ?: return
+        if (photo.isVideo) {
+            playVideo(photo)
+        } else {
+            showFullScreen(position)
+        }
+    }
+
+    /** 视频全屏播放（内嵌 VideoView，支持流式加载与拖动） */
+    private fun playVideo(photo: AlbumPhoto) {
+        val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
+        val vv = VideoView(this)
+        vv.setBackgroundColor(android.graphics.Color.BLACK)
+        vv.setOnPreparedListener { mp ->
+            mp.setOnVideoSizeChangedListener { _, w, h -> if (w > 0 && h > 0) mp.start() }
+            mp.setOnErrorListener { _, _, _ ->
+                Toast.makeText(this, "视频加载失败", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                true
+            }
+        }
+        vv.setOnClickListener { if (vv.isPlaying) vv.pause() else vv.start() }
+        vv.setOnCompletionListener { dialog.dismiss() }
+        dialog.setContentView(vv)
+        dialog.window?.apply {
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawableResource(android.R.color.transparent)
+        }
+        dialog.setOnDismissListener { try { vv.stopPlayback() } catch (t: Throwable) {} }
+        dialog.show()
+        vv.setVideoURI(Uri.parse(api.videoUrl(photo.token, photo.index)))
+    }
+
     private fun showFullScreen(position: Int) {
         val photo = adapter.photoAt(position) ?: return
         val token = photo.token
@@ -554,6 +593,7 @@ class MainActivity : AppCompatActivity() {
                 placeholder(android.R.color.darker_gray)
                 error(android.R.color.darker_gray)
             }
+            holder.vb.visibility = if (photo.isVideo) View.VISIBLE else View.GONE
             holder.itemView.setOnClickListener { onThumbClick?.invoke(position) }
             holder.itemView.setOnLongClickListener {
                 onThumbLongClick?.invoke(position)
@@ -565,6 +605,7 @@ class MainActivity : AppCompatActivity() {
 
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
             val iv: ImageView = itemView.findViewById(R.id.iv_thumb)
+            val vb: View = itemView.findViewById(R.id.vb_play)
         }
     }
 }

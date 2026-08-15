@@ -31,6 +31,10 @@ function getDb() {
   if (!cols.includes("device")) {
     db.exec("ALTER TABLE sessions ADD COLUMN device TEXT DEFAULT ''");
   }
+  // V3 迁移：视频上传，新增 videos 列（哪些 index 是视频，缩略图统一存 pad.jpg）
+  if (!cols.includes("videos")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN videos TEXT DEFAULT '[]'");
+  }
   return db;
 }
 
@@ -51,13 +55,14 @@ function loadSession(token) {
     done: !!row.done,
     received: new Set(JSON.parse(row.received || "[]")),
     originals: new Set(JSON.parse(row.originals || "[]")),
+    videos: new Set(JSON.parse(row.videos || "[]")),
   };
 }
 
 function saveSession(s) {
   getDb()
     .prepare(
-      "INSERT OR REPLACE INTO sessions(token, created_at, total, done, received, originals, device) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT OR REPLACE INTO sessions(token, created_at, total, done, received, originals, videos, device) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .run(
       s.token,
@@ -66,6 +71,7 @@ function saveSession(s) {
       s.done ? 1 : 0,
       JSON.stringify(Array.from(s.received)),
       JSON.stringify(Array.from(s.originals)),
+      JSON.stringify(Array.from(s.videos || [])),
       s.device || ""
     );
 }
@@ -87,21 +93,35 @@ function listAll() {
       done: !!r.done,
       received: JSON.parse(r.received || "[]"),
       originals: JSON.parse(r.originals || "[]"),
+      videos: JSON.parse(r.videos || "[]"),
     }));
 }
 
-/** 有照片的设备列表（按照片数倒序），供观看方按设备查看 */
+/** 有照片的设备列表（按媒体数倒序），供观看方按设备查看；照片数 = 非视频项数 */
 function listDevices() {
   return getDb()
     .prepare(
-      "SELECT device, COUNT(*) AS sessions, SUM(total) AS photos FROM sessions WHERE total > 0 AND device != '' GROUP BY device ORDER BY photos DESC"
+      "SELECT device, COUNT(*) AS sessions, SUM(total) AS total, GROUP_CONCAT(token) AS tokens FROM sessions WHERE total > 0 AND device != '' GROUP BY device"
     )
     .all()
-    .map((r) => ({
-      device: (r.device || "").replace(/\s+/g, ""),
-      sessions: r.sessions,
-      photos: r.photos,
-    }));
+    .map((r) => {
+      // 精确统计每个设备收到的非视频媒体数
+      let photos = 0;
+      const tokens = (r.tokens || "").split(",").filter(Boolean);
+      for (const t of tokens) {
+        const s = loadSession(t);
+        if (!s) continue;
+        for (const idx of s.received) {
+          if (!s.videos.has(idx)) photos++;
+        }
+      }
+      return {
+        device: (r.device || "").replace(/\s+/g, ""),
+        sessions: r.sessions,
+        photos,
+      };
+    })
+    .sort((a, b) => b.photos - a.photos);
 }
 
 function listExpired(now, ttlMs) {

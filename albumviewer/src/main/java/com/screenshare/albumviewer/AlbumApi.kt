@@ -17,10 +17,11 @@ data class AlbumStatus(
     val received: Int,
 )
 
-/** 聚合相册中的一张照片：所属会话 token + 该会话内的照片序号 */
+/** 聚合相册中的一张照片：所属会话 token + 该会话内的照片序号 + 是否为视频 */
 data class AlbumPhoto(
     val token: String,
     val index: Int,
+    val isVideo: Boolean = false,
 )
 
 /** 远程相册同步：有照片的设备（按设备分组查看） */
@@ -129,11 +130,23 @@ class AlbumApi(private val context: Context) {
             val a = arr.optJSONObject(i) ?: continue
             val token = a.optString("token", "")
             val recv = a.optJSONArray("received") ?: continue
+            // 视频 index 集合（该会话内哪些序号是视频）
+            val videos = mutableSetOf<Int>()
+            val vArr = a.optJSONArray("videos")
+            if (vArr != null) {
+                for (k in 0 until vArr.length()) videos.add(vArr.optInt(k))
+            }
             for (k in 0 until recv.length()) {
-                list.add(AlbumPhoto(token, recv.optInt(k)))
+                val idx = recv.optInt(k)
+                list.add(AlbumPhoto(token, idx, idx in videos))
             }
         }
         return list
+    }
+
+    /** 视频播放地址（支持 Range 拖动） */
+    fun videoUrl(token: String, index: Int): String {
+        return "$baseUrl/api/video?token=$token&index=$index"
     }
 
     /**

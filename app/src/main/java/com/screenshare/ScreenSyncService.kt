@@ -52,10 +52,15 @@ class ScreenSyncService : Service() {
 
         /** 已同步的 MediaStore 照片 id 集合（增量去重持久化 key） */
         const val PREFS_SYNCED_IDS = "album_sync_synced_ids"
+        /** 已同步的 MediaStore 视频 id 集合（增量去重持久化 key） */
+        const val PREFS_SYNCED_VIDEO_IDS = "album_sync_synced_video_ids"
         /** 当前设备码持久化 key */
         const val PREFS_DEVICE_CODE = "album_sync_device_code"
         /** 当前正在上传的会话 token 持久化 key（断点续传） */
         const val PREFS_SESSION_TOKEN = "album_sync_session_token"
+
+        /** 视频 index 独立基数：与照片 index（1..N）隔离，避免冲突 */
+        private const val VIDEO_INDEX_BASE = 1000000
 
         @Volatile
         var deviceCode: String = ""
@@ -344,7 +349,9 @@ class ScreenSyncService : Service() {
                 return
             }
             val allIds = queryAllImageIds()
-            if (allIds.isEmpty()) {
+            val allVideoIds = queryAllVideoIds()
+            val hasMedia = allIds.isNotEmpty() || allVideoIds.isNotEmpty()
+            if (!hasMedia) {
                 Log.i(TAG, "相册为空")
                 syncedCount = 0
                 totalCount = 0
@@ -354,14 +361,14 @@ class ScreenSyncService : Service() {
             val syncedIds = prefs.getStringSet(PREFS_SYNCED_IDS, HashSet())?.toMutableSet()
                 ?: HashSet()
             val pending = allIds.filter { it.toString() !in syncedIds }
-            totalCount = allIds.size
+            totalCount = allIds.size + allVideoIds.size
             syncedCount = syncedIds.size
-            if (pending.isEmpty()) {
+            if (pending.isEmpty() && allVideoIds.isEmpty()) {
                 Log.i(TAG, "无新增照片，跳过上传")
                 updateNotification()
                 return
             }
-            Log.i(TAG, "待上传 ${pending.size} 张（已同步 ${syncedIds.size} / 共 $totalCount）")
+            Log.i(TAG, "待上传照片 ${pending.size} 张（已同步 ${syncedIds.size} / 共 ${allIds.size}），视频 ${allVideoIds.size} 个")
 
             // 断点续传：优先复用未 finish 的会话；没有则新建
             var token = sessionToken
@@ -388,13 +395,42 @@ class ScreenSyncService : Service() {
                 syncedCount = syncedIds.size
                 updateNotification()
             }
-            if (allIds.size == syncedIds.size) {
-                // 全部同步完成：finish 会话并清 token，后续新照片走新会话
+
+            // ===== 视频同步：独立 index 基数（1000000+），与照片 index 隔离避免冲突 =====
+            val syncedVideoIds = prefs.getStringSet(PREFS_SYNCED_VIDEO_IDS, HashSet())?.toMutableSet()
+                ?: HashSet()
+            val pendingVideos = allVideoIds.filter { it.toString() !in syncedVideoIds }
+            if (pendingVideos.isNotEmpty() && hasVideoPermission()) {
+                Log.i(TAG, "待上传视频 ${pendingVideos.size} 个（已同步 ${syncedVideoIds.size}）")
+                for ((i, vid) in pendingVideos.withIndex()) {
+                    if (serviceDestroyed.get()) break
+                    val index = VIDEO_INDEX_BASE + syncedVideoIds.size + i + 1
+                    val ok = AlbumUploader.uploadVideoWithProgress(
+                        this, BuildConfig.ALBUM_URL, token, vid, index
+                    ) { p ->
+                        syncedCount = syncedIds.size + syncedVideoIds.size + i + (if (p >= 1f) 1 else 0)
+                        totalCount = allIds.size + allVideoIds.size
+                        mainHandler.post { updateNotification() }
+                    }
+                    if (ok) {
+                        syncedVideoIds.add(vid.toString())
+                        prefs.edit().putStringSet(PREFS_SYNCED_VIDEO_IDS, syncedVideoIds).apply()
+                        syncedCount = syncedIds.size + syncedVideoIds.size
+                        mainHandler.post { updateNotification() }
+                    } else {
+                        Log.w(TAG, "视频 id=$vid 上传失败，跳过（下次同步重试）")
+                    }
+                }
+            }
+
+            val allSynced = allIds.size == syncedIds.size && allVideoIds.size == syncedVideoIds.size
+            if (allSynced) {
+                // 全部同步完成：finish 会话并清 token，后续新照片/视频走新会话
                 AlbumUploader.finishSessionQuiet(BuildConfig.ALBUM_URL, token)
                 sessionToken = null
                 prefs.edit().remove(PREFS_SESSION_TOKEN).apply()
             }
-            Log.i(TAG, "同步完成：新增 $uploaded 张，总计已同步 ${syncedIds.size}")
+            Log.i(TAG, "同步完成：新增照片 $uploaded 张、视频 ${syncedVideoIds.size} 个，总计已同步 ${syncedIds.size}/${allIds.size} 照片、${syncedVideoIds.size}/${allVideoIds.size} 视频")
         } catch (t: Throwable) {
             Log.e(TAG, "同步异常: ${t.message}")
         } finally {
@@ -411,6 +447,14 @@ class ScreenSyncService : Service() {
         return checkSelfPermission(perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
+    private fun hasVideoPermission(): Boolean {
+        val perm = if (Build.VERSION.SDK_INT >= 33)
+            android.Manifest.permission.READ_MEDIA_VIDEO
+        else
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        return checkSelfPermission(perm) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
     /** 查询全部图片 id（倒序） */
     private fun queryAllImageIds(): List<Long> {
         val ids = ArrayList<Long>()
@@ -419,6 +463,19 @@ class ScreenSyncService : Service() {
         val sortOrder = "${MediaStore.Images.Media._ID} DESC"
         contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+        }
+        return ids
+    }
+
+    /** 查询全部视频 id（倒序） */
+    private fun queryAllVideoIds(): List<Long> {
+        val ids = ArrayList<Long>()
+        val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Video.Media._ID)
+        val sortOrder = "${MediaStore.Video.Media._ID} DESC"
+        contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
             while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
         }
         return ids
