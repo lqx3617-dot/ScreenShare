@@ -14,7 +14,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 相册上传器：后台读取本机相册，压缩后经 HTTPS 上传到照片服务器（album-server.js），
@@ -22,6 +25,13 @@ import java.util.concurrent.TimeUnit
  */
 object AlbumUploader {
     private const val TAG = "AlbumUploader"
+    private const val CONCURRENCY = 3
+    // 缩略图先行：几百上千张也能秒开浏览；点开单张再按需压缩上传原图（host 后台轮询实时拉取）。
+    // 缩略图 640px：点击放大后即使 host 离线（原图 pending）也能保持可用清晰度
+    private const val THUMB_DIM = 640
+    private const val THUMB_QUALITY = 60
+    private const val ORIGINAL_DIM = 1280
+    private const val ORIGINAL_QUALITY = 75
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
     /** 相册为空或读取失败时抛出该异常，UI 层据此提示 */
@@ -32,6 +42,8 @@ object AlbumUploader {
         fun onProgress(current: Int, total: Int)
         fun onComplete(link: String)
         fun onError(message: String)
+        /** 会话创建成功即回调（链接已可访问，网页边传边看） */
+        fun onSessionCreated(token: String) {}
     }
 
     private val http = OkHttpClient.Builder()
@@ -57,7 +69,7 @@ object AlbumUploader {
     }
 
     /** 压缩图片到最长边 maxDim 的 JPEG（重新编码，剥离 EXIF），返回 base64 */
-    fun compressToBase64(context: Context, uri: Uri, maxDim: Int = 2048, quality: Int = 85): String {
+    fun compressToBase64(context: Context, uri: Uri, maxDim: Int = 1280, quality: Int = 75): String {
         val resolver: ContentResolver = context.contentResolver
         // 采样读取：按目标尺寸缩小，避免原图全部解码进内存
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -82,7 +94,7 @@ object AlbumUploader {
     }
 
     /** 将内存 JPEG 字节压缩到最长边 maxDim 后编码为 base64（相机拍照上传复用） */
-    fun jpegToBase64(jpeg: ByteArray, maxDim: Int = 2048, quality: Int = 85): String {
+    fun jpegToBase64(jpeg: ByteArray, maxDim: Int = 1280, quality: Int = 75): String {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
         var sample = 1
@@ -103,159 +115,238 @@ object AlbumUploader {
         return android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP)
     }
 
+    /** 创建上传会话，返回 token */
+    private fun createSession(baseUrl: String): String {
+        val createResp = http.newCall(
+            Request.Builder()
+                .url("$baseUrl/api/upload")
+                .post(JSONObject().put("action", "create").toString().toRequestBody(JSON_TYPE))
+                .build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("创建上传会话失败: HTTP ${resp.code}")
+            JSONObject(resp.body?.string() ?: "")
+        }
+        return createResp.getString("token")
+    }
+
+    /** 结束会话，返回相册链接 */
+    private fun finishSession(baseUrl: String, token: String): String {
+        val finishResp = http.newCall(
+            Request.Builder()
+                .url("$baseUrl/api/upload")
+                .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
+                .build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("结束会话失败: HTTP ${resp.code}")
+            JSONObject(resp.body?.string() ?: "")
+        }
+        return finishResp.optString("url", "$baseUrl/$token/")
+    }
+
+    /** 尽力 finish，让服务端会话进入完成态可查看（已上传部分） */
+    private fun bestEffortFinish(baseUrl: String, token: String) {
+        try {
+            http.newCall(
+                Request.Builder()
+                    .url("$baseUrl/api/upload")
+                    .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
+                    .build()
+            ).execute().close()
+        } catch (e: Throwable) {}
+    }
+
+    /** 上传单张（最多重试 3 次），成功返回 true */
+    private fun uploadOne(baseUrl: String, token: String, index: Int, b64: String, cancel: () -> Boolean): Boolean {
+        for (attempt in 1..3) {
+            if (cancel()) return false
+            try {
+                val body = JSONObject()
+                    .put("action", "upload")
+                    .put("token", token)
+                    .put("index", index)
+                    .put("data", b64)
+                val r = http.newCall(
+                    Request.Builder()
+                        .url("$baseUrl/api/upload")
+                        .post(body.toString().toRequestBody(JSON_TYPE))
+                        .build()
+                ).execute()
+                if (r.isSuccessful) { r.close(); return true }
+                r.close()
+            } catch (t: Throwable) {
+                Log.w(TAG, "上传第 $index 张失败(第 $attempt 次): ${t.message}")
+            }
+        }
+        return false
+    }
+
     /**
-     * 上传整个相册（带进度回调）。在调用方线程执行，进度回调应回主线程。
+     * 上传整个相册（缩略图先行 + 按需原图）：先并发上传 ~300px 缩略图（几千张也只需几十 MB），
+     * 会话创建成功即回调 onSessionCreated（链接立即可访问，网页边传边看）；
+     * 完成后启动大图按需服务，网页点开某张时 host 后台实时压缩上传该张原图（1280px）。
+     * 在调用方线程执行，进度回调应回主线程。
      */
     fun uploadAlbum(context: Context, baseUrl: String, listener: Listener, cancel: () -> Boolean = { false }) {
         val uris = queryAllImages(context)
         if (uris.isEmpty()) throw EmptyAlbumException()
 
-        val createResp = http.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/upload")
-                .post(JSONObject().put("action", "create").toString().toRequestBody(JSON_TYPE))
-                .build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("创建上传会话失败: HTTP ${resp.code}")
-            JSONObject(resp.body?.string() ?: "")
-        }
-        val token = createResp.getString("token")
-
-        var uploaded = 0
-        var skipped = 0
+        val token = createSession(baseUrl)
+        listener.onSessionCreated(token)
         val total = uris.size
+        val uploaded = AtomicInteger(0)
+        val skipped = AtomicInteger(0)
+        val failed = AtomicReference<Throwable?>(null)
+        val uriByIndex = HashMap<Int, Uri>()
+        val pool = Executors.newFixedThreadPool(CONCURRENCY)
         try {
             for (uri in uris) {
-                if (cancel()) throw java.io.IOException("已取消")
-                // 单张照片无法解码（损坏/特殊格式/云同步占位）时跳过该张继续，不中止整批
-                val b64 = try {
-                    compressToBase64(context, uri)
-                } catch (t: Throwable) {
-                    skipped++
-                    Log.w(TAG, "跳过第 ${uploaded + 1} 张（无法解码）: ${t.message}")
-                    listener.onProgress(++uploaded, total)
-                    continue
-                }
-                var ok = false
-                for (attempt in 1..3) {
-                    if (cancel()) throw java.io.IOException("已取消")
+                pool.execute {
+                    if (cancel() || failed.get() != null) return@execute
+                    var b64: String? = null
                     try {
-                        val body = JSONObject()
-                            .put("action", "upload")
-                            .put("token", token)
-                            .put("index", uploaded + 1)
-                            .put("data", b64)
-                        val r = http.newCall(
-                            Request.Builder()
-                                .url("$baseUrl/api/upload")
-                                .post(body.toString().toRequestBody(JSON_TYPE))
-                                .build()
-                        ).execute()
-                        if (r.isSuccessful) { r.close(); ok = true; break }
-                        r.close()
+                        b64 = compressToBase64(context, uri, THUMB_DIM, THUMB_QUALITY)
                     } catch (t: Throwable) {
-                        Log.w(TAG, "上传第 ${uploaded + 1} 张失败(第 $attempt 次): ${t.message}")
+                        // 单张照片无法解码（损坏/特殊格式/云同步占位）时跳过该张继续，不中止整批
+                        skipped.incrementAndGet()
+                        Log.w(TAG, "跳过（无法解码）: ${t.message}")
                     }
+                    if (b64 != null) {
+                        val index = uploaded.incrementAndGet()
+                        uriByIndex[index] = uri
+                        if (!uploadOne(baseUrl, token, index, b64, cancel)) {
+                            failed.compareAndSet(null, java.io.IOException("上传第 $index 张连续失败，已中止"))
+                        }
+                    }
+                    listener.onProgress(uploaded.get(), total)
                 }
-                if (!ok) throw java.io.IOException("上传第 ${uploaded + 1} 张连续失败，已中止")
-                uploaded++
-                listener.onProgress(uploaded, total)
             }
-            // 全部照片都无法解码：按空相册处理
-            if (skipped == total) throw EmptyAlbumException()
+            pool.shutdown()
+            pool.awaitTermination(30, TimeUnit.MINUTES)
+            if (cancel()) throw java.io.IOException("已取消")
+            failed.get()?.let { throw it }
+            if (skipped.get() == total) throw EmptyAlbumException()
         } catch (t: Throwable) {
-            // 尽力 finish，让服务端会话进入完成态可查看（已上传部分）
-            try {
-                http.newCall(
-                    Request.Builder()
-                        .url("$baseUrl/api/upload")
-                        .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
-                        .build()
-                ).execute().close()
-            } catch (e: Throwable) {}
+            pool.shutdownNow()
+            bestEffortFinish(baseUrl, token)
             throw t
         }
-        val finishResp = http.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/upload")
-                .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
-                .build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("结束会话失败: HTTP ${resp.code}")
-            JSONObject(resp.body?.string() ?: "")
-        }
-        val link = finishResp.optString("url", "$baseUrl/$token/")
+        val link = finishSession(baseUrl, token)
         listener.onComplete(link)
+        startOriginalService(context, baseUrl, token, uriByIndex, cancel)
+    }
+
+    /** 拉取服务器等待原图的 index 列表（网页点开大图产生） */
+    private fun fetchPending(baseUrl: String, token: String): List<Int>? {
+        return try {
+            val r = http.newCall(
+                Request.Builder().url("$baseUrl/api/pending?token=$token").build()
+            ).execute()
+            r.use {
+                if (!it.isSuccessful) return null
+                val arr = JSONObject(it.body?.string() ?: "").optJSONArray("pending") ?: return null
+                (0 until arr.length()).map { arr.getInt(it) }
+            }
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 上传单张原图（action=original） */
+    private fun uploadOriginal(baseUrl: String, token: String, index: Int, b64: String): Boolean {
+        return try {
+            val body = JSONObject()
+                .put("action", "original")
+                .put("token", token)
+                .put("index", index)
+                .put("data", b64)
+            val r = http.newCall(
+                Request.Builder()
+                    .url("$baseUrl/api/upload")
+                    .post(body.toString().toRequestBody(JSON_TYPE))
+                    .build()
+            ).execute()
+            val ok = r.isSuccessful
+            r.close()
+            ok
+        } catch (t: Throwable) {
+            Log.w(TAG, "原图上传第 $index 张失败: ${t.message}")
+            false
+        }
     }
 
     /**
-     * 上传一组已编码的 JPEG（相机拍照等场景复用）：创建会话→逐张上传→finish→返回网页链接。
+     * 大图按需服务：后台线程每 2s 轮询服务器 pending 列表，有点开请求就实时压缩该张原图上传。
+     * 会议结束（cancel() 返回 true）时退出。
+     */
+    private fun startOriginalService(
+        context: Context,
+        baseUrl: String,
+        token: String,
+        uriByIndex: Map<Int, Uri>,
+        cancel: () -> Boolean
+    ) {
+        val t = Thread({
+            while (!cancel()) {
+                try {
+                    val pending = fetchPending(baseUrl, token)
+                    if (pending != null) {
+                        for (index in pending) {
+                            if (cancel()) return@Thread
+                            val uri = uriByIndex[index] ?: continue
+                            val b64 = try {
+                                compressToBase64(context, uri, ORIGINAL_DIM, ORIGINAL_QUALITY)
+                            } catch (t: Throwable) {
+                                Log.w(TAG, "原图压缩第 $index 张失败: ${t.message}")
+                                continue
+                            }
+                            if (!uploadOriginal(baseUrl, token, index, b64)) {
+                                Log.w(TAG, "原图第 $index 张上传失败，下轮重试")
+                            }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "原图轮询异常: ${t.message}")
+                }
+                Thread.sleep(2000)
+            }
+        }, "album-original-service")
+        t.isDaemon = true
+        t.start()
+    }
+
+    /**
+     * 上传一组已编码的 JPEG（相机拍照等场景复用）：创建会话→并发上传→finish→返回网页链接。
      * 在调用方线程执行，进度回调应回主线程。
      */
     fun uploadB64Images(baseUrl: String, b64List: List<String>, listener: Listener, cancel: () -> Boolean = { false }) {
         if (b64List.isEmpty()) throw EmptyAlbumException()
-        val createResp = http.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/upload")
-                .post(JSONObject().put("action", "create").toString().toRequestBody(JSON_TYPE))
-                .build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("创建上传会话失败: HTTP ${resp.code}")
-            JSONObject(resp.body?.string() ?: "")
-        }
-        val token = createResp.getString("token")
-        var uploaded = 0
+
+        val token = createSession(baseUrl)
         val total = b64List.size
+        val uploaded = AtomicInteger(0)
+        val failed = AtomicReference<Throwable?>(null)
+        val pool = Executors.newFixedThreadPool(CONCURRENCY)
         try {
             for (b64 in b64List) {
-                if (cancel()) throw java.io.IOException("已取消")
-                var ok = false
-                for (attempt in 1..3) {
-                    if (cancel()) throw java.io.IOException("已取消")
-                    try {
-                        val body = JSONObject()
-                            .put("action", "upload")
-                            .put("token", token)
-                            .put("index", uploaded + 1)
-                            .put("data", b64)
-                        val r = http.newCall(
-                            Request.Builder()
-                                .url("$baseUrl/api/upload")
-                                .post(body.toString().toRequestBody(JSON_TYPE))
-                                .build()
-                        ).execute()
-                        if (r.isSuccessful) { r.close(); ok = true; break }
-                        r.close()
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "上传第 ${uploaded + 1} 张失败(第 $attempt 次): ${t.message}")
+                pool.execute {
+                    if (cancel() || failed.get() != null) return@execute
+                    val index = uploaded.incrementAndGet()
+                    if (!uploadOne(baseUrl, token, index, b64, cancel)) {
+                        failed.compareAndSet(null, java.io.IOException("上传第 $index 张连续失败，已中止"))
                     }
+                    listener.onProgress(uploaded.get(), total)
                 }
-                if (!ok) throw java.io.IOException("上传第 ${uploaded + 1} 张连续失败，已中止")
-                uploaded++
-                listener.onProgress(uploaded, total)
             }
+            pool.shutdown()
+            pool.awaitTermination(30, TimeUnit.MINUTES)
+            if (cancel()) throw java.io.IOException("已取消")
+            failed.get()?.let { throw it }
         } catch (t: Throwable) {
-            // 尽力 finish，让服务端会话进入完成态可查看（已上传部分）
-            try {
-                http.newCall(
-                    Request.Builder()
-                        .url("$baseUrl/api/upload")
-                        .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
-                        .build()
-                ).execute().close()
-            } catch (e: Throwable) {}
+            pool.shutdownNow()
+            bestEffortFinish(baseUrl, token)
             throw t
         }
-        val finishResp = http.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/upload")
-                .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
-                .build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("结束会话失败: HTTP ${resp.code}")
-            JSONObject(resp.body?.string() ?: "")
-        }
-        val link = finishResp.optString("url", "$baseUrl/$token/")
+        val link = finishSession(baseUrl, token)
         listener.onComplete(link)
     }
 }

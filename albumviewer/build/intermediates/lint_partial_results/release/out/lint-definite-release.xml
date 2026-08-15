@@ -1,0 +1,421 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.1.4" type="incidents">
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;相册查看&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="26"
+            column="13"
+            startOffset="946"
+            endLine="26"
+            endColumn="32"
+            endOffset="965"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;粘贴相册链接或输入链接码，即可查看共享的照片&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="36"
+            column="13"
+            startOffset="1320"
+            endLine="36"
+            endColumn="50"
+            endOffset="1357"/>
+    </incident>
+
+    <incident
+        id="Autofill"
+        severity="warning"
+        message="Missing `autofillHints` attribute">
+        <fix-alternatives>
+            <fix-attribute
+                description="Set autofillHints"
+                namespace="http://schemas.android.com/apk/res/android"
+                attribute="autofillHints"
+                value=""
+                dot="0"
+                mark="0"/>
+            <fix-attribute
+                description="Set importantForAutofill=&quot;no&quot;"
+                namespace="http://schemas.android.com/apk/res/android"
+                attribute="importantForAutofill"
+                value="no"/>
+        </fix-alternatives>
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="40"
+            column="10"
+            startOffset="1461"
+            endLine="40"
+            endColumn="18"
+            endOffset="1469"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;例如：https://…/6e2521bfdfc7c0a0… 或链接码 6e2521bf&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="46"
+            column="13"
+            startOffset="1704"
+            endLine="46"
+            endColumn="72"
+            endOffset="1763"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;打开相册&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="61"
+            column="13"
+            startOffset="2339"
+            endLine="61"
+            endColumn="32"
+            endOffset="2358"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;长按缩略图可保存图片到手机&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="81"
+            column="13"
+            startOffset="3064"
+            endLine="81"
+            endColumn="41"
+            endOffset="3092"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;大图&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/dialog_full.xml"
+            line="12"
+            column="9"
+            startOffset="413"
+            endLine="12"
+            endColumn="40"
+            endOffset="444"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;共享方不在线，显示预览图&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/dialog_full.xml"
+            line="29"
+            column="9"
+            startOffset="991"
+            endLine="29"
+            endColumn="36"
+            endOffset="1018"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;照片缩略图&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/item_thumb.xml"
+            line="14"
+            column="9"
+            startOffset="460"
+            endLine="14"
+            endColumn="43"
+            endOffset="494"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;返回&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/layout_album.xml"
+            line="24"
+            column="13"
+            startOffset="873"
+            endLine="24"
+            endColumn="44"
+            endOffset="904"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;相册&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/layout_album.xml"
+            line="31"
+            column="13"
+            startOffset="1105"
+            endLine="31"
+            endColumn="30"
+            endOffset="1122"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;刷新&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/layout_album.xml"
+            line="43"
+            column="13"
+            startOffset="1573"
+            endLine="43"
+            endColumn="44"
+            endOffset="1604"/>
+    </incident>
+
+    <incident
+        id="HardcodedText"
+        severity="warning"
+        message="Hardcoded string &quot;暂无照片，等待共享方上传…&quot;, should use `@string` resource">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/layout_album.xml"
+            line="60"
+            column="9"
+            startOffset="2100"
+            endLine="60"
+            endColumn="37"
+            endOffset="2128"/>
+    </incident>
+
+    <incident
+        id="MonochromeLauncherIcon"
+        severity="warning"
+        message="The application adaptive icon is missing a monochrome tag">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/mipmap-anydpi-v26/ic_launcher.xml"
+            line="2"
+            column="1"
+            startOffset="39"
+            endLine="5"
+            endColumn="17"
+            endOffset="267"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*javaDir*0}/com/screenshare/albumviewer/MainActivity.kt"
+            line="146"
+            column="33"
+            startOffset="4800"
+            endLine="146"
+            endColumn="115"
+            endOffset="4882"/>
+    </incident>
+
+    <incident
+        id="SetTextI18n"
+        severity="warning"
+        message="Do not concatenate text displayed with `setText`. Use resource string with placeholders.">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*javaDir*0}/com/screenshare/albumviewer/MainActivity.kt"
+            line="173"
+            column="22"
+            startOffset="5982"
+            endLine="173"
+            endColumn="59"
+            endOffset="6019"/>
+    </incident>
+
+    <incident
+        id="NotifyDataSetChanged"
+        severity="warning"
+        message="It will always be more efficient to use more specific change events if you can. Rely on `notifyDataSetChanged` as a last resort.">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*javaDir*0}/com/screenshare/albumviewer/MainActivity.kt"
+            line="269"
+            column="13"
+            startOffset="9778"
+            endLine="269"
+            endColumn="35"
+            endOffset="9800"/>
+    </incident>
+
+    <incident
+        id="NotifyDataSetChanged"
+        severity="warning"
+        message="It will always be more efficient to use more specific change events if you can. Rely on `notifyDataSetChanged` as a last resort.">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*javaDir*0}/com/screenshare/albumviewer/MainActivity.kt"
+            line="275"
+            column="13"
+            startOffset="9950"
+            endLine="275"
+            endColumn="35"
+            endOffset="9972"/>
+    </incident>
+
+    <incident
+        id="ChromeOsAbiSupport"
+        severity="warning"
+        message="Missing x86 and x86_64 ABI support for ChromeOS">
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="17"
+            column="27"
+            startOffset="372"
+            endLine="17"
+            endColumn="61"
+            endOffset="406"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.core:core-ktx than 1.12.0 is available: 1.19.0">
+        <fix-replace
+            description="Change to 1.19.0"
+            family="Update versions"
+            oldString="1.12.0"
+            replacement="1.19.0"/>
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="48"
+            column="21"
+            startOffset="983"
+            endLine="48"
+            endColumn="50"
+            endOffset="1012"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.appcompat:appcompat than 1.6.1 is available: 1.8.0">
+        <fix-replace
+            description="Change to 1.8.0"
+            family="Update versions"
+            oldString="1.6.1"
+            replacement="1.8.0"/>
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="49"
+            column="21"
+            startOffset="1035"
+            endLine="49"
+            endColumn="55"
+            endOffset="1069"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of com.google.android.material:material than 1.11.0 is available: 1.14.0">
+        <fix-replace
+            description="Change to 1.14.0"
+            family="Update versions"
+            oldString="1.11.0"
+            replacement="1.14.0"/>
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="50"
+            column="21"
+            startOffset="1092"
+            endLine="50"
+            endColumn="64"
+            endOffset="1135"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.recyclerview:recyclerview than 1.3.2 is available: 1.4.0">
+        <fix-replace
+            description="Change to 1.4.0"
+            family="Update versions"
+            oldString="1.3.2"
+            replacement="1.4.0"/>
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="51"
+            column="21"
+            startOffset="1158"
+            endLine="51"
+            endColumn="61"
+            endOffset="1198"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.swiperefreshlayout:swiperefreshlayout than 1.1.0 is available: 1.2.0">
+        <fix-replace
+            description="Change to 1.2.0"
+            family="Update versions"
+            oldString="1.1.0"
+            replacement="1.2.0"/>
+        <location
+            file="${:albumviewer*projectDir}/build.gradle.kts"
+            line="52"
+            column="21"
+            startOffset="1221"
+            endLine="52"
+            endColumn="73"
+            endOffset="1273"/>
+    </incident>
+
+    <incident
+        id="Overdraw"
+        severity="warning"
+        message="Possible overdraw: Root element paints background `@color/bg_dark` with a theme that also paints a background (inferred theme is `@style/Theme.ScreenShare`)">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/activity_main.xml"
+            line="5"
+            column="5"
+            startOffset="196"
+            endLine="5"
+            endColumn="40"
+            endOffset="231"/>
+    </incident>
+
+    <incident
+        id="Overdraw"
+        severity="warning"
+        message="Possible overdraw: Root element paints background `#E6000000` with a theme that also paints a background (inferred theme is `@style/Theme.ScreenShare`)">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/dialog_full.xml"
+            line="5"
+            column="5"
+            startOffset="196"
+            endLine="5"
+            endColumn="35"
+            endOffset="226"/>
+    </incident>
+
+    <incident
+        id="Overdraw"
+        severity="warning"
+        message="Possible overdraw: Root element paints background `@color/bg_dark` with a theme that also paints a background (inferred theme is `@style/Theme.ScreenShare`)">
+        <location
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/layout/layout_album.xml"
+            line="7"
+            column="5"
+            startOffset="267"
+            endLine="7"
+            endColumn="40"
+            endOffset="302"/>
+    </incident>
+
+</incidents>

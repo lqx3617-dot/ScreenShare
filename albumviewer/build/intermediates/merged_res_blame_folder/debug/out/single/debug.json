@@ -1,0 +1,38 @@
+[
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/layout_activity_main.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/mipmap-anydpi-v26_ic_launcher_foreground.png.flat",
+        "source": "com.screenshare.albumviewer-main-36:/mipmap-anydpi-v26/ic_launcher_foreground.png"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/layout_item_thumb.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/layout/item_thumb.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.screenshare.albumviewer-main-36:/mipmap-xxxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/layout_dialog_full.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/layout/dialog_full.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/drawable_bg_dialog.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/drawable/bg_dialog.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/layout_layout_album.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/layout/layout_album.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-merged_res-34:/drawable_bg_card.xml.flat",
+        "source": "com.screenshare.albumviewer-main-36:/drawable/bg_card.xml"
+    }
+]

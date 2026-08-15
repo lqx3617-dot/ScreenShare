@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-mergeReleaseResources-33:/layout/layout_album.xml",
+        "source": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-main-35:/layout/layout_album.xml"
+    },
+    {
+        "merged": "com.screenshare.albumviewer-mergeReleaseResources-33:/layout/dialog_full.xml",
+        "source": "com.screenshare.albumviewer-main-35:/layout/dialog_full.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-mergeReleaseResources-33:/layout/item_thumb.xml",
+        "source": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-main-35:/layout/item_thumb.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-mergeReleaseResources-33:/layout/activity_main.xml",
+        "source": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-main-35:/layout/activity_main.xml"
+    },
+    {
+        "merged": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-mergeReleaseResources-33:/layout/dialog_full.xml",
+        "source": "/root/.gradle/daemon/8.4/com.screenshare.albumviewer-main-35:/layout/dialog_full.xml"
+    }
+]

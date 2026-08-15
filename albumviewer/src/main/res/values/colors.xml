@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 主背景色（深空科技感：更深的黑蓝底） -->
+    <color name="bg_dark">#FF080B14</color>
+    <color name="bg_card">#FF101524</color>
+    <color name="bg_input">#FF161C2E</color>
+
+    <!-- 主色（霓虹科技：青 + 蓝紫渐变系） -->
+    <color name="neon_cyan">#FF00E5FF</color>
+    <color name="neon_blue">#FF4D9EFF</color>
+    <color name="neon_violet">#FF7C6BFF</color>
+    <color name="primary_green">#FF34C77B</color>
+    <color name="primary_blue">#FF4D9EFF</color>
+    <color name="primary_orange">#FFFFB84D</color>
+    <color name="primary_red">#FFFF6B6B</color>
+    <color name="accent">#FF00E5FF</color>
+
+    <!-- 文字 -->
+    <color name="text_primary">#FFF2F6FF</color>
+    <color name="text_secondary">#FFAAB4CC</color>
+    <color name="text_hint">#FF64748B</color>
+
+    <!-- 分割线/边框 -->
+    <color name="divider">#FF1E2A44</color>
+    <color name="divider_neon">#3300E5FF</color>
+
+    <!-- 应用图标背景 -->
+    <color name="ic_launcher_background">#4F46E5</color>
+</resources>

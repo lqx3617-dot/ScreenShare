@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "ScreenShare"
 include(":app")
+include(":albumviewer")

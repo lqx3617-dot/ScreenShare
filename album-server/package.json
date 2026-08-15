@@ -1,0 +1,13 @@
+{
+  "name": "album-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "相册照片后端服务器：缩略图先行 + 按需原图，Express + SQLite 元数据 + 磁盘存储",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

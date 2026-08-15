@@ -462,7 +462,7 @@ class WebRTCPeer(
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
                     enc.maxBitrateBps = 12_000_000
-                    enc.minBitrateBps = 1_500_000
+                    enc.minBitrateBps = 1_000_000
                     enc.maxFramerate = 30
                     enc.networkPriority = 4
                     enc.bitratePriority = 4.0
@@ -471,10 +471,10 @@ class WebRTCPeer(
                     params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
                 } catch (t: Throwable) {}
                 rtp.parameters = params
-                // 初始带宽保守起步（同主连接：1.5/5/12M），避免 viewer 刚加入即冲击带宽导致瞬时拥塞
+                // 初始带宽保守起步（同主连接：1/2.5/12M），避免 viewer 刚加入即冲击带宽导致瞬时拥塞
                 try {
-                    pc.setBitrate(1_500_000, 5_000_000, 12_000_000)
-                    Log.d(TAG, "viewer#$viewerId 初始带宽 1.5/5/12 Mbps")
+                    pc.setBitrate(1_000_000, 2_500_000, 12_000_000)
+                    Log.d(TAG, "viewer#$viewerId 初始带宽 1/2.5/12 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
                 }
@@ -1144,9 +1144,9 @@ class WebRTCPeer(
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
                     // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
-                    // 12M 上限 + 初始 5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
+                    // 12M 上限 + 初始 2.5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
                     enc.maxBitrateBps = 12_000_000
-                    enc.minBitrateBps = 1_500_000
+                    enc.minBitrateBps = 1_000_000
                     enc.maxFramerate = 30
                     // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
                     enc.networkPriority = 4
@@ -1159,11 +1159,11 @@ class WebRTCPeer(
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 打开应用瞬间丢包高：初始带宽 5M 保守起步，由拥塞控制按丢包率自适应爬升，
+                // 打开应用瞬间丢包高：初始带宽 2.5M 保守起步，由拥塞控制按丢包率自适应爬升，
                 // 避免启动即冲击导致瞬间拥塞卡顿
                 try {
-                    peerConnection?.setBitrate(1_500_000, 5_000_000, 12_000_000)
-                    Log.d(TAG, "已设置初始带宽 1.5/5/12 Mbps")
+                    peerConnection?.setBitrate(1_000_000, 2_500_000, 12_000_000)
+                    Log.d(TAG, "已设置初始带宽 1/2.5/12 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
@@ -1568,12 +1568,13 @@ class WebRTCPeer(
      * @param fractionLossPct remote-inbound-rtp.fractionLost 直接报告的丢包率 0~100，-1 表示未上报
      * @param outSentCum outbound-rtp packetsSent 累计值
      * @param outLostCum remote-inbound-rtp packetsLost 累计值
+     * @param rttMs candidate-pair 当前往返时延（毫秒），RTT 高时主动降档保流畅
      */
-    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
+    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int) {
         val pc = peerConnection ?: return
         if (disposed) return
         val sender = videoSender ?: return
-        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum)
+        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum, rttMs)
     }
 
     /**
@@ -1581,11 +1582,11 @@ class WebRTCPeer(
      * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
      * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
      */
-    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long) {
+    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int) {
         if (disposed) return
         val conn = viewerConnections[viewerId] ?: return
         val sender = conn.videoSender ?: return
-        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum)
+        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum, rttMs)
     }
 
     /** 弱网自适应公共实现：档位状态机 + 码率/降级策略 + 采集分辨率调整（主连接与 viewer 连接共用） */
@@ -1595,7 +1596,8 @@ class WebRTCPeer(
         tag: String,
         fractionLossPct: Double,
         outSentCum: Long,
-        outLostCum: Long
+        outLostCum: Long,
+        rttMs: Int
     ) {
         // 丢包率：优先用 fractionLost（远端 RTCP 直接回报，实时准确）；未上报时用增量累计做差兜底
         var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
@@ -1606,13 +1608,21 @@ class WebRTCPeer(
         }
         lastOutSentCum = outSentCum
         lastOutLostCum = outLostCum
-        // 阈值：丢包率 >=3% 视为弱网需降质，<1% 视为已恢复
-        val level = when {
+        // 丢包档位：丢包率 >=3% 视为弱网需降质，<1% 视为已恢复
+        val lossLevel = when {
             sendLossPct >= 5.0 -> adaptBitrateCaps.size - 1 // 最高档降质
             sendLossPct >= 3.0 -> 2
             sendLossPct >= 1.5 -> 1
             else -> 0
         }
+        // RTT 档位（异地/TURN 中继场景）：RTT 高即使丢包低也可能排队延迟，主动限制码率上限，
+        // 避免拥塞控制在高 RTT 下收敛慢、码率估计偏高导致画面积压卡顿
+        val rttLevel = when {
+            rttMs >= 350 -> 2
+            rttMs >= 200 -> 1
+            else -> 0
+        }
+        val level = maxOf(lossLevel, rttLevel)
         if (level > curAdaptLevel) {
             // 弱网加重：直接降到对应档位
             curAdaptLevel = level
@@ -1644,7 +1654,7 @@ class WebRTCPeer(
                 val params = sender.parameters
                 params.degradationPreference = degradation
                 sender.parameters = params
-                Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
+                Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应切分辨率策略失败: ${t.message}")
             }

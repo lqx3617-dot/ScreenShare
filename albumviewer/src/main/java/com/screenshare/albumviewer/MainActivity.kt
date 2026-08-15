@@ -1,0 +1,332 @@
+package com.screenshare.albumviewer
+
+import android.app.Dialog
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import coil.load
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import java.io.File
+import java.io.FileOutputStream
+import java.util.regex.Pattern
+
+class MainActivity : AppCompatActivity() {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val api by lazy { AlbumApi(this) }
+
+    private lateinit var etLink: EditText
+    private lateinit var tvError: TextView
+    private lateinit var layoutAlbum: View
+    private lateinit var tvStatus: TextView
+    private lateinit var rvGrid: RecyclerView
+    private lateinit var tvEmpty: TextView
+
+    private var currentToken: String? = null
+    private var albumStatus: AlbumStatus? = null
+    private var refreshJob: Job? = null
+    private val adapter = GridAdapter()
+
+    private val TOKEN_REGEX = Pattern.compile("([0-9a-f]{32})")
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        etLink = findViewById(R.id.et_link)
+        tvError = findViewById(R.id.tv_error)
+        layoutAlbum = findViewById(R.id.layout_album)
+        tvStatus = findViewById(R.id.tv_status)
+        rvGrid = findViewById(R.id.rv_grid)
+        tvEmpty = findViewById(R.id.tv_empty)
+
+        // 从剪贴板自动填充链接
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.primaryClip?.takeIf { it.itemCount > 0 }?.let { clip ->
+            val text = clip.getItemAt(0).coerceToText(this).toString()
+            if (text.contains("album") || TOKEN_REGEX.matcher(text).find()) {
+                etLink.setText(text.trim())
+            }
+        }
+
+        findViewById<View>(R.id.btn_open).setOnClickListener { openInput() }
+
+        rvGrid.layoutManager = GridLayoutManager(this, 3)
+        rvGrid.adapter = adapter
+        adapter.onThumbClick = { index -> showFullScreen(index) }
+        adapter.onThumbLongClick = { index -> saveImage(index) }
+
+        findViewById<View>(R.id.btn_back).setOnClickListener {
+            showInputView()
+        }
+        findViewById<View>(R.id.btn_refresh).setOnClickListener {
+            refreshStatus(forceReload = true)
+        }
+
+        // 首次启动如果有 token 参数（从分享链接打开），直接打开
+        intent?.data?.toString()?.let { uri ->
+            val m = TOKEN_REGEX.matcher(uri)
+            if (m.find()) {
+                etLink.setText(m.group(1))
+            }
+        }
+    }
+
+    private fun openInput() {
+        val text = etLink.text?.toString()?.trim().orEmpty()
+        val m = TOKEN_REGEX.matcher(text)
+        if (!m.find()) {
+            showError("链接无效：请粘贴完整链接或 32 位链接码")
+            return
+        }
+        val token = m.group(1)
+        hideError()
+        openAlbum(token)
+    }
+
+    private fun showError(msg: String) {
+        tvError.text = msg
+        tvError.visibility = View.VISIBLE
+    }
+
+    private fun hideError() {
+        tvError.visibility = View.GONE
+    }
+
+    private fun openAlbum(token: String) {
+        currentToken = token
+        layoutAlbum.visibility = View.VISIBLE
+        tvStatus.text = "连接中…"
+        adapter.setEmpty()
+        refreshStatus(forceReload = true)
+    }
+
+    private fun showInputView() {
+        layoutAlbum.visibility = View.GONE
+        refreshJob?.cancel()
+        adapter.setEmpty()
+        currentToken = null
+    }
+
+    private fun refreshStatus(forceReload: Boolean = false) {
+        val token = currentToken ?: return
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            val st = api.getStatus(token)
+            if (st != null) {
+                albumStatus = st
+                if (forceReload || adapter.items.isEmpty() || st.received != adapter.items.size) {
+                    adapter.setCount(st.received, token)
+                }
+                tvStatus.text = "共 ${st.total} 张 · 已接收 ${st.received}${if (st.done < st.total) " · 上传中…" else ""}"
+                tvEmpty.visibility = if (st.received == 0) View.VISIBLE else View.GONE
+                tvEmpty.text = if (st.done < st.total) "暂无照片，等待共享方上传…" else "该相册暂无照片"
+                // 持续轮询直到上传完成
+                if (st.done < st.total) {
+                    refreshJob = launch {
+                        delay(2000)
+                        refreshStatus(forceReload)
+                    }
+                }
+            } else {
+                tvStatus.text = "无法连接服务器"
+                tvEmpty.visibility = View.VISIBLE
+                tvEmpty.text = "网络异常，请检查网络后重试"
+            }
+        }
+    }
+
+    private fun showFullScreen(index: Int) {
+        val token = currentToken ?: return
+        val inflater = LayoutInflater.from(this)
+        val content = inflater.inflate(R.layout.dialog_full, null)
+        val ivFull = content.findViewById<ImageView>(R.id.iv_full)
+        val pb = content.findViewById<ProgressBar>(R.id.pb_loading)
+        val tvTip = content.findViewById<TextView>(R.id.tv_orig_tip)
+        val tvIdx = content.findViewById<TextView>(R.id.tv_idx)
+
+        tvIdx.text = "$index / ${albumStatus?.total ?: 0}"
+
+        // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
+        pb.visibility = View.VISIBLE
+        ivFull.load(api.thumbUrl(token, index)) {
+            listener(
+                onSuccess = { _, _ -> pb.visibility = View.GONE },
+                onError = { _, _ -> pb.visibility = View.GONE }
+            )
+        }
+
+        // 全屏 Dialog：大图必须铺满整屏，AlertDialog wrap_content 会把图片压成一条
+        val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
+        dialog.setContentView(content)
+        dialog.window?.apply {
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawableResource(android.R.color.transparent)
+        }
+
+        // 点击空白背景关闭；点图片区域保持不关（避免刚打开就误关）
+        content.setOnClickListener { dialog.dismiss() }
+        (ivFull as ZoomableImageView).onSingleTap = { dialog.dismiss() }
+
+        dialog.show()
+        // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
+        val origJob = CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+            tvTip.text = "正在加载高清原图…"
+            tvTip.visibility = View.VISIBLE
+            val orig = api.pollOriginal(token, index, maxTries = 20)
+            if (orig != null) {
+                ivFull.setImageBitmap(BitmapFactory.decodeByteArray(orig, 0, orig.size))
+                tvTip.visibility = View.GONE
+            } else {
+                tvTip.text = "共享方不在线，显示预览图"
+            }
+        }
+        dialog.setOnDismissListener { origJob.cancel() }
+    }
+
+    private fun saveImage(index: Int) {
+        val token = currentToken ?: return
+        Toast.makeText(this, "正在获取第 $index 张高清原图…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            // 优先原图（共享方在线时实时压缩上传），拿不到用缩略图兜底
+            val data = api.fetchOriginal(token, index)
+                ?: runCatching {
+                    val req = okhttp3.Request.Builder().url(api.thumbUrl(token, index)).build()
+                    okhttp3.OkHttpClient().newCall(req).execute().use { it.body?.bytes() }
+                }.getOrNull()
+            if (data != null) {
+                val name = "album_${token.take(8)}_$index.jpg"
+                val ok = saveToGallery(name, data)
+                val fromOrig = data.size > 10000
+                val msg = when {
+                    !ok -> "保存失败"
+                    fromOrig -> "已保存高清原图到相册"
+                    else -> "共享方不在线，已保存预览图"
+                }
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveToGallery(fileName: String, bytes: ByteArray): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = android.content.ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/相册查看")
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+                true
+            } else {
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    "相册查看"
+                )
+                if (!dir.exists()) dir.mkdirs()
+                File(dir, fileName).writeBytes(bytes)
+                // 通知媒体扫描
+                sendBroadcast(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
+                        Uri.fromFile(File(dir, fileName))
+                    )
+                )
+                true
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private class GridAdapter : RecyclerView.Adapter<GridAdapter.VH>() {
+
+        var items: List<Int> = emptyList()
+        var token: String? = null
+        var onThumbClick: ((Int) -> Unit)? = null
+        var onThumbLongClick: ((Int) -> Unit)? = null
+        private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
+
+        fun setEmpty() {
+            items = emptyList()
+            token = null
+            notifyDataSetChanged()
+        }
+
+        fun setCount(count: Int, token: String) {
+            this.items = (1..count).toList()
+            this.token = token
+            notifyDataSetChanged()
+        }
+
+        fun thumbUrl(index: Int): String {
+            val pad = index.toString().padStart(4, '0')
+            return "$baseUrl/${token}/$pad.jpg"
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+            val v = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_thumb, parent, false)
+            return VH(v)
+        }
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val index = items[position]
+            holder.iv.load(thumbUrl(index)) {
+                crossfade(true)
+                placeholder(android.R.color.darker_gray)
+                error(android.R.color.darker_gray)
+            }
+            holder.itemView.setOnClickListener { onThumbClick?.invoke(index) }
+            holder.itemView.setOnLongClickListener {
+                onThumbLongClick?.invoke(index)
+                true
+            }
+        }
+
+        override fun getItemCount() = items.size
+
+        class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
+            val iv: ImageView = itemView.findViewById(R.id.iv_thumb)
+        }
+    }
+}

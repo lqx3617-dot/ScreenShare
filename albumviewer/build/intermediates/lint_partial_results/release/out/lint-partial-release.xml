@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.1.4" type="partial_results">
+    <map id="UnsafeIntentLaunch">
+            <map id="unprotected">
+                <entry
+                    name="com.screenshare.albumviewer.MainActivity"
+                    boolean="true"/>
+            </map>
+    </map>
+    <map id="UnusedResources">
+        <location id="R.color.divider"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="24"
+            column="12"
+            startOffset="825"
+            endLine="24"
+            endColumn="26"
+            endOffset="839"/>
+        <location id="R.color.primary_blue"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="13"
+            column="12"
+            startOffset="450"
+            endLine="13"
+            endColumn="31"
+            endOffset="469"/>
+        <location id="R.style.CardBg"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/themes.xml"
+            line="18"
+            column="12"
+            startOffset="904"
+            endLine="18"
+            endColumn="25"
+            endOffset="917"/>
+        <location id="R.color.bg_input"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="6"
+            column="12"
+            startOffset="182"
+            endLine="6"
+            endColumn="27"
+            endOffset="197"/>
+        <location id="R.color.neon_blue"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="10"
+            column="12"
+            startOffset="306"
+            endLine="10"
+            endColumn="28"
+            endOffset="322"/>
+        <location id="R.color.primary_orange"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="14"
+            column="12"
+            startOffset="499"
+            endLine="14"
+            endColumn="33"
+            endOffset="520"/>
+        <location id="R.style.BtnRounded"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/themes.xml"
+            line="23"
+            column="12"
+            startOffset="1038"
+            endLine="23"
+            endColumn="29"
+            endOffset="1055"/>
+        <location id="R.color.accent"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="16"
+            column="12"
+            startOffset="598"
+            endLine="16"
+            endColumn="25"
+            endOffset="611"/>
+        <entry
+            name="model"
+            string="attr[selectableItemBackgroundBorderless(R)],color[primary_green(D),divider_neon(U),bg_card(U),text_primary(U),primary_orange(D),accent(D),neon_blue(D),divider(D),ic_launcher_background(U),primary_blue(D),text_hint(U),primary_red(U),neon_violet(U),neon_cyan(U),bg_input(D),text_secondary(U),bg_dark(U)],drawable[bg_card(U),bg_dialog(U)],id[tv_error(U),btn_open(U),layout_album(U),tv_status(U),btn_refresh(U),btn_back(U),rv_grid(U),iv_thumb(U),iv_full(U),tv_orig_tip(U),tv_empty(U),pb_loading(U),tv_idx(U),et_link(U)],layout[layout_album(U),dialog_full(U),item_thumb(U),activity_main(U)],mipmap[ic_launcher_foreground(U),ic_launcher(U)],string[app_name(U)],style[BtnRounded(D),Theme_ScreenShare_Dialog(U),CardBg(D),Theme_ScreenShare(U),Theme_MaterialComponents_DayNight_Dialog_Alert(R),Theme_MaterialComponents_DayNight_NoActionBar(R)];12^3^2,22^11^0^4^10,23^10^12^4,25^11^28^27^4^10^12^b^e^c^22,27^9^26,2a^2d^e^13^4^10,2b^12,2c^2e^e^11^d^3^4^10;;;"/>
+        <location id="R.color.primary_green"
+            file="${:albumviewer*release*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="12"
+            column="12"
+            startOffset="400"
+            endLine="12"
+            endColumn="32"
+            endOffset="420"/>
+    </map>
+
+</incidents>

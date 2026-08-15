@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.screenshare.albumviewer-mergeReleaseResources-32:/values-port/values-port.xml",
+            "map": [
+                {
+                    "source": "/root/.gradle/caches/transforms-3/b8d619760d236b9c69afd72a0990a0f9/transformed/appcompat-1.6.1/res/values-port/values-port.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "55",
+                        "endOffsets": "106"
+                    }
+                }
+            ]
+        }
+    ]
+}
