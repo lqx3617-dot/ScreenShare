@@ -291,7 +291,8 @@
                 android:text="相册"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
-                android:background="@drawable/bg_fullscreen_btn" />
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- 中列：比例/全屏/帧率 -->

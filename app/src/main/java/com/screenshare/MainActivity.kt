@@ -2087,7 +2087,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
-                binding.btnAlbum.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }
