@@ -8,6 +8,7 @@
 /captures
 .externalNativeBuild
 .cxx
+/albumviewer/build
 
 # Android 签名保护：防止 release 密钥上传
 *.jks
@@ -21,9 +22,13 @@ keystore.properties
 /AlbumViewer-signed.apk
 /AlbumViewer-signed.apk.idsig
 /build-tmp/
+*.idsig
 
 # 服务器依赖
 /server/node_modules/
+/album-server/node_modules/
+# 相册数据（用户隐私照片与数据库，不入库）
+/album-server/data/
 # 崩溃上报日志（运行时产物，不入库）
 /server/crashes/
 # 诊断上报日志（运行时产物，不入库）

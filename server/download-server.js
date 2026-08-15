@@ -11,11 +11,14 @@ const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
 const GRADLE = "/workspace/app/build.gradle.kts";
 
-// 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
-const RELEASE_CONFIG = {
-  changelog: "相册归拢升级：查看照片不再需要链接/浏览器，主 App 内「相册」点「查看相册（全部照片）」直接打开；服务器把历次上传的照片全部归拢到一个统一相册视图（/all），共 3700+ 张，点击按需加载高清原图，上传中自动刷新；相册服务器统一为 Express+SQLite 新版，旧版单文件服务器已清理",
-  forced: false,
-};
+const publish = require("./publish");
+
+// 发布配置：从 release-config.json 加载（App 内云发布会更新此文件），forced 是否强制更新
+const RELEASE_CONFIG = publish.loadConfig();
+
+// 当前正在执行的发布任务（单任务互斥）+ 已完成任务历史（供状态查询）
+let currentTask = null;
+const taskHistory = new Map();
 
 /** 分享链接兜底页 HTML：会议号 + 打开 App + 下载 App */
 function renderSharePage(code) {
@@ -104,6 +107,92 @@ const server = http.createServer((req, res) => {
   const done = (code) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${urlPath} -> ${code} (${Date.now() - t0}ms)${req.headers.range ? " range=" + req.headers.range : ""} ua=${(req.headers["user-agent"] || "").slice(0, 80)}`);
   };
+  // App 内云发布：提交发布任务
+  if (urlPath === "/api/publish" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 1024 * 64) req.destroy(); });
+    req.on("end", () => {
+      let payload;
+      try { payload = JSON.parse(body || "{}"); } catch (e) { payload = {}; }
+      const versionName = String(payload.versionName || "").trim();
+      const changelog = String(payload.changelog || "").trim();
+      const app = String(payload.app || "both");
+      if (!/^\d+\.\d+$/.test(versionName)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "版本号格式应为 数字.数字（如 1.183）" }));
+        done(400);
+        return;
+      }
+      if (!changelog) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "更新说明不能为空" }));
+        done(400);
+        return;
+      }
+      if (!["main", "albumviewer", "both"].includes(app)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "app 目标非法" }));
+        done(400);
+        return;
+      }
+      if (currentTask) {
+        res.writeHead(409, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "已有发布任务进行中" }));
+        done(409);
+        return;
+      }
+      const taskId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const task = {
+        id: taskId,
+        state: "building",
+        phase: "bump",
+        versionName,
+        changelog,
+        app,
+        apps: app === "both" ? ["main", "albumviewer"] : [app],
+        log: [],
+        error: null,
+        createdAt: Date.now(),
+      };
+      currentTask = task;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ taskId }));
+      done(200);
+      // 异步执行，不阻塞下载
+      publish.executeTask(task).then(() => {
+        Object.assign(RELEASE_CONFIG, publish.loadConfig());
+        currentTask = null;
+        taskHistory.set(task.id, task);
+      }).catch((e) => {
+        console.error("publish task error", e);
+        currentTask = null;
+        taskHistory.set(task.id, task);
+      });
+    });
+    return;
+  }
+  // App 内云发布：查询任务状态
+  if (urlPath === "/api/publish/status") {
+    const q = new URLSearchParams(req.url.split("?")[1] || "");
+    const taskId = q.get("task") || "";
+    const task = (currentTask && currentTask.id === taskId) ? currentTask : taskHistory.get(taskId);
+    if (task) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        state: task.state,
+        phase: task.phase,
+        versionName: task.versionName,
+        error: task.error,
+        log: task.log.slice(-30),
+      }));
+      done(200);
+    } else {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "任务不存在" }));
+      done(404);
+    }
+    return;
+  }
   if (urlPath === "/version.json") {
     getVersion(req.headers.host).then((v) => {
       res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });

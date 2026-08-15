@@ -17,6 +17,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -40,6 +41,7 @@ class MainActivity : AppCompatActivity() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val api by lazy { AlbumApi(this) }
+    private val publishApi by lazy { PublishApi(this) }
 
     private lateinit var etLink: EditText
     private lateinit var tvError: TextView
@@ -96,6 +98,111 @@ class MainActivity : AppCompatActivity() {
                 etLink.setText(m.group(1))
             }
         }
+
+        // 隐藏发版入口：顶部标题连点 7 次（相邻间隔 ≤800ms）打开发布面板
+        findViewById<View>(R.id.tv_title).setOnClickListener {
+            val now = System.currentTimeMillis()
+            tapTimes.add(now)
+            while (tapTimes.isNotEmpty() && now - tapTimes.first() > 800) {
+                tapTimes.removeAt(0)
+            }
+            if (tapTimes.size >= 7) {
+                tapTimes.clear()
+                showPublishPanel()
+            }
+        }
+    }
+
+    private val tapTimes = ArrayList<Long>()
+
+    private fun showPublishPanel() {
+        val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
+        val content = LayoutInflater.from(this).inflate(R.layout.dialog_publish, null)
+        dialog.setContentView(content)
+        dialog.window?.apply {
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawableResource(android.R.color.transparent)
+        }
+        dialog.setCancelable(true)
+
+        val tvCurrent = content.findViewById<TextView>(R.id.tv_pub_current)
+        val etVersion = content.findViewById<EditText>(R.id.et_pub_version)
+        val etChangelog = content.findViewById<EditText>(R.id.et_pub_changelog)
+        val rgApp = content.findViewById<RadioGroup>(R.id.rg_pub_app)
+        val tvStatus = content.findViewById<TextView>(R.id.tv_pub_status)
+        val btnPublish = content.findViewById<View>(R.id.btn_pub_publish)
+        val btnCancel = content.findViewById<View>(R.id.btn_pub_cancel)
+
+        tvCurrent.text = "当前版本：${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+
+        var publishJob: Job? = null
+        btnPublish.setOnClickListener {
+            if (publishJob?.isActive == true) return@setOnClickListener
+            val version = etVersion.text?.toString()?.trim().orEmpty()
+            val changelog = etChangelog.text?.toString()?.trim().orEmpty()
+            if (!Regex("^\\d+\\.\\d+$").matches(version)) {
+                Toast.makeText(this, "版本号格式应为 数字.数字（如 1.183）", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (changelog.isEmpty()) {
+                Toast.makeText(this, "请填写更新说明", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val app = when (rgApp.checkedRadioButtonId) {
+                R.id.rb_pub_main -> "main"
+                R.id.rb_pub_albumviewer -> "albumviewer"
+                else -> "both"
+            }
+            btnPublish.isEnabled = false
+            tvStatus.text = "正在提交发布任务…"
+            publishJob = scope.launch {
+                try {
+                    val taskId = publishApi.publish(version, changelog, app)
+                    tvStatus.text = "发布任务已提交，构建中…"
+                    while (isActive) {
+                        delay(2000)
+                        val st = publishApi.status(taskId)
+                        if (st == null) {
+                            tvStatus.text = "任务状态获取失败（服务器可能已重启），请重试"
+                            break
+                        }
+                        when (st.state) {
+                            "success" -> {
+                                tvStatus.text = "发布成功！新版本 ${st.versionName}"
+                                btnPublish.isEnabled = true
+                                return@launch
+                            }
+                            "failed" -> {
+                                tvStatus.text = "发布失败：${st.error ?: "未知错误"}"
+                                btnPublish.isEnabled = true
+                                return@launch
+                            }
+                            else -> {
+                                val phaseText = when (st.phase) {
+                                    "bump" -> "修改版本号"
+                                    "build" -> "构建 APK"
+                                    "sign" -> "签名 APK"
+                                    "config" -> "更新版本配置"
+                                    else -> "处理中"
+                                }
+                                tvStatus.text = "发布中（$phaseText）…"
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    tvStatus.text = "提交失败：${e.message ?: e.javaClass.simpleName}"
+                    btnPublish.isEnabled = true
+                }
+            }
+        }
+        btnCancel.setOnClickListener {
+            publishJob?.cancel()
+            dialog.dismiss()
+        }
+        dialog.show()
     }
 
     private fun openInput() {
