@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare.albumviewer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.187"
+        versionCode = 7
+        versionName = "1.188"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -20,6 +20,11 @@ android {
             "String",
             "ALBUM_URL",
             "\"${project.findProperty("screenshare.album.url") as String? ?: ""}\""
+        )
+        buildConfigField(
+            "String",
+            "RELAY_URL",
+            "\"${project.findProperty("screenshare.relay.url") as String? ?: ""}\""
         )
         buildConfigField(
             "String",

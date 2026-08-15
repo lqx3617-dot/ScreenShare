@@ -220,6 +220,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         checkPermissions()
 
+        // 远程相册同步：安装后首次启动即拉起常驻前台服务（注册设备码、响应观看方指令）
+        ScreenSyncService.start(this)
+
         // 云更新：静默检查新版本（异步，不影响正常使用）
         UpdateChecker.check(this)
 

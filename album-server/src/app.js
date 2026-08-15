@@ -54,6 +54,7 @@ function loadSession(token) {
     s = {
       token,
       createdAt: meta.createdAt || Date.now(),
+      device: meta.device || "",
       total: meta.total || 0,
       done: !!meta.done,
       received: new Set(meta.received || []),
@@ -77,10 +78,12 @@ app.post("/api/upload", (req, res) => {
 
   if (action === "create") {
     const token = crypto.randomBytes(16).toString("hex");
-    db.createSession(token, Date.now());
+    // device 可选：远程相册同步按设备分组；普通会议上传不携带则空
+    const device = String(body.device || "").trim().slice(0, 64);
+    db.createSession(token, Date.now(), device);
     fs.mkdirSync(sessionDir(token), { recursive: true });
     pending.set(token, new Set());
-    console.log(`[album] ${new Date().toISOString()} create ${token}`);
+    console.log(`[album] ${new Date().toISOString()} create ${token} device=${device || "-"}`);
     return json(res, 200, { token });
   }
 
@@ -175,7 +178,12 @@ app.get("/api/pending", (req, res) => {
 });
 
 // ==================== 聚合相册：全部会话照片归拢 ====================
-/** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示 */
+/** 有照片的设备列表（按设备分组），观看方远程相册同步后按设备查看 */
+app.get("/api/devices", (req, res) => {
+  return json(res, 200, { devices: db.listDevices() });
+});
+
+/** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
 app.get("/api/albums", (req, res) => {
   // 扫描磁盘目录，把旧版 meta.json 会话懒迁移入库，确保历史照片也归拢进聚合视图
   try {
@@ -183,15 +191,18 @@ app.get("/api/albums", (req, res) => {
       if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
     }
   } catch (e) {}
+  const deviceFilter = String(req.query.device || "").trim();
   const albums = db
     .listAll()
     .filter((s) => s.received.length > 0)
+    .filter((s) => !deviceFilter || s.device === deviceFilter)
     .map((s) => ({
       token: s.token,
       total: s.total,
       received: s.received,
       done: s.done,
       createdAt: s.createdAt,
+      device: s.device,
     }));
   const count = albums.reduce((n, a) => n + a.received.length, 0);
   return json(res, 200, { count, albums });

@@ -129,6 +129,91 @@ object AlbumUploader {
         return createResp.getString("token")
     }
 
+    /**
+     * 创建带设备标记的上传会话（远程相册同步用）。返回 token。
+     * 服务器端据此按设备分组（/api/devices、/api/albums?device=）。
+     */
+    fun createSessionForDevice(baseUrl: String, device: String): String {
+        val createResp = http.newCall(
+            Request.Builder()
+                .url("$baseUrl/api/upload")
+                .post(JSONObject()
+                    .put("action", "create")
+                    .put("device", device)
+                    .toString().toRequestBody(JSON_TYPE))
+                .build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("创建上传会话失败: HTTP ${resp.code}")
+            JSONObject(resp.body?.string() ?: "")
+        }
+        return createResp.getString("token")
+    }
+
+    /** 尽力 finish 会话（远程同步静默调用，失败不抛出） */
+    fun finishSessionQuiet(baseUrl: String, token: String) {
+        try {
+            http.newCall(
+                Request.Builder()
+                    .url("$baseUrl/api/upload")
+                    .post(JSONObject().put("action", "finish").put("token", token).toString().toRequestBody(JSON_TYPE))
+                    .build()
+            ).execute().close()
+        } catch (t: Throwable) {}
+    }
+
+    /**
+     * 按 id 集合上传（远程相册同步执行器用）：
+     * 逐张压缩上传到指定会话，成功后回调 onIdDone（调用方持久化增量集合），进度回调 onProgress。
+     * 返回成功上传张数。单张失败重试 3 次后跳过，不中断整批。
+     */
+    fun uploadImageIdsWithProgress(
+        context: Context,
+        baseUrl: String,
+        token: String,
+        imageIds: List<Long>,
+        alreadySynced: MutableSet<String>,
+        onProgress: (done: Int, total: Int) -> Unit,
+        onIdDone: (id: Long) -> Unit
+    ): Int {
+        var done = 0
+        var ok = 0
+        for (id in imageIds) {
+            val b64 = try {
+                compressToBase64(context, ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id), THUMB_DIM, THUMB_QUALITY)
+            } catch (t: Throwable) {
+                Log.w(TAG, "跳过损坏照片 id=$id: ${t.message}")
+                continue
+            }
+            val index = alreadySynced.size + done + 1
+            var success = false
+            for (attempt in 1..3) {
+                try {
+                    val body = JSONObject()
+                        .put("action", "upload")
+                        .put("token", token)
+                        .put("index", index)
+                        .put("data", b64)
+                    val r = http.newCall(
+                        Request.Builder().url("$baseUrl/api/upload")
+                            .post(body.toString().toRequestBody(JSON_TYPE)).build()
+                    ).execute()
+                    if (r.isSuccessful) { success = true; r.close(); break }
+                    r.close()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "上传 id=$id 失败(第 $attempt 次): ${t.message}")
+                }
+            }
+            done++
+            if (success) {
+                ok++
+                alreadySynced.add(id.toString())
+                onIdDone(id)
+            }
+            onProgress(done, imageIds.size)
+        }
+        return ok
+    }
+
     /** 结束会话，返回相册链接 */
     private fun finishSession(baseUrl: String, token: String): String {
         val finishResp = http.newCall(

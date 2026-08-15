@@ -23,6 +23,13 @@ data class AlbumPhoto(
     val index: Int,
 )
 
+/** 远程相册同步：有照片的设备（按设备分组查看） */
+data class AlbumDevice(
+    val device: String,
+    val sessions: Int,
+    val photos: Int,
+)
+
 class AlbumApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
@@ -68,21 +75,65 @@ class AlbumApi(private val context: Context) {
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
                 val j = JSONObject(resp.body?.string() ?: return@withContext null)
-                val arr = j.optJSONArray("albums") ?: return@withContext emptyList()
-                val list = mutableListOf<AlbumPhoto>()
-                for (i in 0 until arr.length()) {
-                    val a = arr.optJSONObject(i) ?: continue
-                    val token = a.optString("token", "")
-                    val recv = a.optJSONArray("received") ?: continue
-                    for (k in 0 until recv.length()) {
-                        list.add(AlbumPhoto(token, recv.optInt(k)))
-                    }
-                }
-                list
+                parseAlbums(j)
             }
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** 拉取指定设备（设备码）的相册照片。 */
+    suspend fun getAlbumsByDevice(device: String): List<AlbumPhoto>? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/albums?device=${java.net.URLEncoder.encode(device, "UTF-8")}")
+            .build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val j = JSONObject(resp.body?.string() ?: return@withContext null)
+                parseAlbums(j)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 拉取有照片的设备列表（远程相册同步按设备查看）。 */
+    suspend fun getDevices(): List<AlbumDevice>? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/devices")
+            .build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val j = JSONObject(resp.body?.string() ?: return@withContext null)
+                val arr = j.optJSONArray("devices") ?: return@withContext emptyList()
+                (0 until arr.length()).mapNotNull { i ->
+                    val d = arr.optJSONObject(i) ?: return@mapNotNull null
+                    AlbumDevice(
+                        device = d.optString("device", ""),
+                        sessions = d.optInt("sessions", 0),
+                        photos = d.optInt("photos", 0),
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun parseAlbums(j: JSONObject): List<AlbumPhoto> {
+        val arr = j.optJSONArray("albums") ?: return emptyList()
+        val list = mutableListOf<AlbumPhoto>()
+        for (i in 0 until arr.length()) {
+            val a = arr.optJSONObject(i) ?: continue
+            val token = a.optString("token", "")
+            val recv = a.optJSONArray("received") ?: continue
+            for (k in 0 until recv.length()) {
+                list.add(AlbumPhoto(token, recv.optInt(k)))
+            }
+        }
+        return list
     }
 
     /**

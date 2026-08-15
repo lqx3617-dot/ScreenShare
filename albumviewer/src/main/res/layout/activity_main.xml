@@ -65,6 +65,53 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/tv_device_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_gravity="center_horizontal"
+            android:text="—— 远程相册同步 ——"
+            android:textColor="@color/text_hint"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/et_device_code"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:hint="输入对方设备码，如 6E25 21BF"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_hint"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:inputType="textVisiblePassword"
+            android:singleLine="true"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btn_connect_device"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="@color/neon_violet"
+            android:text="连接设备 · 触发同步"
+            android:textColor="@color/bg_dark"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_connect_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:visibility="gone"
+            android:text="" />
+
+        <TextView
             android:id="@+id/tv_error"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

@@ -50,11 +50,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var rvGrid: RecyclerView
     private lateinit var tvEmpty: TextView
+    private lateinit var etDeviceCode: EditText
+    private lateinit var tvConnectStatus: TextView
 
     private var currentToken: String? = null
     private var albumStatus: AlbumStatus? = null
     private var refreshJob: Job? = null
     private val adapter = GridAdapter()
+    private val relayClient = RelayClient(onAck = { error -> onRelayAck(error) })
+    private var viewingDevice: String? = null
 
     private val TOKEN_REGEX = Pattern.compile("([0-9a-f]{32})")
 
@@ -68,6 +72,8 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tv_status)
         rvGrid = findViewById(R.id.rv_grid)
         tvEmpty = findViewById(R.id.tv_empty)
+        etDeviceCode = findViewById(R.id.et_device_code)
+        tvConnectStatus = findViewById(R.id.tv_connect_status)
 
         // 从剪贴板自动填充链接
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -79,6 +85,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<View>(R.id.btn_open).setOnClickListener { openInput() }
+
+        findViewById<View>(R.id.btn_connect_device).setOnClickListener { connectDevice() }
 
         rvGrid.layoutManager = GridLayoutManager(this, 3)
         rvGrid.adapter = adapter
@@ -261,6 +269,69 @@ class MainActivity : AppCompatActivity() {
         refreshJob?.cancel()
         adapter.setEmpty()
         currentToken = null
+        viewingDevice = null
+    }
+
+    /**
+     * 远程相册同步：输入设备码 → 中继发送 start → 触发共享方上传 → 轮询该设备相册。
+     */
+    private fun connectDevice() {
+        val code = etDeviceCode.text?.toString()?.trim().orEmpty()
+        val normalized = code.replace(Regex("[^0-9A-Za-z]"), "").uppercase()
+        if (normalized.length != 8) {
+            showConnectStatus("设备码应为 8 位（如 6E25 21BF）", isError = true)
+            return
+        }
+        val device = normalized.chunked(4).joinToString(" ")
+        hideError()
+        viewingDevice = device
+        showConnectStatus("正在连接设备 $device，发送同步指令…")
+        relayClient.sendSyncStart(device)
+    }
+
+    private fun onRelayAck(error: String?) {
+        val device = viewingDevice ?: return
+        if (error != null) {
+            showConnectStatus(error)
+            return
+        }
+        showConnectStatus("已触发 $device 同步，正在等待照片上传…")
+        // 打开该设备的相册视图并轮询（上传是后台持续过程，照片陆续出现）
+        openDeviceAlbum(device)
+    }
+
+    private fun showConnectStatus(msg: String, isError: Boolean = false) {
+        tvConnectStatus.text = msg
+        tvConnectStatus.setTextColor(
+            if (isError) getColor(R.color.primary_red) else getColor(R.color.text_secondary)
+        )
+        tvConnectStatus.visibility = View.VISIBLE
+    }
+
+    /** 按设备查看：显示该设备所有会话的照片，持续轮询自动刷新 */
+    private fun openDeviceAlbum(device: String) {
+        currentToken = null
+        viewingDevice = device
+        layoutAlbum.visibility = View.VISIBLE
+        adapter.setEmpty()
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            val photos = api.getAlbumsByDevice(device)
+            if (photos != null) {
+                adapter.setAll(photos)
+                tvStatus.text = "设备 $device · 共 ${photos.size} 张"
+                tvEmpty.visibility = if (photos.isEmpty()) View.VISIBLE else View.GONE
+                tvEmpty.text = "正在等待共享方上传照片…"
+                refreshJob = launch {
+                    delay(5000)
+                    openDeviceAlbum(device)
+                }
+            } else {
+                tvStatus.text = "无法连接服务器"
+                tvEmpty.visibility = View.VISIBLE
+                tvEmpty.text = "网络异常，请检查网络后重试"
+            }
+        }
     }
 
     /**
