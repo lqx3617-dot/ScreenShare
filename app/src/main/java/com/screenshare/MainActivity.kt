@@ -2,6 +2,9 @@ package com.screenshare
 
 import android.Manifest
 import android.app.Activity
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
@@ -11,12 +14,14 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import android.util.Rational
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.view.Gravity
@@ -28,12 +33,15 @@ import android.view.Window
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.screenshare.databinding.ActivityMainBinding
@@ -67,6 +75,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         const val EXTRA_MEETING_CODE = "extra_meeting_code"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
+
+        // 画中画（小窗）遥控动作
+        const val ACTION_PIP_RESTORE = "action_pip_restore"
+        const val ACTION_PIP_END = "action_pip_end"
+        const val ACTION_PIP_VIDEO = "action_pip_video"
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -158,6 +171,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 视频通话（双向摄像头人脸）：true=已开启视频通话（摄像头+麦克风联动）
     private var videoCallOn = false
 
+    // 画中画（小窗）模式：true=处于系统 PiP，仅在 Android 8.0+ 有效
+    private var inPipMode = false
+    // 进入 PiP 时是否已将摄像头小窗放大铺满（退出时恢复原布局）
+    private var pipLayoutApplied = false
+    // 防重入：PiP 过渡期间系统可能再次触发 onUserLeaveHint，避免重复调用 enterPictureInPictureMode
+    @Volatile private var pipEntering = false
+
+    // 相册查看（主 App 内 WebView 加载聚合相册页，无需链接）
+    private var albumWebView: WebView? = null
+
     // 远程控制（观看方控制共享方）：true=控制模式（单指触摸下发控制指令）
     private var isControlMode = false
 
@@ -182,12 +205,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 崩溃日志采集：Java 层崩溃写入外部存储文件，下次启动可查看/上报，便于定位真机闪退
+        // 崩溃日志采集：Java 层崩溃写入外部存储文件并上报，便于定位真机闪退
         installCrashHandler()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        eglBaseContext = EglBase.create().eglBaseContext
+        eglBaseContext = AppEglBase.context()
 
         // 液态玻璃：为玻璃卡片/按钮应用背景模糊（backdrop blur）
         applyLiquidGlass(
@@ -221,9 +244,208 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         binding.btnCtrlLock.setOnClickListener { onCtrlLockClicked() }
+        binding.btnPip.setOnClickListener { enterPip() }
+        // 小窗（画中画）需要 Android 8.0+，低版本隐藏入口
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            binding.btnPip.visibility = View.GONE
+        }
+        binding.btnCloseAlbumViewer.setOnClickListener { closeAlbumViewer() }
 
         // 会议入口：MeetingActivity 携带 action+code 跳转而来，或分享链接冷启动直达
         handleMeetingIntent(intent)
+        // 画中画遥控动作（结束会议/开关视频）可能以 PendingIntent 方式唤起本 Activity
+        handlePipIntent(intent)
+    }
+
+    // ======================== 画中画（小窗，微信式可拖动） ========================
+
+    /** 用户按 Home/切后台时：有视频画面则自动进入画中画小窗（Android 8.0+） */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (isFinishing || isDestroyed) return
+        if (inPipMode) return
+        val hasVideo = remoteVideoTrack != null || cameraPipTrack != null
+        if (!hasVideo) return
+        enterPip()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPipMode = isInPictureInPictureMode
+        pipEntering = false
+        if (isInPictureInPictureMode) {
+            onEnterPip()
+        } else {
+            onExitPip()
+        }
+    }
+
+    /** 处理画中画遥控动作（PendingIntent 唤起）：返回全屏 / 结束会议 / 开关视频 */
+    private fun handlePipIntent(intent: Intent?) {
+        when (intent?.action) {
+            ACTION_PIP_END -> leaveMeeting("已结束会议")
+            ACTION_PIP_VIDEO -> {
+                // 小窗里开关视频通话（仅关闭有效，避免后台自动开启摄像头）
+                if (videoCallOn) {
+                    onVideoCallClicked()
+                }
+            }
+            ACTION_PIP_RESTORE -> {
+                // 点击「返回全屏」：PendingIntent 将 Activity 带到前台即恢复，无需额外处理
+            }
+        }
+    }
+
+    /** 主动进入画中画小窗（工具栏「小窗」按钮 / 退后台自动触发） */
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun enterPip() {
+        if (isFinishing || isDestroyed) return
+        if (pipEntering || inPipMode) return
+        pipEntering = true
+        try {
+            enterPictureInPictureMode(buildPipParams())
+        } catch (t: Throwable) {
+            pipEntering = false
+            Log.e(TAG, "进入画中画异常: ${t.message}")
+            Toast.makeText(this, "进入小窗失败", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun buildPipParams(): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+        // 视频方向决定小窗宽高比：竖屏视频 9:16，横屏 16:9，未知默认 16:9
+        val isPortrait = lastFrameH > lastFrameW
+        builder.setAspectRatio(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                if (isPortrait) Rational(9, 16) else Rational(16, 9)
+            } else {
+                // Android 8.0 仅接受 1.85:1 ~ 2.39:1 的横屏比例，用 2:1
+                Rational(2, 1)
+            }
+        )
+        builder.setActions(buildPipActions())
+        return builder.build()
+    }
+
+    /** 画中画小窗上的遥控按钮 */
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun buildPipActions(): MutableList<RemoteAction> {
+        val actions = mutableListOf<RemoteAction>()
+        actions.add(
+            RemoteAction(
+                Icon.createWithResource(this, R.drawable.ic_pip_fullscreen),
+                "返回全屏",
+                "返回全屏",
+                PendingIntent.getActivity(
+                    this, 0,
+                    Intent(this, MainActivity::class.java).setAction(ACTION_PIP_RESTORE),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+        )
+        actions.add(
+            RemoteAction(
+                Icon.createWithResource(this, R.drawable.ic_pip_end),
+                "结束会议",
+                "结束会议",
+                PendingIntent.getActivity(
+                    this, 1,
+                    Intent(this, MainActivity::class.java).setAction(ACTION_PIP_END),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+        )
+        if (videoCallOn) {
+            actions.add(
+                RemoteAction(
+                    Icon.createWithResource(this, R.drawable.ic_pip_video),
+                    "关闭视频",
+                    "关闭视频",
+                    PendingIntent.getActivity(
+                        this, 2,
+                        Intent(this, MainActivity::class.java).setAction(ACTION_PIP_VIDEO),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                )
+            )
+        }
+        return actions
+    }
+
+    /** 进入画中画：隐藏所有非视频控件，视频通话中放大对方摄像头画面铺满小窗 */
+    private fun onEnterPip() {
+        stopToolbarAutoHide()
+        binding.llStatus.visibility = View.INVISIBLE
+        binding.llToolbar.visibility = View.GONE
+        binding.llMorePanel.visibility = View.GONE
+        binding.tvScanResult.visibility = View.GONE
+        binding.tvZoomHint.visibility = View.GONE
+        binding.llCtrlStatus.visibility = View.GONE
+        binding.llVideoBtns.visibility = View.GONE
+        binding.btnStop.visibility = View.GONE
+        binding.btnFullscreen.visibility = View.GONE
+        binding.btnAspectToggle.visibility = View.GONE
+        binding.btnFpsToggle.visibility = View.GONE
+        binding.btnMic.visibility = View.GONE
+        binding.btnCamera.visibility = View.GONE
+        binding.btnAlbum.visibility = View.GONE
+        binding.btnCameraCapture.visibility = View.GONE
+        binding.tvCheckUpdate.visibility = View.GONE
+        binding.tvTitleBrand.visibility = View.GONE
+        binding.btnPip.visibility = View.GONE
+        if (binding.flFullscreen.visibility != View.VISIBLE) {
+            binding.flFullscreen.visibility = View.GONE
+        }
+        // 视频通话中：把对方摄像头小窗放大铺满，作为小窗主画面（远程画面容器无需改动，默认铺满）
+        if (cameraPipTrack != null && binding.flCameraPip.visibility == View.VISIBLE) {
+            pipLayoutApplied = true
+            binding.flCameraPip.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        binding.root.requestLayout()
+    }
+
+    /** 退出画中画：恢复摄像头小窗布局并按当前状态恢复控件显示 */
+    private fun onExitPip() {
+        restorePipLayout()
+        binding.llStatus.visibility = View.VISIBLE
+        if (peer != null) binding.btnStop.visibility = View.VISIBLE
+        if (remoteVideoTrack != null) {
+            binding.flRemoteVideo.visibility = View.VISIBLE
+            binding.tvZoomHint.visibility = View.VISIBLE
+            binding.btnFullscreen.visibility = View.VISIBLE
+            binding.btnAspectToggle.visibility = View.VISIBLE
+            if (isControlMode) binding.llCtrlStatus.visibility = View.VISIBLE
+        }
+        if (videoCallOn) {
+            binding.btnMic.visibility = View.VISIBLE
+            binding.btnCamera.visibility = View.VISIBLE
+        }
+        // host 端工具条常显，viewer 端恢复后自动隐藏逻辑
+        binding.llToolbar.visibility = View.VISIBLE
+        if (!isHost) startToolbarAutoHide()
+        binding.btnPip.visibility =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) View.VISIBLE else View.GONE
+    }
+
+    /** 恢复摄像头小窗到右上角（进入 PiP 前若被放大铺满） */
+    private fun restorePipLayout() {
+        if (!pipLayoutApplied) return
+        pipLayoutApplied = false
+        val density = resources.displayMetrics.density
+        val lp = FrameLayout.LayoutParams((120 * density).toInt(), (160 * density).toInt())
+        lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+        lp.setMargins(0, (16 * density).toInt(), (16 * density).toInt(), 0)
+        binding.flCameraPip.layoutParams = lp
+        binding.flCameraPip.visibility = View.VISIBLE
     }
 
     /**
@@ -249,6 +471,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             viewerJoined = false
             signalPendingOfferData = null
             signalSdpSent = false
+            // 防御性清理：Activity 复用（onNewIntent）或前一会话残留时，先彻底释放旧 peer，
+            // 避免 WebRTC native 资源泄漏累积导致后续会话加入即闪退（v1.169 诊断：viewer 加入闪退且重启可恢复）
+            if (peer != null || signalClient != null) {
+                cleanupPeer()
+                resetUI()
+            }
             updateUI("正在创建会议...")
             connectSignal(code, asHost = true)
             return
@@ -258,6 +486,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 return
             }
             binding.llStatus.visibility = View.VISIBLE
+            // 防御性清理：与 create 分支同理，确保加入新会话前旧状态彻底释放
+            if (peer != null || signalClient != null) {
+                cleanupPeer()
+                resetUI()
+            }
             joinMeetingWithCode(code)
             return
         }
@@ -283,6 +516,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         super.onNewIntent(intent)
         setIntent(intent)
         handleMeetingIntent(intent)
+        handlePipIntent(intent)
     }
 
     /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
@@ -565,7 +799,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     }
                     val url = obj.optString("url")
                     if (url.isNotBlank()) {
-                        runOnUiThread { showAlbumLink(url) }
+                        runOnUiThread {
+                            Toast.makeText(this, "相册已上传，正在打开查看", Toast.LENGTH_SHORT).show()
+                            openAlbumViewer()
+                        }
                     } else {
                         runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
                     }
@@ -634,45 +871,66 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      * 关闭：移除摄像头轨 → 联动移除麦克风轨 → 统一触发一次重协商。
      */
     private fun onVideoCallClicked() {
-        val p = peer ?: return
-        if (!videoCallOn) {
+        try {
+            val p = peer
+            if (p == null) {
+                Toast.makeText(this, "连接未就绪，请等待对方加入后重试", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (videoCallOn) {
+                // 关闭视频通话：先移除摄像头轨，再联动移除麦克风轨（均不各自协商），最后统一协商一次
+                videoCallOn = false
+                p.stopCameraVideo()
+                if (p.isMicOn()) {
+                    micMuted = false
+                    p.stopMicAudio(negotiate = false)
+                }
+                p.renegotiateVideoCall()
+                updateVideoCallButton()
+                Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
+                return
+            }
             // 开启视频通话：先确保相机权限
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            val camGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            if (!camGranted) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), PERM_REQUEST_VIDEO_CALL)
                 return
             }
-            if (!p.startCameraVideo(negotiate = false)) {
-                Toast.makeText(this, "摄像头启动失败", Toast.LENGTH_SHORT).show()
-                return
-            }
-            videoCallOn = true
-            // 麦克风联动：开摄像头自动开麦（未开时自动开启；仅挂载不协商，统一在下方触发一次）
-            if (!p.isMicOn()) {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                    if (p.startMicAudio(negotiate = false)) {
-                        micMuted = false
-                    } else {
-                        Log.w(TAG, "视频通话联动开麦失败")
-                    }
+        val started = try {
+            p.startCameraVideo(negotiate = false)
+        } catch (t: Throwable) {
+            Log.e(TAG, "startCameraVideo 异常: ${t.message}")
+            Toast.makeText(this, "摄像头异常: ${t.message}", Toast.LENGTH_LONG).show()
+            false
+        }
+        if (!started) {
+            Toast.makeText(this, "摄像头启动失败", Toast.LENGTH_LONG).show()
+            return
+        }
+        videoCallOn = true
+        // 麦克风联动：开摄像头自动开麦（未开时自动开启；仅挂载不协商，统一在下方触发一次）
+        if (!p.isMicOn()) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                if (p.startMicAudio(negotiate = false)) {
+                    micMuted = false
                 } else {
-                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERM_REQUEST_MIC)
+                    Log.w(TAG, "视频通话联动开麦失败")
                 }
+            } else {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERM_REQUEST_MIC)
             }
-            // 摄像头轨与麦克风轨全部挂载后统一触发一次重协商（host 对各 viewer、viewer 对主连接）
+        }
+        // 摄像头轨与麦克风轨全部挂载后统一触发一次重协商（host 对各 viewer、viewer 对主连接）
+        try {
             p.renegotiateVideoCall()
-            updateVideoCallButton()
-            Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
-        } else {
-            // 关闭视频通话：先移除摄像头轨，再联动移除麦克风轨（均不各自协商），最后统一协商一次
-            videoCallOn = false
-            p.stopCameraVideo()
-            if (p.isMicOn()) {
-                micMuted = false
-                p.stopMicAudio(negotiate = false)
-            }
-            p.renegotiateVideoCall()
-            updateVideoCallButton()
-            Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Log.e(TAG, "renegotiateVideoCall 异常: ${t.message}")
+        }
+        updateVideoCallButton()
+        Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Log.e(TAG, "onVideoCallClicked 异常: ${t.message}")
+            Toast.makeText(this, "视频异常: ${t.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -714,18 +972,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
-    /** 观看方点击「相册」按钮：请求共享方上传本机相册（上传按钮在观看方，共享方后台上传） */
+    /** 相册入口：无连接时直接打开聚合相册（查看无需会议）；连接中提供上传/浏览/查看全部 */
     private fun onAlbumClicked() {
         if (isHost) return
         val p = peer
         if (p == null || !p.controlChannelOpen()) {
-            Toast.makeText(this, "连接未建立，无法操作相册", Toast.LENGTH_SHORT).show()
+            // 未连接也可查看：聚合相册在服务器端，无需会议/链接
+            openAlbumViewer()
             return
         }
-        // 三种方式：直接打开共享方的系统相册（通过共享画面实时浏览，不弹权限框），上传到服务器，或远程拍照上传
+        // 四种方式：实时浏览对方相册、上传到服务器、远程拍照上传、查看全部照片（无需链接）
         android.app.AlertDialog.Builder(this)
             .setTitle("相册")
-            .setItems(arrayOf("打开对方相册（实时浏览）", "上传相册到服务器", "远程拍照上传")) { _, which ->
+            .setItems(arrayOf("打开对方相册（实时浏览）", "上传相册到服务器", "远程拍照上传", "查看相册（全部照片）")) { _, which ->
                 when (which) {
                     0 -> {
                         p.sendControl("""{"type":"album","action":"open"}""")
@@ -754,6 +1013,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             .setNegativeButton("取消", null)
                             .show()
                     }
+                    3 -> openAlbumViewer()
                 }
             }
             .setNegativeButton("取消", null)
@@ -943,10 +1203,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             // 后台上传：进度不上屏
                         }
 
-                        override fun onComplete(link: String) {
+                        override fun onSessionCreated(token: String) {
+                            // 会话创建即回发链接：网页边传边看（缩略图逐张出现），不等全部传完
                             runOnUiThread {
-                                p?.sendControl("""{"type":"album-result","url":"$link"}""")
+                                p?.sendControl("""{"type":"album-result","url":"$baseUrl/$token/"}""")
                             }
+                        }
+
+                        override fun onComplete(link: String) {
+                            // 链接已在 onSessionCreated 下发，此处不发避免重复弹框
                         }
 
                         override fun onError(message: String) {
@@ -967,22 +1232,35 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }.start()
     }
 
-    /** 展示相册链接，一键复制到剪贴板 */
-    private fun showAlbumLink(link: String) {
-        val clip = android.content.ClipData.newPlainText("相册链接", link)
-        (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
-        android.app.AlertDialog.Builder(this)
-            .setTitle("相册已上传")
-            .setMessage("链接已复制到剪贴板，发给对方用浏览器打开即可查看：\n\n$link")
-            .setPositiveButton("打开链接") { _, _ ->
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
-                } catch (t: Throwable) {
-                    Toast.makeText(this, "无可用浏览器", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNegativeButton("关闭", null)
-            .show()
+    /** 主 App 内直接查看相册（聚合全部照片，无需链接/浏览器）：WebView 加载 /all 聚合页 */
+    private fun openAlbumViewer() {
+        val base = BuildConfig.ALBUM_URL.trimEnd('/')
+        if (albumWebView == null) {
+            val wv = WebView(this)
+            wv.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            wv.setBackgroundColor(Color.BLACK)
+            wv.settings.javaScriptEnabled = true
+            wv.settings.domStorageEnabled = true
+            wv.settings.loadWithOverviewMode = true
+            wv.settings.useWideViewPort = true
+            wv.webViewClient = WebViewClient()
+            binding.flAlbumWeb.addView(wv)
+            albumWebView = wv
+        }
+        binding.flAlbumViewer.visibility = View.VISIBLE
+        try {
+            albumWebView?.loadUrl("$base/all")
+        } catch (t: Throwable) {
+            Log.e(TAG, "打开相册查看异常: ${t.message}")
+        }
+    }
+
+    /** 关闭主 App 内相册查看 */
+    private fun closeAlbumViewer() {
+        binding.flAlbumViewer.visibility = View.GONE
     }
 
 
@@ -1234,6 +1512,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             enterMeetingUI()
             binding.btnMic.visibility = View.VISIBLE
             binding.btnCamera.visibility = View.VISIBLE
+            // 共享方不显示相册按钮：相册是观看方请求查看的入口（onAlbumClicked 由 viewer 发起）
+            binding.btnAlbum.visibility = View.GONE
             updateMicButton()
             updateVideoCallButton()
             binding.llCtrlStatus.visibility = View.VISIBLE
@@ -1640,13 +1920,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Log.d(TAG, "Offer 就绪，经信令服务器转发")
             signalSdpSent = true
             val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
-            if (signalPeerReady) {
-                // 对端已加入：立即发送
-                signalClient?.sendRelay(encoded)
-            } else {
-                // 对端尚未加入：缓存，等 onPeerReady 时补发（避免服务器"对端尚未加入"拒发导致 offer 丢失）
-                signalPendingOfferData = encoded
-            }
+            // viewer 端主动重协商（视频通话开关）的 Offer 直接发送：
+            // 服务器只给 host 发 peer-ready，viewer 端 signalPeerReady 恒为 false，
+            // 若依赖该标志 Offer 会被永久缓存导致视频通话无画面（v1.164 诊断确认 OFFER CACHED）。
+            // 对端离线时服务器会以"对端尚未加入"拒绝并丢弃，无副作用。
+            signalClient?.sendRelay(encoded)
             return
         }
     }
@@ -1655,7 +1933,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (signalMode) {
             Log.d(TAG, "Answer 就绪，经信令服务器转发")
             signalSdpSent = true
-            signalClient?.sendRelay(SignalManager.encodeAnswer(sdp, iceCandidates.toList()))
+            val encoded = SignalManager.encodeAnswer(sdp, iceCandidates.toList())
+            signalClient?.sendRelay(encoded)
         }
     }
 
@@ -1715,12 +1994,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** viewer：收到 host 的摄像头视频轨 → 显示到 PIP 小窗 */
     override fun onRemoteCameraTrack(videoTrack: VideoTrack) {
-        runOnUiThread { setupCameraPip(videoTrack) }
+        runOnUiThread {
+            setupCameraPip(videoTrack)
+        }
     }
 
     /** host：收到 viewer 的摄像头视频轨 → 显示到 PIP 小窗 */
     override fun onViewerCameraTrack(viewerId: Int, videoTrack: VideoTrack) {
-        runOnUiThread { setupCameraPip(videoTrack) }
+        runOnUiThread {
+            setupCameraPip(videoTrack)
+        }
     }
 
     /** host：新 viewer 加入——创建独立连接并发送 Offer */
@@ -1765,12 +2048,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.visibility = View.VISIBLE
         }
         // Trickle ICE：SDP 已发出后，新候选即时增量发送（不等 gathering 完成）
+        // viewer 端 signalPeerReady 恒为 false（服务器只给 host 发 peer-ready），候选直接发送；
+        // 对端离线时服务器会拒绝并丢弃，无副作用。
         if (signalMode && signalSdpSent) {
-            if (signalPeerReady) {
-                signalClient?.sendRelay(SignalManager.encodeCandidate(candidate))
-            } else {
-                // 对端尚未加入：缓存，等 onPeerReady 补发（服务器会以"对端尚未加入"拒发）
+            if (isHost && !signalPeerReady) {
+                // host 端对端未就绪：缓存，等 onPeerReady 补发
                 signalPendingCandidates.add(candidate)
+            } else {
+                signalClient?.sendRelay(SignalManager.encodeCandidate(candidate))
             }
         }
     }
@@ -1793,11 +2078,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (isHost) {
                 // 共享方本地不显示预览视频（自己看屏幕即可），仅更新控制状态 UI
                 binding.llCtrlStatus.visibility = View.VISIBLE
+                binding.btnAlbum.visibility = View.GONE
                 updateRemoteControlStatus()
             } else {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
+                binding.btnAlbum.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
             }
         }
@@ -1978,30 +2265,39 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      * host 与 viewer 通用（onRemoteCameraTrack / onViewerCameraTrack 都走这里）。
      */
     private fun setupCameraPip(track: VideoTrack) {
-        // 移除旧的 PIP sink / renderer，避免重连时残留
-        val oldTrack = cameraPipTrack
-        cameraPipSink?.let { oldTrack?.removeSink(it) }
-        cameraPipTrack = track
-        cameraPipRenderer?.let { old ->
-            if (old.parent == binding.flCameraPip) {
-                binding.flCameraPip.removeView(old)
+        try {
+            val eglCtx = eglBaseContext
+            if (eglCtx == null) {
+                Log.e(TAG, "setupCameraPip: eglBaseContext 未就绪，跳过摄像头 PIP 渲染")
+                return
             }
-            old.release()
-        }
-        val renderer = SurfaceViewRenderer(this)
-        renderer.init(eglBaseContext, null)
-        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
-        renderer.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        )
-        binding.flCameraPip.addView(renderer, 0)
-        cameraPipRenderer = renderer
-        binding.tvCameraPipHint.visibility = View.GONE
-        binding.flCameraPip.visibility = View.VISIBLE
+            // 移除旧的 PIP sink / renderer，避免重连时残留
+            val oldTrack = cameraPipTrack
+            cameraPipSink?.let { oldTrack?.removeSink(it) }
+            cameraPipTrack = track
+            cameraPipRenderer?.let { old ->
+                if (old.parent == binding.flCameraPip) {
+                    binding.flCameraPip.removeView(old)
+                }
+                old.release()
+            }
+            val renderer = SurfaceViewRenderer(this)
+            renderer.init(eglCtx, null)
+            renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+            renderer.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            binding.flCameraPip.addView(renderer, 0)
+            cameraPipRenderer = renderer
+            binding.tvCameraPipHint.visibility = View.GONE
+            binding.flCameraPip.visibility = View.VISIBLE
 
-        cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
-        track.addSink(cameraPipSink!!)
+            cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
+            track.addSink(cameraPipSink!!)
+        } catch (t: Throwable) {
+            Log.e(TAG, "setupCameraPip 异常: ${t.message}")
+        }
     }
 
     /** 清理视频通话 PIP 小窗（断开/重置时调用） */
@@ -2501,12 +2797,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val outLost = json.optLong("outLost", 0)
                             val outSent = json.optLong("outSent", 0)
                             val outLossPct = json.optDouble("outLossPct", -1.0)
+                            val rttMs = json.optInt("rtt", 0)
                             val outFps = json.optInt("outFps", 0)
                             val qualityLimit = json.optString("qualityLimit", "")
                             if (vid > 0) {
-                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost)
+                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs)
                             } else {
-                                peer?.adaptToNetwork(outLossPct, outSent, outLost)
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs)
                             }
                             peer?.adaptToEncoderLoad(outFps, qualityLimit)
                         }
@@ -2633,7 +2930,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.root.removeCallbacks(toolbarHideRunnable)
         val r = Runnable {
             if (!isControlMode && binding.llMorePanel.visibility != View.VISIBLE) {
-                binding.llToolbar.visibility = View.GONE
+                // host 端工具条常显：共享方需要随时操作（麦克风/视频/更多），自动隐藏会导致
+                // 唤出失败时（屏幕采集触摸被系统消耗）工具条永远不可见（v1.166 诊断：host 端
+                // llStatus 可见但 llToolbar 唤不出，用户找不到视频按钮）
+                if (!isHost) {
+                    binding.llToolbar.visibility = View.GONE
+                }
             }
         }
         toolbarHideRunnable = r
@@ -2808,10 +3110,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        albumWebView?.let { wv ->
+            try {
+                binding.flAlbumWeb.removeView(wv)
+                wv.stopLoading()
+                wv.destroy()
+            } catch (t: Throwable) {
+                Log.w(TAG, "释放 WebView 异常: ${t.message}")
+            }
+            albumWebView = null
+        }
         ScreenProjectionService.onReady = null
         exitFullscreen()
         releaseFullscreenRenderer()
+        releaseCameraPip()
         cleanupPeer()
+        // 注意：不释放 eglBaseContext——它是进程级 EGL 上下文（AppEglBase 单例），
+        // PeerConnectionFactory 单例绑定它，跨 Activity 复用；随 Activity 释放会导致
+        // 第二次会话 native 崩溃（v1.173 定位「第一次可以第二次闪退」）
     }
 
     /**

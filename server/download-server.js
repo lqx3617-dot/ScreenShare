@@ -13,7 +13,7 @@ const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 发布配置：每次发版更新此处（changelog 为多行更新说明，forced 是否强制更新）
 const RELEASE_CONFIG = {
-  changelog: "会议式两级界面：① App 启动进入会议连接页，可创建房间或输入会议号加入；② 连接后进入全屏沉浸会议室，画面最大化；③ 底部悬浮工具条（麦克风/摄像头/结束会议）+ 更多面板收纳相册/远程控制/帧率/比例/全屏/拍照/控制键；④ 退出会议返回连接页",
+  changelog: "相册归拢升级：查看照片不再需要链接/浏览器，主 App 内「相册」点「查看相册（全部照片）」直接打开；服务器把历次上传的照片全部归拢到一个统一相册视图（/all），共 3700+ 张，点击按需加载高清原图，上传中自动刷新；相册服务器统一为 Express+SQLite 新版，旧版单文件服务器已清理",
   forced: false,
 };
 
@@ -125,15 +125,18 @@ const server = http.createServer((req, res) => {
     done(200);
     return;
   }
-  if (urlPath !== "/ScreenShare-allarch-signed.apk") {
+  if (urlPath !== "/ScreenShare-allarch-signed.apk" && urlPath !== "/AlbumViewer-signed.apk") {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("not found");
     done(404);
     return;
   }
+  const apkPath = urlPath === "/AlbumViewer-signed.apk"
+    ? "/workspace/AlbumViewer-signed.apk"
+    : APK;
   let stat = null;
   try {
-    stat = fs.statSync(APK);
+    stat = fs.statSync(apkPath);
   } catch (e) {
     res.writeHead(500, { "Content-Type": "text/plain" });
     res.end("apk missing");
@@ -164,7 +167,7 @@ const server = http.createServer((req, res) => {
       "Content-Type": "application/vnd.android.package-archive",
       "Accept-Ranges": "bytes",
     });
-    fs.createReadStream(APK, { start, end }).pipe(res);
+    fs.createReadStream(apkPath, { start, end }).pipe(res);
     done(206);
   } else {
     res.writeHead(200, {
@@ -172,7 +175,7 @@ const server = http.createServer((req, res) => {
       "Content-Type": "application/vnd.android.package-archive",
       "Accept-Ranges": "bytes",
     });
-    fs.createReadStream(APK).pipe(res);
+    fs.createReadStream(apkPath).pipe(res);
     done(200);
   }
 });

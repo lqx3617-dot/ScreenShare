@@ -206,7 +206,7 @@
         android:orientation="horizontal"
         android:gravity="top"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="92dp"
+        android:layout_marginBottom="104dp"
         android:padding="10dp"
         android:background="@drawable/bg_glass"
         android:elevation="20dp"
@@ -363,6 +363,20 @@
                 android:visibility="gone" />
 
             <TextView
+                android:id="@+id/btnPip"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="小窗"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFFFF"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:background="@drawable/bg_fullscreen_btn" />
+
+            <TextView
                 android:id="@+id/tvCheckUpdate"
                 android:layout_width="wrap_content"
                 android:layout_height="44dp"
@@ -453,6 +467,58 @@
             android:textColor="#FF00E5FF"
             android:typeface="monospace"
             android:background="@drawable/bg_fullscreen_btn" />
+    </FrameLayout>
+
+    <!-- 相册查看（主 App 内直接看全部照片，无需链接）：WebView 加载聚合相册页 -->
+    <FrameLayout
+        android:id="@+id/flAlbumViewer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:background="#FF000000"
+        android:elevation="30dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="#FF1A1A1A"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:elevation="5dp">
+
+            <TextView
+                android:id="@+id/tvAlbumViewerTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="start|center_vertical"
+                android:text="相册 · 全部照片"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:textColor="#FFFFFFFF" />
+
+            <TextView
+                android:id="@+id/btnCloseAlbumViewer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:gravity="center"
+                android:text="关闭"
+                android:textSize="14sp"
+                android:textColor="#FF7CFC9C" />
+        </LinearLayout>
+
+        <!-- WebView 动态添加到此容器（代码创建，避免 XML 强依赖 WebView 尺寸） -->
+        <FrameLayout
+            android:id="@+id/flAlbumWeb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="46dp" />
     </FrameLayout>
 
 </FrameLayout>
