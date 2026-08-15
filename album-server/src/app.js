@@ -191,11 +191,11 @@ app.get("/api/albums", (req, res) => {
       if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
     }
   } catch (e) {}
-  const deviceFilter = String(req.query.device || "").trim();
+  const deviceFilter = String(req.query.device || "").trim().replace(/\s+/g, "");
   const albums = db
     .listAll()
     .filter((s) => s.received.length > 0)
-    .filter((s) => !deviceFilter || s.device === deviceFilter)
+    .filter((s) => !deviceFilter || (s.device || "").replace(/\s+/g, "") === deviceFilter)
     .map((s) => ({
       token: s.token,
       total: s.total,

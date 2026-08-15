@@ -98,7 +98,7 @@ function listDevices() {
     )
     .all()
     .map((r) => ({
-      device: r.device,
+      device: (r.device || "").replace(/\s+/g, ""),
       sessions: r.sessions,
       photos: r.photos,
     }));
