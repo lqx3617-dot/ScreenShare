@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
@@ -99,21 +100,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 隐藏发版入口：顶部标题连点 7 次（相邻间隔 ≤800ms）打开发布面板
-        findViewById<View>(R.id.tv_title).setOnClickListener {
-            val now = System.currentTimeMillis()
-            tapTimes.add(now)
-            while (tapTimes.isNotEmpty() && now - tapTimes.first() > 800) {
-                tapTimes.removeAt(0)
-            }
-            if (tapTimes.size >= 7) {
-                tapTimes.clear()
-                showPublishPanel()
-            }
-        }
+        // 隐藏发版入口：顶部标题 2 秒内连点 3 次打开发布面板
+        findViewById<View>(R.id.tv_title).setOnClickListener { onTitleTripleTap() }
     }
 
-    private val tapTimes = ArrayList<Long>()
+    private var titleTapCount = 0
+    private var titleLastTapTime = 0L
+
+    private fun onTitleTripleTap() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - titleLastTapTime > 2000) {
+            titleTapCount = 0
+        }
+        titleLastTapTime = now
+        titleTapCount++
+        if (titleTapCount >= 3) {
+            titleTapCount = 0
+            showPublishPanel()
+        }
+    }
 
     private fun showPublishPanel() {
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
