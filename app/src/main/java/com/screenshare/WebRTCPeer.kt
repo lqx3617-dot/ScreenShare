@@ -1423,6 +1423,8 @@ class WebRTCPeer(
     // V3.1: 动态采集分辨率
     private var captureFps = 30
     private var lastCaptureProfile = 0
+    // V1.187: 弱网自适应降帧率后的实际采集帧率（用于判断档位变化是否需要再次调整）
+    private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
     private var lastCaptureSwitchMs = 0L
     private val captureSwitchCooldownMs = 4000L
@@ -1453,6 +1455,21 @@ class WebRTCPeer(
                 ((base.first * scale).toInt() to (base.second * scale).toInt())
             }
             else -> base
+        }
+    }
+
+    /**
+     * 按弱网档位选择采集帧率（v1.187）：异地/TURN 中继场景 RTT 高、带宽有限，
+     * 30fps 下每帧数据量大且拥塞控制收敛慢，积压易导致接收端掉帧卡顿。
+     * 弱网加重时同步降帧率（30→24→20→15），配合降码率/降分辨率进一步减轻链路负载，
+     * 播放端观感反而更连续；档位恢复后回到 30fps。
+     */
+    private fun captureFpsForLevel(level: Int): Int {
+        return when {
+            level >= 4 -> 15
+            level >= 3 -> 20
+            level >= 2 -> 24
+            else -> 30
         }
     }
 
@@ -1664,20 +1681,29 @@ class WebRTCPeer(
             // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
             val weakProfile = captureProfileForLevel(curAdaptLevel)
             val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
-            if (targetProfile != lastCaptureProfile) {
+            // V1.187: 采集侧同步降帧率——档位>=2 时 30→24→20→15，异地/中继高 RTT 下
+            // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
+            val targetFps = captureFpsForLevel(curAdaptLevel)
+            if (targetProfile != lastCaptureProfile || targetFps != captureFps) {
                 val now = System.currentTimeMillis()
-                val isDowngrade = targetProfile > lastCaptureProfile
+                val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
                 val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
                 if (isDowngrade || cooldownOk) {
                     lastCaptureProfile = targetProfile
+                    lastCaptureFps = targetFps
+                    captureFps = targetFps
                     lastCaptureSwitchMs = now
                     try {
                         val capturer = videoCapturer
                         if (capturer != null) {
                             val (capW, capH) = captureSizeForLevel(targetProfile)
-                            capturer.changeCaptureFormat(capW, capH, captureFps)
-                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${captureFps} ($tag 档位$curAdaptLevel)")
+                            capturer.changeCaptureFormat(capW, capH, targetFps)
+                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
                         }
+                        // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
+                        val params = sender.parameters
+                        params.encodings?.firstOrNull()?.maxFramerate = targetFps
+                        sender.parameters = params
                     } catch (t: Throwable) {
                         Log.w(TAG, "采集降分辨率失败: ${t.message}")
                     }
@@ -1696,6 +1722,7 @@ class WebRTCPeer(
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0
+        lastCaptureFps = 30
     }
 
     fun disconnect() {
