@@ -144,12 +144,13 @@ class ScreenSyncService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val progressTxt = if (totalCount > 0) "已同步 $syncedCount/$totalCount" else "等待同步指令"
+        // 静默后台：不显示设备码/IP/进度等敏感信息，仅保留前台服务最小占位
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("相册同步服务运行中")
-            .setContentText("设备码：${deviceCode.ifBlank { "未生成" }} · $progressTxt · ${localIp()}")
+            .setContentText("正在后台运行")
             .setSmallIcon(android.R.drawable.stat_sys_upload)
             .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentIntent(pi)
             .build()
     }
@@ -161,11 +162,16 @@ class ScreenSyncService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        // 共享方静默后台运行：渠道 IMPORTANCE_MIN（无声音/无横幅/无角标），
+        // 通知只出现在通知栏折叠区，保持最小打扰（前台服务强制要求常驻通知）
         val channel = NotificationChannel(
             CHANNEL_ID,
             "相册同步服务",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply { description = "远程相册同步常驻通知" }
+            NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            description = "远程相册同步静默后台服务"
+            setShowBadge(false)
+        }
         (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
     }
 
