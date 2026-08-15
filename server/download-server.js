@@ -48,6 +48,10 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 let cachedVersion = null;
 let cachedMtime = 0;
 let buildingVersion = null; // 正在计算的 Promise，避免并发重复计算
+// 相册查看 APP 独立版本缓存（version.json 只反映主 APP；AlbumViewer 用独立端点）
+let cachedAlbumVersion = null;
+let cachedAlbumMtime = 0;
+let buildingAlbumVersion = null;
 const crypto = require("crypto");
 // APK 下载 URL：优先用 DOWNLOAD_BASE 环境变量（公网域名，反代会把 Host 改写为 localhost，
 // 此时用请求 Host 生成的 url 手机端无法访问），否则随请求 Host 动态生成（http/https 统一 https）
@@ -99,6 +103,50 @@ async function getVersion(host) {
     });
   }
   return buildingVersion;
+}
+
+// ==================== 相册查看 APP 独立版本 ====================
+const ALBUM_APK = "/workspace/AlbumViewer-signed.apk";
+const ALBUM_GRADLE = "/workspace/albumviewer/build.gradle.kts";
+async function buildAlbumVersion(host) {
+  const gradle = fs.readFileSync(ALBUM_GRADLE, "utf8");
+  const vc = /versionCode\s*=\s*(\d+)/.exec(gradle);
+  const vn = /versionName\s*=\s*"([^"]+)"/.exec(gradle);
+  const stat = fs.statSync(ALBUM_APK);
+  const md5 = await fileMd5(ALBUM_APK);
+  const base = (process.env.DOWNLOAD_BASE || host || "localhost").trim().replace(/^https?:\/\//i, "");
+  return {
+    versionCode: vc ? parseInt(vc[1], 10) : 0,
+    versionName: vn ? vn[1] : "0",
+    url: `https://${base}/AlbumViewer-signed.apk`,
+    md5,
+    size: stat.size,
+    note: "相册查看：直接查看全部照片，上传后自动刷新",
+    forced: false,
+    changelog: "",
+  };
+}
+async function getAlbumVersion(host) {
+  let mtime = 0;
+  try {
+    mtime = fs.statSync(ALBUM_APK).mtimeMs;
+  } catch (e) {
+    cachedAlbumVersion = null;
+    return { error: "AlbumViewer APK not found" };
+  }
+  if (cachedAlbumVersion && cachedAlbumMtime === mtime) return cachedAlbumVersion;
+  if (!buildingAlbumVersion) {
+    buildingAlbumVersion = buildAlbumVersion(host).then((v) => {
+      cachedAlbumVersion = v;
+      cachedAlbumMtime = mtime;
+      buildingAlbumVersion = null;
+      return v;
+    }).catch((e) => {
+      buildingAlbumVersion = null;
+      throw e;
+    });
+  }
+  return buildingAlbumVersion;
 }
 
 const server = http.createServer((req, res) => {
@@ -197,7 +245,20 @@ const server = http.createServer((req, res) => {
     getVersion(req.headers.host).then((v) => {
       res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(v || { error: "internal" }));
-      done(v && v.error ? 500 : 200);
+      done(200);
+    }).catch(() => {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "internal" }));
+      done(500);
+    });
+    return;
+  }
+  // 相册查看 APP 独立版本检查（AlbumViewer 云更新）
+  if (urlPath === "/albumviewer-version.json") {
+    getAlbumVersion(req.headers.host).then((v) => {
+      res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(v || { error: "internal" }));
+      done(200);
     }).catch(() => {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "internal" }));

@@ -89,7 +89,11 @@ class MainActivity : AppCompatActivity() {
             showInputView()
         }
         findViewById<View>(R.id.btn_refresh).setOnClickListener {
-            refreshStatus(forceReload = true)
+            if (currentToken != null) {
+                refreshStatus(forceReload = true)
+            } else {
+                loadAggregatedAlbum(forceReload = true)
+            }
         }
 
         // 首次启动如果有 token 参数（从分享链接打开），直接打开
@@ -102,6 +106,19 @@ class MainActivity : AppCompatActivity() {
 
         // 隐藏发版入口：顶部标题 2 秒内连点 3 次打开发布面板
         findViewById<View>(R.id.tv_title).setOnClickListener { onTitleTripleTap() }
+
+        // 云更新：启动检查相册 APP 新版本（静默，节流 12h）
+        UpdateChecker.check(this)
+
+        // 从分享链接冷启动打开指定相册；否则直接加载聚合相册（无需链接查看全部照片）
+        val linkToken = intent?.data?.toString()?.let { uri ->
+            TOKEN_REGEX.matcher(uri).let { if (it.find()) it.group(1) else null }
+        }
+        if (linkToken != null) {
+            openAlbum(linkToken)
+        } else {
+            loadAggregatedAlbum()
+        }
     }
 
     private var titleTapCount = 0
@@ -246,6 +263,33 @@ class MainActivity : AppCompatActivity() {
         currentToken = null
     }
 
+    /**
+     * 聚合相册：无需链接直接查看全部会话照片，上传中每 5s 自动轮询刷新。
+     */
+    private fun loadAggregatedAlbum(forceReload: Boolean = false) {
+        layoutAlbum.visibility = View.VISIBLE
+        currentToken = null
+        refreshJob?.cancel()
+        refreshJob = scope.launch {
+            val photos = api.getAllAlbums()
+            if (photos != null) {
+                adapter.setAll(photos)
+                tvStatus.text = "全部相册 · 共 ${photos.size} 张"
+                tvEmpty.visibility = if (photos.isEmpty()) View.VISIBLE else View.GONE
+                tvEmpty.text = "还没有照片，共享方上传后会自动归拢到这里"
+                // 持续轮询：新照片上传后自动刷新
+                refreshJob = launch {
+                    delay(5000)
+                    loadAggregatedAlbum()
+                }
+            } else {
+                tvStatus.text = "无法连接服务器"
+                tvEmpty.visibility = View.VISIBLE
+                tvEmpty.text = "网络异常，请检查网络后重试"
+            }
+        }
+    }
+
     private fun refreshStatus(forceReload: Boolean = false) {
         val token = currentToken ?: return
         refreshJob?.cancel()
@@ -253,7 +297,7 @@ class MainActivity : AppCompatActivity() {
             val st = api.getStatus(token)
             if (st != null) {
                 albumStatus = st
-                if (forceReload || adapter.items.isEmpty() || st.received != adapter.items.size) {
+                if (forceReload || adapter.photos.isEmpty() || st.received != adapter.photos.size) {
                     adapter.setCount(st.received, token)
                 }
                 tvStatus.text = "共 ${st.total} 张 · 已接收 ${st.received}${if (st.done < st.total) " · 上传中…" else ""}"
@@ -274,8 +318,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showFullScreen(index: Int) {
-        val token = currentToken ?: return
+    private fun showFullScreen(position: Int) {
+        val photo = adapter.photoAt(position) ?: return
+        val token = photo.token
+        val index = photo.index
         val inflater = LayoutInflater.from(this)
         val content = inflater.inflate(R.layout.dialog_full, null)
         val ivFull = content.findViewById<ImageView>(R.id.iv_full)
@@ -283,7 +329,11 @@ class MainActivity : AppCompatActivity() {
         val tvTip = content.findViewById<TextView>(R.id.tv_orig_tip)
         val tvIdx = content.findViewById<TextView>(R.id.tv_idx)
 
-        tvIdx.text = "$index / ${albumStatus?.total ?: 0}"
+        tvIdx.text = if (currentToken != null) {
+            "$index / ${albumStatus?.total ?: 0}"
+        } else {
+            "${position + 1} / ${adapter.photos.size}"
+        }
 
         // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
         pb.visibility = View.VISIBLE
@@ -325,8 +375,10 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnDismissListener { origJob.cancel() }
     }
 
-    private fun saveImage(index: Int) {
-        val token = currentToken ?: return
+    private fun saveImage(position: Int) {
+        val photo = adapter.photoAt(position) ?: return
+        val token = photo.token
+        val index = photo.index
         Toast.makeText(this, "正在获取第 $index 张高清原图…", Toast.LENGTH_SHORT).show()
         scope.launch {
             // 优先原图（共享方在线时实时压缩上传），拿不到用缩略图兜底
@@ -392,27 +444,30 @@ class MainActivity : AppCompatActivity() {
 
     private class GridAdapter : RecyclerView.Adapter<GridAdapter.VH>() {
 
-        var items: List<Int> = emptyList()
-        var token: String? = null
+        var photos: List<AlbumPhoto> = emptyList()
         var onThumbClick: ((Int) -> Unit)? = null
         var onThumbLongClick: ((Int) -> Unit)? = null
         private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
 
         fun setEmpty() {
-            items = emptyList()
-            token = null
+            photos = emptyList()
             notifyDataSetChanged()
         }
 
         fun setCount(count: Int, token: String) {
-            this.items = (1..count).toList()
-            this.token = token
+            this.photos = (1..count).map { AlbumPhoto(token, it) }
             notifyDataSetChanged()
         }
 
-        fun thumbUrl(index: Int): String {
-            val pad = index.toString().padStart(4, '0')
-            return "$baseUrl/${token}/$pad.jpg"
+        fun setAll(list: List<AlbumPhoto>) {
+            this.photos = list
+            notifyDataSetChanged()
+        }
+        fun photoAt(position: Int): AlbumPhoto? = photos.getOrNull(position)
+
+        fun thumbUrl(photo: AlbumPhoto): String {
+            val pad = photo.index.toString().padStart(4, '0')
+            return "$baseUrl/${photo.token}/$pad.jpg"
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -422,20 +477,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: VH, position: Int) {
-            val index = items[position]
-            holder.iv.load(thumbUrl(index)) {
+            val photo = photos[position]
+            holder.iv.load(thumbUrl(photo)) {
                 crossfade(true)
                 placeholder(android.R.color.darker_gray)
                 error(android.R.color.darker_gray)
             }
-            holder.itemView.setOnClickListener { onThumbClick?.invoke(index) }
+            holder.itemView.setOnClickListener { onThumbClick?.invoke(position) }
             holder.itemView.setOnLongClickListener {
-                onThumbLongClick?.invoke(index)
+                onThumbLongClick?.invoke(position)
                 true
             }
         }
 
-        override fun getItemCount() = items.size
+        override fun getItemCount() = photos.size
 
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
             val iv: ImageView = itemView.findViewById(R.id.iv_thumb)

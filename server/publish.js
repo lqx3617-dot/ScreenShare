@@ -141,6 +141,13 @@ function rollback(task) {
 
 function updateConfig(task) {
   task.phase = "config";
+  // release-config.json 的 changelog 只服务于主 APP version.json；
+  // 仅发布 albumviewer 时不覆盖，避免污染主 APP 的更新说明
+  const targets = task.apps.length ? task.apps : ["main", "albumviewer"];
+  if (!targets.includes("main")) {
+    task.log.push("跳过更新版本配置（仅发布相册查看 APP）");
+    return;
+  }
   const cfg = loadConfig();
   cfg.changelog = task.changelog;
   cfg.forced = false;

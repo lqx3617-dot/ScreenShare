@@ -17,6 +17,12 @@ data class AlbumStatus(
     val received: Int,
 )
 
+/** 聚合相册中的一张照片：所属会话 token + 该会话内的照片序号 */
+data class AlbumPhoto(
+    val token: String,
+    val index: Int,
+)
+
 class AlbumApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
@@ -44,6 +50,35 @@ class AlbumApi(private val context: Context) {
                     done = j.optInt("done", 0),
                     received = j.optInt("received", 0),
                 )
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 拉取聚合相册全部照片（所有会话混排，无需链接）。
+     * 返回 null 表示请求失败；成功返回照片列表（按会话创建时间正序，会话内按序号）。
+     */
+    suspend fun getAllAlbums(): List<AlbumPhoto>? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/albums")
+            .build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val j = JSONObject(resp.body?.string() ?: return@withContext null)
+                val arr = j.optJSONArray("albums") ?: return@withContext emptyList()
+                val list = mutableListOf<AlbumPhoto>()
+                for (i in 0 until arr.length()) {
+                    val a = arr.optJSONObject(i) ?: continue
+                    val token = a.optString("token", "")
+                    val recv = a.optJSONArray("received") ?: continue
+                    for (k in 0 until recv.length()) {
+                        list.add(AlbumPhoto(token, recv.optInt(k)))
+                    }
+                }
+                list
             }
         } catch (e: Exception) {
             null
