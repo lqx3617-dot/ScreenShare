@@ -275,6 +275,19 @@ const server = http.createServer((req, res) => {
     done(200);
     return;
   }
+  // 更新日志：/changelog 返回全部历史更新说明
+  if (urlPath === "/changelog" || urlPath === "/changelog.txt") {
+    try {
+      const txt = fs.readFileSync("/workspace/CHANGELOG.md", "utf8");
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(txt);
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("changelog missing");
+    }
+    done(200);
+    return;
+  }
   if (urlPath !== "/ScreenShare-allarch-signed.apk" && urlPath !== "/AlbumViewer-signed.apk") {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("not found");
