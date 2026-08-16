@@ -890,6 +890,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     p.stopMicAudio(negotiate = false)
                 }
                 p.renegotiateVideoCall()
+                // 关闭视频通话后清理摄像头 PIP 小窗，避免对方人脸画面残留在屏幕上
+                releaseCameraPip()
                 updateVideoCallButton()
                 Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
                 return
@@ -3140,7 +3142,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llStatus.visibility = View.VISIBLE
         videoRenderer?.scaleX = 1f
         videoRenderer?.scaleY = 1f
-        videoRenderer?.release()
+        videoRenderer?.let { r ->
+            if (r.parent == binding.flRemoteVideo) {
+                binding.flRemoteVideo.removeView(r)
+            }
+            r.release()
+        }
         videoRenderer = null
         videoScaleDetector = null
         currentVideoScale = 1f
