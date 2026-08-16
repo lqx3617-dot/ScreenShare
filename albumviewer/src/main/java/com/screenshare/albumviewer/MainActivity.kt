@@ -89,6 +89,8 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<View>(R.id.btn_connect_device).setOnClickListener { connectDevice() }
 
+        findViewById<View>(R.id.btn_check_update).setOnClickListener { UpdateChecker.check(this, manual = true) }
+
         rvGrid.layoutManager = GridLayoutManager(this, 3)
         rvGrid.adapter = adapter
         adapter.onThumbClick = { index -> onThumbClick(index) }

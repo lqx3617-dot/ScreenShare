@@ -129,6 +129,18 @@
             android:text="长按缩略图可保存图片到手机"
             android:textColor="@color/text_hint"
             android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btn_check_update"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginTop="16dp"
+            android:layout_gravity="center_horizontal"
+            android:backgroundTint="@android:color/transparent"
+            android:text="检测更新"
+            android:textColor="@color/neon_cyan"
+            android:textSize="13sp"
+            android:minWidth="96dp" />
     </LinearLayout>
 
     <include layout="@layout/layout_album" />
