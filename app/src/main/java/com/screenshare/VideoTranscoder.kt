@@ -71,13 +71,14 @@ object VideoTranscoder {
         val srcH = vFmt.getInteger(MediaFormat.KEY_HEIGHT)
         val rotation = if (vFmt.containsKey(MediaFormat.KEY_ROTATION)) vFmt.getInteger(MediaFormat.KEY_ROTATION) else 0
         val frameRate = if (vFmt.containsKey(MediaFormat.KEY_FRAME_RATE)) vFmt.getInteger(MediaFormat.KEY_FRAME_RATE) else 30
-        // 显示方向上的最长边决定缩放比例（旋转 90/270 时宽高互换）；输出尺寸保持源方向，
-        // 旋转交给播放器（encoder 写 KEY_ROTATION）
+        // 显示方向上的最长边决定缩放比例；输出尺寸按旋转后的方向计算
+        // （旋转 90/270 时宽高互换），渲染层用 texMatrix 摆正后输出已是正立画面，
+        // 因此 encoder/muxer 不再写任何 rotation，避免播放端重复旋转
         val dispW = if (rotation == 90 || rotation == 270) srcH else srcW
         val dispH = if (rotation == 90 || rotation == 270) srcW else srcH
         val scale = minOf(1f, MAX_DIM.toFloat() / maxOf(dispW, dispH))
-        val outW = (srcW * scale).toInt().let { it - (it % 2) }.coerceAtLeast(2)
-        val outH = (srcH * scale).toInt().let { it - (it % 2) }.coerceAtLeast(2)
+        val outW = (dispW * scale).toInt().let { it - (it % 2) }.coerceAtLeast(2)
+        val outH = (dispH * scale).toInt().let { it - (it % 2) }.coerceAtLeast(2)
 
         val durationUs = if (vFmt.containsKey(MediaFormat.KEY_DURATION)) vFmt.getLong(MediaFormat.KEY_DURATION) else 0L
 
@@ -87,7 +88,8 @@ object VideoTranscoder {
         encFormat.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE)
         encFormat.setInteger(MediaFormat.KEY_FRAME_RATE, frameRate.coerceAtLeast(1))
         encFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_INTERVAL)
-        if (rotation != 0) encFormat.setInteger(MediaFormat.KEY_ROTATION, rotation)
+        // 不设 KEY_ROTATION：surface 输出时解码器通过 texMatrix 摆正，渲染已是正立帧，
+        // encoder 再旋转会导致画面方向错误
         encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         val encoderSurface = encoder.createInputSurface()
 
@@ -132,7 +134,6 @@ object VideoTranscoder {
             if (audioEncoder != null && af == null) return
             try {
                 val m = MediaMuxer(outPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                if (rotation != 0) m.setOrientationHint(rotation)
                 videoMuxTrack = m.addTrack(vf)
                 if (audioEncoder != null && af != null) audioMuxTrack = m.addTrack(af)
                 m.start()
