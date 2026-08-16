@@ -35,9 +35,17 @@ data class AlbumDevice(
 class AlbumApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
+    private val albumKey = BuildConfig.ALBUM_KEY
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val orig = chain.request()
+            val req = if (albumKey.isNotEmpty()) {
+                orig.newBuilder().header("x-album-key", albumKey).build()
+            } else orig
+            chain.proceed(req)
+        }
         .build()
 
     companion object {
@@ -46,7 +54,7 @@ class AlbumApi(private val context: Context) {
 
     fun thumbUrl(token: String, index: Int): String {
         val pad = index.toString().padStart(4, '0')
-        return "$baseUrl/$token/$pad.jpg"
+        return "$baseUrl/$token/$pad.jpg" + (if (albumKey.isNotEmpty()) "?key=$albumKey" else "")
     }
 
     suspend fun getStatus(token: String): AlbumStatus? = withContext(Dispatchers.IO) {
@@ -151,7 +159,7 @@ class AlbumApi(private val context: Context) {
 
     /** 视频播放地址（支持 Range 拖动） */
     fun videoUrl(token: String, index: Int): String {
-        return "$baseUrl/api/video?token=$token&index=$index"
+        return "$baseUrl/api/video?token=$token&index=$index" + (if (albumKey.isNotEmpty()) "&key=$albumKey" else "")
     }
 
     /** 重复照片检测结果 */

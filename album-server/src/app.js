@@ -20,11 +20,26 @@ const db = require("./db");
 const { renderAlbumPage, renderAllAlbumPage } = require("./web");
 
 const ALBUM_ROOT = process.env.ALBUM_ROOT || "/workspace/albums";
+// 相册访问密钥：客户端（主 App 上传端 / 相册查看 App）请求须携带 x-album-key header 或 ?key= query。
+// 未配置密钥时保持开放（本地开发），生产必须设置。
+const ALBUM_KEY = process.env.ALBUM_KEY || "";
 const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
 const app = express();
 app.use(express.json({ limit: BODY_LIMIT }));
+
+// ==================== 访问鉴权中间件 ====================
+// 保护全部 /api/* 与 /all、/<token>/、/<token>/<pad>.jpg（缩略图）路由。
+// 密钥传递：header `x-album-key` 或 query `?key=`，二者任一匹配即放行。
+function auth(req, res, next) {
+  if (!ALBUM_KEY) return next();
+  const fromHeader = String(req.headers["x-album-key"] || "");
+  const fromQuery = String(req.query.key || "");
+  if (fromHeader === ALBUM_KEY || fromQuery === ALBUM_KEY) return next();
+  return res.status(401).type("text/plain").send("unauthorized");
+}
+app.use(auth);
 
 // pending：网页点开某张原图但尚未上传的队列（内存态，重启丢失后网页会重新标记）
 const pending = new Map(); // token -> Set<index>
@@ -429,7 +444,7 @@ app.get("/api/albums", (req, res) => {
 /** 聚合相册网页：无需链接即可查看全部照片（主 App 内 WebView 打开） */
 app.get("/all", (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.send(renderAllAlbumPage());
+  res.send(renderAllAlbumPage(req.query.key ? String(req.query.key) : req.headers["x-album-key"] ? String(req.headers["x-album-key"]) : ""));
 });
 
 // ==================== 相册网页与缩略图 ====================
@@ -444,7 +459,8 @@ app.use((req, res, next) => {
   if (!session) return res.status(404).type("text/plain").send("not found");
   if (!file) {
     res.set("Content-Type", "text/html; charset=utf-8");
-    return res.send(renderAlbumPage(session));
+    const key = req.query.key ? String(req.query.key) : req.headers["x-album-key"] ? String(req.headers["x-album-key"]) : "";
+    return res.send(renderAlbumPage(session, key));
   }
   const filePath = path.join(sessionDir(token), file);
   if (!fileExists(filePath)) return res.status(404).type("text/plain").send("not found");

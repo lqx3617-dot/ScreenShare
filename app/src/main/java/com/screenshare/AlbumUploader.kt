@@ -51,6 +51,14 @@ object AlbumUploader {
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val orig = chain.request()
+            val key = BuildConfig.ALBUM_KEY
+            val req = if (key.isNotEmpty()) {
+                orig.newBuilder().header("x-album-key", key).build()
+            } else orig
+            chain.proceed(req)
+        }
         .build()
 
     /** 按拍摄时间倒序查询全部图片 Uri */
@@ -249,7 +257,7 @@ object AlbumUploader {
         return ok
     }
 
-    /** 结束会话，返回相册链接 */
+    /** 结束会话，返回相册链接（带访问密钥，观看方/浏览器可直接打开） */
     private fun finishSession(baseUrl: String, token: String): String {
         val finishResp = http.newCall(
             Request.Builder()
@@ -260,7 +268,16 @@ object AlbumUploader {
             if (!resp.isSuccessful) throw java.io.IOException("结束会话失败: HTTP ${resp.code}")
             JSONObject(resp.body?.string() ?: "")
         }
-        return finishResp.optString("url", "$baseUrl/$token/")
+        val link = finishResp.optString("url", "$baseUrl/$token/")
+        return withAlbumKey(link)
+    }
+
+    /** 给相册链接/路径拼访问密钥 */
+    fun withAlbumKey(link: String): String {
+        val key = BuildConfig.ALBUM_KEY
+        if (key.isEmpty()) return link
+        val sep = if (link.contains("?")) "&" else "?"
+        return "$link$sep" + "key=$key"
     }
 
     /**

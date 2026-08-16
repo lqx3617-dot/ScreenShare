@@ -658,6 +658,7 @@ class MainActivity : AppCompatActivity() {
         var onThumbClick: ((Int) -> Unit)? = null
         var onThumbLongClick: ((Int) -> Unit)? = null
         private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
+        private val albumKey = BuildConfig.ALBUM_KEY
 
         fun setEmpty() {
             photos = emptyList()
@@ -677,7 +678,8 @@ class MainActivity : AppCompatActivity() {
 
         fun thumbUrl(photo: AlbumPhoto): String {
             val pad = photo.index.toString().padStart(4, '0')
-            return "$baseUrl/${photo.token}/$pad.jpg"
+            val k = if (albumKey.isNotEmpty()) "?key=$albumKey" else ""
+            return "$baseUrl/${photo.token}/$pad.jpg$k"
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

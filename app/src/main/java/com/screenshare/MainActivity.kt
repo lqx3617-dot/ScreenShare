@@ -1231,7 +1231,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         override fun onSessionCreated(token: String) {
                             // 会话创建即回发链接：网页边传边看（缩略图逐张出现），不等全部传完
                             runOnUiThread {
-                                p?.sendControl("""{"type":"album-result","url":"$baseUrl/$token/"}""")
+                                p?.sendControl("""{"type":"album-result","url":"${AlbumUploader.withAlbumKey("$baseUrl/$token/")}"}""")
                             }
                         }
 
@@ -1277,7 +1277,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.flAlbumViewer.visibility = View.VISIBLE
         try {
-            albumWebView?.loadUrl("$base/all")
+            val key = BuildConfig.ALBUM_KEY
+            val sep = if (key.isNotEmpty()) "?key=$key" else ""
+            albumWebView?.loadUrl("$base/all$sep")
         } catch (t: Throwable) {
             Log.e(TAG, "打开相册查看异常: ${t.message}")
         }
