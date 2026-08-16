@@ -2897,6 +2897,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .putString("code", code)
             .putLong("ts", System.currentTimeMillis())
             .apply()
+        // 同步记入最近会议历史（连接页展示，点击快速复用）
+        MeetingActivity.recordMeetingHistory(this, action, code)
     }
 
     /** 会议已结束/失败：清除自动重连记录 */

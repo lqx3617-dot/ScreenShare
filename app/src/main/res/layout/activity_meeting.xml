@@ -108,6 +108,49 @@
                 android:textColor="#FF0A0D26" />
         </LinearLayout>
 
+        <!-- 最近会议（有历史记录时显示，点击快速加入/创建） -->
+        <LinearLayout
+            android:id="@+id/llRecent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@drawable/bg_glass"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="最近会议"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/neon_blue" />
+
+                <TextView
+                    android:id="@+id/btnClearRecent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="清空"
+                    android:textSize="12sp"
+                    android:textColor="#64748B"
+                    android:padding="6dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/llRecentList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+
         <View
             android:layout_width="0dp"
             android:layout_height="0dp"

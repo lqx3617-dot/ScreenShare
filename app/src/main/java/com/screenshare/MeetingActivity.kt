@@ -1,12 +1,21 @@
 package com.screenshare
 
+import android.content.Context
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
+import android.view.Gravity
+import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.screenshare.databinding.ActivityMeetingBinding
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 会议连接页（前端入口）：
@@ -17,6 +26,7 @@ import com.screenshare.databinding.ActivityMeetingBinding
  * - 创建房间：生成 4 位会议号 → 跳转 MainActivity(action=create)
  * - 加入会议：输入 4 位会议号 → 校验 → 跳转 MainActivity(action=join)
  * - 分享链接：冷启动 screenshare://join?code=XXXX → 直接跳转加入流程
+ * - 最近会议：历史（创建/加入）会议快速复用，点击直接进入对应会议
  */
 class MeetingActivity : AppCompatActivity() {
 
@@ -25,6 +35,53 @@ class MeetingActivity : AppCompatActivity() {
         const val EXTRA_MEETING_CODE = "extra_meeting_code"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
+
+        private const val PREFS_HISTORY = "meeting_history"
+        private const val KEY_LIST = "list"
+        private const val MAX_HISTORY = 8
+
+        /** 会议历史条目 */
+        data class MeetingEntry(val code: String, val action: String, val ts: Long)
+
+        /** 记录一次会议（创建/加入）到最近历史：同会议号去重置顶，最多保留 MAX_HISTORY 条 */
+        fun recordMeetingHistory(context: Context, action: String, code: String) {
+            if (!Regex("^[0-9]{4}$").matches(code)) return
+            try {
+                val list = loadMeetingHistory(context).filter { it.code != code }.toMutableList()
+                list.add(0, MeetingEntry(code, action, System.currentTimeMillis()))
+                val arr = JSONArray()
+                list.take(MAX_HISTORY).forEach { e ->
+                    arr.put(JSONObject().put("code", e.code).put("action", e.action).put("ts", e.ts))
+                }
+                context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_LIST, arr.toString()).apply()
+            } catch (t: Throwable) {
+                android.util.Log.w("MeetingActivity", "记录会议历史失败: ${t.message}")
+            }
+        }
+
+        /** 读取会议历史（新→旧） */
+        fun loadMeetingHistory(context: Context): List<MeetingEntry> {
+            return try {
+                val raw = context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
+                    .getString(KEY_LIST, null) ?: return emptyList()
+                val arr = JSONArray(raw)
+                (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val code = o.optString("code")
+                    if (!Regex("^[0-9]{4}$").matches(code)) return@mapNotNull null
+                    MeetingEntry(code, o.optString("action"), o.optLong("ts"))
+                }.sortedByDescending { it.ts }
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        }
+
+        /** 清空会议历史 */
+        fun clearMeetingHistory(context: Context) {
+            context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
+                .edit().remove(KEY_LIST).apply()
+        }
     }
 
     private lateinit var binding: ActivityMeetingBinding
@@ -51,14 +108,120 @@ class MeetingActivity : AppCompatActivity() {
                 true
             } else false
         }
+        // 输入满 4 位自动加入（会议号固定 4 位，输入完成即提交，省去点按钮）
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (s?.length == 4) tryJoin()
+            }
+        })
         binding.btnJoinMeeting.setOnClickListener { tryJoin() }
         binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(this, manual = true) }
+        binding.btnClearRecent.setOnClickListener {
+            clearMeetingHistory(this)
+            renderRecentMeetings()
+        }
 
         // 分享链接唤起：冷启动解析 screenshare://join?code=XXXX
         handleShareLink(intent)
         // 会议未结束：上次会话未主动结束/未失败退出，点开 App 自动重连
         autoResumeMeeting()
+        // 最近会议列表
+        renderRecentMeetings()
     }
+
+    override fun onResume() {
+        super.onResume()
+        // 从会议室返回连接页时刷新（历史可能已变化）
+        renderRecentMeetings()
+    }
+
+    /** 渲染最近会议区块：无历史时隐藏整块 */
+    private fun renderRecentMeetings() {
+        val list = loadMeetingHistory(this)
+        binding.llRecent.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+        val container = binding.llRecentList
+        container.removeAllViews()
+        list.forEach { entry ->
+            container.addView(buildRecentItem(entry))
+            // 分隔线
+            val divider = View(this).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1
+                ).apply { topMargin = 2.dp(); bottomMargin = 2.dp() }
+                setBackgroundColor(Color.parseColor("#1A64748B"))
+            }
+            container.addView(divider)
+        }
+    }
+
+    /** 构建单条最近会议条目（点击进入，右侧删除） */
+    private fun buildRecentItem(entry: MeetingEntry): View {
+        val isCreate = entry.action == ACTION_CREATE
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 10.dp(), 0, 10.dp())
+            setOnClickListener { enterMeeting(entry.action, entry.code) }
+        }
+        val tvCode = TextView(this).apply {
+            text = entry.code
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+            letterSpacing = 0.15f
+            setTextColor(Color.parseColor("#00E5FF"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        val tvMeta = TextView(this).apply {
+            text = (if (isCreate) "创建" else "加入") + " · " + relativeTime(entry.ts)
+            textSize = 12f
+            setTextColor(Color.parseColor("#64748B"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = 10.dp()
+            }
+        }
+        val tvDelete = TextView(this).apply {
+            text = "✕"
+            textSize = 16f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(8.dp(), 4.dp(), 0, 4.dp())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            setOnClickListener {
+                val rest = loadMeetingHistory(this@MeetingActivity).filter { it.code != entry.code }
+                saveHistory(rest)
+                renderRecentMeetings()
+            }
+        }
+        row.addView(tvCode)
+        row.addView(tvMeta)
+        row.addView(tvDelete)
+        return row
+    }
+
+    /** 直接写回历史列表（供单条删除） */
+    private fun saveHistory(list: List<MeetingEntry>) {
+        val arr = JSONArray()
+        list.forEach { e ->
+            arr.put(JSONObject().put("code", e.code).put("action", e.action).put("ts", e.ts))
+        }
+        getSharedPreferences(PREFS_HISTORY, MODE_PRIVATE)
+            .edit().putString(KEY_LIST, arr.toString()).apply()
+    }
+
+    /** 相对时间显示 */
+    private fun relativeTime(ts: Long): String {
+        val diff = System.currentTimeMillis() - ts
+        return when {
+            diff < 60_000 -> "刚刚"
+            diff < 3600_000 -> "${diff / 60_000}分钟前"
+            diff < 86400_000 -> "${diff / 3600_000}小时前"
+            else -> "${diff / 86400_000}天前"
+        }
+    }
+
+    private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
 
     /**
      * 自动重连上次未结束的会议：
