@@ -363,6 +363,38 @@ app.post("/api/dedup", (req, res) => {
   }
 });
 
+/**
+ * 手动删除一张照片/视频：删除该序号的所有文件（缩略图、原图、视频），
+ * 并从 DB received/originals/videos 移除。返回 {ok}。
+ *   POST /api/photo/delete body={token, index}
+ */
+app.post("/api/photo/delete", (req, res) => {
+  const token = String((req.body || {}).token || "");
+  const index = parseInt((req.body || {}).index, 10);
+  const session = loadSession(token);
+  if (!session) return json(res, 404, { error: "session not found" });
+  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  const dir = sessionDir(token);
+  // 删除缩略图 / 原图 / 视频文件
+  const files = [
+    path.join(dir, `${pad(index)}.jpg`),
+    path.join(dir, "original", `${pad(index)}.jpg`),
+    path.join(dir, "video", `${pad(index)}.mp4`),
+  ];
+  for (const f of files) {
+    try {
+      fs.rmSync(f, { force: true });
+    } catch (e) {}
+  }
+  // 从 DB 移除
+  session.received.delete(index);
+  session.originals.delete(index);
+  session.videos.delete(index);
+  db.saveSession(session);
+  console.log(`[album] ${new Date().toISOString()} photo-delete ${token} idx=${index} (剩 ${session.received.size})`);
+  return json(res, 200, { ok: true, received: session.received.size });
+});
+
 /** 有照片的设备列表（按设备分组），观看方远程相册同步后按设备查看 */
 app.get("/api/devices", (req, res) => {
   return json(res, 200, { devices: db.listDevices() });

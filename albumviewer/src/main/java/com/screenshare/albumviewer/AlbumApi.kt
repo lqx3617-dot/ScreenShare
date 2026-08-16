@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -38,6 +39,10 @@ class AlbumApi(private val context: Context) {
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
+
+    companion object {
+        private val JSON_MEDIA: okhttp3.MediaType = "application/json; charset=utf-8".toMediaType()
+    }
 
     fun thumbUrl(token: String, index: Int): String {
         val pad = index.toString().padStart(4, '0')
@@ -178,6 +183,22 @@ class AlbumApi(private val context: Context) {
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /** 删除一张照片/视频：删除服务器文件并从 DB 移除。返回 null 表示请求失败 */
+    suspend fun deletePhoto(token: String, index: Int): Boolean = withContext(Dispatchers.IO) {
+        val payload = JSONObject().put("token", token).put("index", index)
+        val req = Request.Builder()
+            .url("$baseUrl/api/photo/delete")
+            .post(okhttp3.RequestBody.create(JSON_MEDIA, payload.toString()))
+            .build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                resp.isSuccessful
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 

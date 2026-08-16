@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity() {
         rvGrid.layoutManager = GridLayoutManager(this, 3)
         rvGrid.adapter = adapter
         adapter.onThumbClick = { index -> onThumbClick(index) }
-        adapter.onThumbLongClick = { index -> saveImage(index) }
+        adapter.onThumbLongClick = { index -> showPhotoMenu(index) }
 
         findViewById<View>(R.id.btn_back).setOnClickListener {
             showInputView()
@@ -543,6 +543,48 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnDismissListener { origJob.cancel() }
     }
 
+    /** 长按照片弹出菜单：保存原图 / 删除 */
+    private fun showPhotoMenu(position: Int) {
+        val photo = adapter.photoAt(position) ?: return
+        val items = arrayOf("保存到相册", "删除照片")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("第 ${photo.index} 张")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> saveImage(position)
+                    1 -> confirmDeletePhoto(position, photo)
+                }
+            }
+            .show()
+    }
+
+    /** 删除确认：调服务器删除单张照片，成功后从列表移除并刷新 */
+    private fun confirmDeletePhoto(position: Int, photo: AlbumPhoto) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("删除照片")
+            .setMessage("确定删除第 ${photo.index} 张照片吗？\n将从服务器永久删除，不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                scope.launch {
+                    val ok = api.deletePhoto(photo.token, photo.index)
+                    if (ok) {
+                        Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
+                        if (currentToken != null) {
+                            refreshStatus(forceReload = true)
+                        } else if (viewingDevice != null) {
+                            refreshJob?.cancel()
+                            refreshJob = scope.launch { openDeviceAlbum(viewingDevice!!) }
+                        } else {
+                            loadAggregatedAlbum(forceReload = true)
+                        }
+                    } else {
+                        Toast.makeText(this@MainActivity, "删除失败，请检查网络", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun saveImage(position: Int) {
         val photo = adapter.photoAt(position) ?: return
         val token = photo.token
@@ -646,11 +688,8 @@ class MainActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val photo = photos[position]
-            holder.iv.load(thumbUrl(photo)) {
-                crossfade(true)
-                placeholder(android.R.color.darker_gray)
-                error(android.R.color.darker_gray)
-            }
+            holder.retryCount = 0
+            loadThumbWithRetry(holder, thumbUrl(photo))
             holder.vb.visibility = if (photo.isVideo) View.VISIBLE else View.GONE
             holder.itemView.setOnClickListener { onThumbClick?.invoke(position) }
             holder.itemView.setOnLongClickListener {
@@ -659,11 +698,30 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        /** 缩略图加载：公网偶发超时/断流导致灰块，失败自动重试最多 2 次 */
+        private fun loadThumbWithRetry(holder: VH, url: String) {
+            holder.iv.load(url) {
+                crossfade(true)
+                placeholder(android.R.color.darker_gray)
+                error(android.R.color.darker_gray)
+                listener(
+                    onError = { _, _ ->
+                        if (holder.retryCount < 2) {
+                            holder.retryCount++
+                            loadThumbWithRetry(holder, url)
+                        }
+                    },
+                    onSuccess = { _, _ -> }
+                )
+            }
+        }
+
         override fun getItemCount() = photos.size
 
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
             val iv: ImageView = itemView.findViewById(R.id.iv_thumb)
             val vb: View = itemView.findViewById(R.id.vb_play)
+            var retryCount: Int = 0
         }
     }
 }
