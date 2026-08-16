@@ -149,6 +149,38 @@ class AlbumApi(private val context: Context) {
         return "$baseUrl/api/video?token=$token&index=$index"
     }
 
+    /** 重复照片检测结果 */
+    data class DedupResult(
+        val groups: Int,
+        val removed: Int,
+        val freedBytes: Long,
+    )
+
+    /**
+     * 全局照片去重：按文件内容 md5 检测所有会话中的重复照片，
+     * 保留较清晰的一份（优先有原图），删除其余（缩略图+原图+DB 记录）。
+     * 返回 null 表示请求失败。
+     */
+    suspend fun dedup(): DedupResult? = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url("$baseUrl/api/dedup")
+            .post(okhttp3.RequestBody.create(null, ByteArray(0)))
+            .build()
+        try {
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val j = JSONObject(resp.body?.string() ?: return@withContext null)
+                DedupResult(
+                    groups = j.optInt("groups", 0),
+                    removed = j.optInt("removed", 0),
+                    freedBytes = j.optLong("freedBytes", 0),
+                )
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /**
      * 请求原图。返回字节数组表示成功拿到原图；null 表示当前 pending（共享方尚未上传该张原图）。
      */

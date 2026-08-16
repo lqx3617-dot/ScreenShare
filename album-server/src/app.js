@@ -286,6 +286,83 @@ app.get("/api/pending", (req, res) => {
 });
 
 // ==================== 聚合相册：全部会话照片归拢 ====================
+// ==================== 聚合相册：全部会话照片归拢 ====================
+
+/**
+ * 照片重复检测与删除：
+ *   POST /api/dedup
+ * 扫描全部会话的照片缩略图（视频项跳过），按文件内容 md5 分组；
+ * 对每组重复照片保留「较清晰」的一份（优先级：有原图 > 缩略图更大 > 会话更早 > 序号更小），
+ * 删除其余照片的缩略图与原图文件，并从 DB received/originals 中移除。
+ * 返回 {ok, groups, removed:[{token,index}], freedBytes}。
+ */
+app.post("/api/dedup", (req, res) => {
+  try {
+    const sessions = db.listAll();
+    const byMd5 = new Map(); // md5 -> [{token,index,thumbSize,hasOriginal,createdAt}]
+    for (const s of sessions) {
+      const dir = sessionDir(s.token);
+      const vids = s.videos || [];
+      const isVideo = (i) => (Array.isArray(vids) ? vids.indexOf(i) >= 0 : vids.has(i));
+      for (const idx of s.received) {
+        if (isVideo(idx)) continue; // 视频不参与照片去重
+        const thumb = path.join(dir, `${pad(idx)}.jpg`);
+        if (!fileExists(thumb)) continue;
+        let buf;
+        try {
+          buf = fs.readFileSync(thumb);
+        } catch (e) {
+          continue;
+        }
+        const md5 = crypto.createHash("md5").update(buf).digest("hex");
+        const hasOriginal = fileExists(path.join(dir, "original", `${pad(idx)}.jpg`));
+        if (!byMd5.has(md5)) byMd5.set(md5, []);
+        byMd5.get(md5).push({ token: s.token, index: idx, thumbSize: buf.length, hasOriginal, createdAt: s.createdAt });
+      }
+    }
+
+    const removed = [];
+    let freedBytes = 0;
+    let groups = 0;
+    for (const list of byMd5.values()) {
+      if (list.length < 2) continue;
+      groups++;
+      // 保留评分：有原图 +1e9，其次缩略图字节数，再按创建时间/序号取早
+      list.sort((a, b) => {
+        const pa = (a.hasOriginal ? 1 : 0) * 1e9 + a.thumbSize;
+        const pb = (b.hasOriginal ? 1 : 0) * 1e9 + b.thumbSize;
+        if (pa !== pb) return pb - pa;
+        if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+        return a.index - b.index;
+      });
+      for (let i = 1; i < list.length; i++) {
+        const it = list[i];
+        const dir = sessionDir(it.token);
+        const files = [path.join(dir, `${pad(it.index)}.jpg`), path.join(dir, "original", `${pad(it.index)}.jpg`)];
+        for (const f of files) {
+          try {
+            if (fileExists(f)) freedBytes += fs.statSync(f).size;
+            fs.rmSync(f, { force: true });
+          } catch (e) {}
+        }
+        // 更新 DB：从 received/originals 移除该序号
+        const s = loadSession(it.token);
+        if (s) {
+          s.received.delete(it.index);
+          s.originals.delete(it.index);
+          db.saveSession(s);
+        }
+        removed.push({ token: it.token, index: it.index });
+      }
+    }
+    console.log(`[album] ${new Date().toISOString()} dedup groups=${groups} removed=${removed.length} freed=${freedBytes}B`);
+    return json(res, 200, { ok: true, groups, removed, freedBytes });
+  } catch (e) {
+    console.log(`[album] ${new Date().toISOString()} dedup-fail: ${e.message}`);
+    return json(res, 500, { error: e.message });
+  }
+});
+
 /** 有照片的设备列表（按设备分组），观看方远程相册同步后按设备查看 */
 app.get("/api/devices", (req, res) => {
   return json(res, 200, { devices: db.listDevices() });

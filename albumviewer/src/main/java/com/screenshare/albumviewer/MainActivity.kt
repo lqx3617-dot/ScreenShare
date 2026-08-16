@@ -92,6 +92,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btn_check_update).setOnClickListener { UpdateChecker.check(this, manual = true) }
         findViewById<View>(R.id.btn_check_update_album).setOnClickListener { UpdateChecker.check(this, manual = true) }
 
+        findViewById<View>(R.id.btn_dedup).setOnClickListener { onDedupClicked() }
+
         rvGrid.layoutManager = GridLayoutManager(this, 3)
         rvGrid.adapter = adapter
         adapter.onThumbClick = { index -> onThumbClick(index) }
@@ -312,9 +314,62 @@ class MainActivity : AppCompatActivity() {
         tvConnectStatus.visibility = View.VISIBLE
     }
 
+    /** 重复照片清理：调服务器去重接口（全局 md5 查重，保留较清晰一份），删除后刷新视图 */
+    private fun onDedupClicked() {
+        val dlg = Dialog(this, R.style.Theme_ScreenShare_Dialog)
+        val content = LayoutInflater.from(this).inflate(R.layout.dialog_dedup, null)
+        dlg.setContentView(content)
+        dlg.window?.apply {
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawableResource(android.R.color.transparent)
+        }
+        val tv = content.findViewById<TextView>(R.id.tv_dedup_title)
+        val msg = content.findViewById<TextView>(R.id.tv_dedup_msg)
+        val btnCancel = content.findViewById<android.widget.Button>(R.id.btn_dedup_cancel)
+        val btnOk = content.findViewById<android.widget.Button>(R.id.btn_dedup_ok)
+        tv.text = "清理重复照片"
+        msg.text = "将检测全部照片中内容完全一致的重复项（按文件内容比对），\n仅保留较清晰的一份（优先保留原图已上传的）。\n\n此操作不可恢复，确定继续？"
+        var running = false
+        btnCancel.setOnClickListener { dlg.dismiss() }
+        btnOk.setOnClickListener {
+            if (running) return@setOnClickListener
+            running = true
+            btnOk.isEnabled = false
+            btnCancel.isEnabled = false
+            msg.text = "正在扫描并清理重复照片…"
+            scope.launch {
+                val result = api.dedup()
+                if (result != null && result.groups == 0 && result.removed == 0) {
+                    msg.text = "未发现重复照片"
+                } else if (result != null) {
+                    val freed = String.format("%.1f MB", result.freedBytes / 1024.0 / 1024.0)
+                    msg.text = "检测到 ${result.groups} 组重复照片，\n已删除 ${result.removed} 张，释放 $freed。"
+                } else {
+                    msg.text = "无法连接服务器，请检查网络后重试"
+                }
+                btnOk.isEnabled = true
+                btnCancel.isEnabled = true
+                btnOk.text = "完成"
+                // 刷新当前视图（去重后照片数变化）
+                if (currentToken != null) {
+                    refreshStatus(forceReload = true)
+                } else if (viewingDevice != null) {
+                    refreshJob?.cancel()
+                    refreshJob = scope.launch { openDeviceAlbum(viewingDevice!!) }
+                } else {
+                    loadAggregatedAlbum(forceReload = true)
+                }
+                btnOk.setOnClickListener { dlg.dismiss() }
+            }
+        }
+        dlg.show()
+    }
+
     /** 按设备查看：显示该设备所有会话的照片，持续轮询自动刷新 */
-    private fun openDeviceAlbum(device: String) {
-        currentToken = null
+    private fun openDeviceAlbum(device: String) {        currentToken = null
         viewingDevice = device
         layoutAlbum.visibility = View.VISIBLE
         adapter.setEmpty()
