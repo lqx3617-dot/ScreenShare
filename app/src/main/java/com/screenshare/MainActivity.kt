@@ -811,6 +811,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
                     }
                 }
+                "video-call-off" -> {
+                    // 共享方关闭视频通话：同步关闭本端（观看方）摄像头与 PIP 小窗，避免画面卡住残留
+                    runOnUiThread { closeVideoCall(notify = false) }
+                }
             }
         } catch (t: Throwable) {
             Log.e(TAG, "解析控制回执失败: ${t.message}")
@@ -882,17 +886,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 return
             }
             if (videoCallOn) {
-                // 关闭视频通话：先移除摄像头轨，再联动移除麦克风轨（均不各自协商），最后统一协商一次
-                videoCallOn = false
-                p.stopCameraVideo()
-                if (p.isMicOn()) {
-                    micMuted = false
-                    p.stopMicAudio(negotiate = false)
-                }
-                p.renegotiateVideoCall()
-                // 关闭视频通话后清理摄像头 PIP 小窗，避免对方人脸画面残留在屏幕上
-                releaseCameraPip()
-                updateVideoCallButton()
+                closeVideoCall(notify = true)
                 Toast.makeText(this, "视频通话已关闭", Toast.LENGTH_SHORT).show()
                 return
             }
@@ -937,6 +931,30 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } catch (t: Throwable) {
             Log.e(TAG, "onVideoCallClicked 异常: ${t.message}")
             Toast.makeText(this, "视频异常: ${t.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * 关闭视频通话（幂等）：移除本端摄像头轨 + 联动移除麦克风轨 → 统一重协商 → 清理本端 PIP 小窗。
+     * @param notify 是否经控制通道通知对端同步关闭（本端用户主动关闭时 true；收到对端通知时 false，避免互相通知死循环）
+     */
+    private fun closeVideoCall(notify: Boolean) {
+        val p = peer ?: return
+        if (videoCallOn) {
+            videoCallOn = false
+            p.stopCameraVideo()
+            if (p.isMicOn()) {
+                micMuted = false
+                p.stopMicAudio(negotiate = false)
+            }
+            p.renegotiateVideoCall()
+            updateVideoCallButton()
+        }
+        // PIP 小窗显示的是对端摄像头画面，与本端是否开过摄像头无关，务必清理（否则对端画面卡在最后一帧）
+        releaseCameraPip()
+        // 通知对端同步关闭其 PIP 小窗与摄像头（否则对端画面会卡在最后一帧）
+        if (notify) {
+            p.sendControl("""{"type":"video-call-off"}""")
         }
     }
 
@@ -1559,6 +1577,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
+                    "video-call-off" -> {
+                        // 观看方关闭视频通话：同步关闭本端（共享方）摄像头与 PIP 小窗，避免画面卡住残留
+                        runOnUiThread { closeVideoCall(notify = false) }
+                    }
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
