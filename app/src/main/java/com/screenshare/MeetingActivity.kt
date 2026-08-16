@@ -56,6 +56,26 @@ class MeetingActivity : AppCompatActivity() {
 
         // 分享链接唤起：冷启动解析 screenshare://join?code=XXXX
         handleShareLink(intent)
+        // 会议未结束：上次会话未主动结束/未失败退出，点开 App 自动重连
+        autoResumeMeeting()
+    }
+
+    /**
+     * 自动重连上次未结束的会议：
+     * 若存在持久化的会议记录（action+code，24h 内），直接进入该会议。
+     * 分享链接优先（handleShareLink 已处理）；无分享链接时生效。
+     */
+    private fun autoResumeMeeting() {
+        val uri = intent?.data
+        if (uri != null && uri.scheme == "screenshare") return
+        val p = getSharedPreferences("meeting_resume", MODE_PRIVATE)
+        val action = p.getString("action", null) ?: return
+        val code = p.getString("code", null) ?: return
+        if (System.currentTimeMillis() - p.getLong("ts", 0) > 24 * 3600 * 1000L) return
+        if (action != ACTION_CREATE && action != ACTION_JOIN) return
+        if (!Regex("^[0-9]{4}$").matches(code)) return
+        Toast.makeText(this, "自动连接上次会议（$code）...", Toast.LENGTH_SHORT).show()
+        enterMeeting(action, code)
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -465,6 +465,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 // 已在会议中：不重复创建
                 return
             }
+            saveMeetingResume(ACTION_CREATE, code)
             binding.llStatus.visibility = View.VISIBLE
             signalCode = code
             signalMode = true
@@ -1668,6 +1669,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 携带会议号执行加入会议流程（Host 视角为 false） */
     private fun joinMeetingWithCode(code: String) {
+        saveMeetingResume(ACTION_JOIN, code)
         signalCode = code
         signalMode = true
         isHost = false
@@ -2861,8 +2863,34 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     /** 结束会议：清理会话并返回会议连接页 */
+    /** 持久化最近一次未结束的会议（action+code），用于冷启动自动重连 */
+    private fun saveMeetingResume(action: String, code: String) {
+        getSharedPreferences("meeting_resume", MODE_PRIVATE)
+            .edit()
+            .putString("action", action)
+            .putString("code", code)
+            .putLong("ts", System.currentTimeMillis())
+            .apply()
+    }
+
+    /** 会议已结束/失败：清除自动重连记录 */
+    private fun clearMeetingResume() {
+        getSharedPreferences("meeting_resume", MODE_PRIVATE).edit().clear().apply()
+    }
+
+    /** 读取未结束会议记录（无则返回 null） */
+    private fun loadMeetingResume(): Pair<String, String>? {
+        val p = getSharedPreferences("meeting_resume", MODE_PRIVATE)
+        val action = p.getString("action", null) ?: return null
+        val code = p.getString("code", null) ?: return null
+        // 超过 24 小时视为过期，不再自动重连
+        if (System.currentTimeMillis() - p.getLong("ts", 0) > 24 * 3600 * 1000L) return null
+        return action to code
+    }
+
     private fun leaveMeeting(message: String) {
         leavingMeeting = true
+        clearMeetingResume()
         stopToolbarAutoHide()
         cleanupPeer()
         resetUI()
@@ -2876,6 +2904,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 会议异常结束：清理并返回连接页 */
     private fun handleMeetingFailure() {
         leavingMeeting = true
+        clearMeetingResume()
         cleanupPeer()
         resetUI()
         if (isFinishing || isDestroyed) return
