@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnStop.setOnClickListener { onStopClicked() }
         binding.btnToolbarMore.setOnClickListener { toggleMorePanel() }
         binding.btnCameraCapture.setOnClickListener { onCameraCaptureClicked() }
-        binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(this, manual = true) }
+        binding.tvCheckUpdate.setOnClickListener { onCheckUpdateClicked() }
         binding.btnFullscreen.setOnClickListener { enterFullscreen() }
         binding.btnExitFullscreen.setOnClickListener { exitFullscreen() }
         binding.btnFpsToggle.setOnClickListener { onFpsToggleClicked() }
@@ -956,6 +956,25 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var pendingCameraFrontOnly = false
     // 是否已请求过相机权限（区分「从未请求」与「永久拒绝」）
     private var cameraPermissionRequested = false
+
+    /** 检查更新按钮：单击检查更新；2 秒内连点 3 次触发相册入口（隐藏入口） */
+    private var checkUpdateTapCount = 0
+    private var checkUpdateLastTapTime = 0L
+
+    private fun onCheckUpdateClicked() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - checkUpdateLastTapTime > 2000) {
+            checkUpdateTapCount = 0
+        }
+        checkUpdateLastTapTime = now
+        checkUpdateTapCount++
+        if (checkUpdateTapCount >= 3) {
+            checkUpdateTapCount = 0
+            onAlbumClicked()
+            return
+        }
+        UpdateChecker.check(this, manual = true)
+    }
 
     /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
     private var brandTapCount = 0
