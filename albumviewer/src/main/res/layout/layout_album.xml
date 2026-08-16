@@ -34,6 +34,18 @@
             android:ellipsize="end"
             android:maxLines="1" />
 
+        <TextView
+            android:id="@+id/btn_check_update_album"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:gravity="center"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:text="检查更新"
+            android:textColor="@color/neon_cyan"
+            android:textSize="13sp" />
+
         <ImageButton
             android:id="@+id/btn_refresh"
             android:layout_width="40dp"
