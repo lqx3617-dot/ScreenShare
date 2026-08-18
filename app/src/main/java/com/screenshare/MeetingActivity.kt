@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -152,7 +153,7 @@ class MeetingActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             if (nav.bottom > 0) {
-                val lp = binding.tvCheckUpdate.layoutParams as? LinearLayout.LayoutParams
+                val lp = binding.tvCheckUpdate.layoutParams as? FrameLayout.LayoutParams
                 lp?.bottomMargin = (28 * density).toInt() + nav.bottom
                 binding.tvCheckUpdate.layoutParams = lp
             }

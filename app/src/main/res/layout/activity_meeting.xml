@@ -4,175 +4,187 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_gradient">
 
-    <LinearLayout
+    <ScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:paddingStart="28dp"
-        android:paddingEnd="28dp">
+        android:fillViewport="true"
+        android:clipToPadding="false"
+        android:overScrollMode="never"
+        android:scrollbars="none">
 
-        <!-- 品牌区 -->
         <LinearLayout
-            android:id="@+id/llBrand"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:orientation="vertical"
             android:gravity="center_horizontal"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="110dp">
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="86dp">
 
-            <ImageView
-                android:layout_width="56dp"
-                android:layout_height="56dp"
-                android:src="@drawable/ic_brand_logo"
-                android:contentDescription="@string/app_name"
-                android:layout_marginBottom="14dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ScreenShare"
-                android:textSize="42sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_primary"
-                android:letterSpacing="0.08" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="实时屏幕共享 · 会议"
-                android:textSize="14sp"
-                android:textColor="@color/neon_cyan"
-                android:layout_marginTop="8dp"
-                android:letterSpacing="0.15" />
-        </LinearLayout>
-
-        <!-- 操作卡片（液态玻璃） -->
-        <LinearLayout
-            android:id="@+id/llActions"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="56dp"
-            android:orientation="vertical"
-            android:padding="20dp"
-            android:background="@drawable/bg_glass">
-
-            <Button
-                android:id="@+id/btnCreateRoom"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:text="创建房间"
-                android:textSize="16sp"
-                android:textAllCaps="false"
-                android:textStyle="bold"
-                android:background="@drawable/bg_btn_neon_cyan"
-                android:textColor="#FF07202B" />
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="@color/divider_neon"
-                android:layout_marginTop="18dp"
-                android:layout_marginBottom="18dp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="加入会议"
-                android:textSize="13sp"
-                android:textColor="@color/neon_blue"
-                android:textStyle="bold"
-                android:layout_marginBottom="12dp" />
-
-            <EditText
-                android:id="@+id/etMeetingCode"
-                android:layout_width="match_parent"
-                android:layout_height="60dp"
-                android:background="@drawable/bg_input"
-                android:gravity="center"
-                android:textSize="36sp"
-                android:textStyle="bold"
-                android:textColor="@color/neon_cyan"
-                android:textColorHint="#3364748B"
-                android:hint="0000"
-                android:inputType="number"
-                android:maxLength="4"
-                android:letterSpacing="0.3"
-                android:imeOptions="actionDone"
-                android:importantForAutofill="no" />
-
-            <Button
-                android:id="@+id/btnJoinMeeting"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="14dp"
-                android:text="加入会议"
-                android:textSize="16sp"
-                android:textAllCaps="false"
-                android:textStyle="bold"
-                android:background="@drawable/bg_btn_neon_violet"
-                android:textColor="#FF0A0D26" />
-        </LinearLayout>
-
-        <!-- 最近会议（有历史记录时显示，点击快速加入/创建） -->
-        <LinearLayout
-            android:id="@+id/llRecent"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:background="@drawable/bg_glass"
-            android:visibility="gone">
-
+            <!-- 品牌区 -->
             <LinearLayout
-                android:layout_width="match_parent"
+                android:id="@+id/llBrand"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="110dp">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:src="@drawable/ic_brand_logo"
+                    android:contentDescription="@string/app_name"
+                    android:layout_marginBottom="14dp" />
 
                 <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="最近会议"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/neon_blue" />
-
-                <TextView
-                    android:id="@+id/btnClearRecent"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="清空"
-                    android:textSize="12sp"
-                    android:textColor="#64748B"
-                    android:padding="6dp" />
+                    android:text="ScreenShare"
+                    android:textSize="42sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    android:letterSpacing="0.08" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="实时屏幕共享 · 会议"
+                    android:textSize="14sp"
+                    android:textColor="@color/neon_cyan"
+                    android:layout_marginTop="8dp"
+                    android:letterSpacing="0.15" />
             </LinearLayout>
 
+            <!-- 操作卡片（液态玻璃） -->
             <LinearLayout
-                android:id="@+id/llRecentList"
+                android:id="@+id/llActions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical" />
+                android:layout_marginTop="56dp"
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:background="@drawable/bg_glass">
+
+                <Button
+                    android:id="@+id/btnCreateRoom"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="创建房间"
+                    android:textSize="16sp"
+                    android:textAllCaps="false"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_btn_neon_cyan"
+                    android:textColor="#FF07202B" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider_neon"
+                    android:layout_marginTop="18dp"
+                    android:layout_marginBottom="18dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="加入会议"
+                    android:textSize="13sp"
+                    android:textColor="@color/neon_blue"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
+
+                <EditText
+                    android:id="@+id/etMeetingCode"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:background="@drawable/bg_input"
+                    android:gravity="center"
+                    android:textSize="36sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/neon_cyan"
+                    android:textColorHint="#3364748B"
+                    android:hint="0000"
+                    android:inputType="number"
+                    android:maxLength="4"
+                    android:letterSpacing="0.3"
+                    android:imeOptions="actionDone"
+                    android:importantForAutofill="no" />
+
+                <Button
+                    android:id="@+id/btnJoinMeeting"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="14dp"
+                    android:text="加入会议"
+                    android:textSize="16sp"
+                    android:textAllCaps="false"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_btn_neon_violet"
+                    android:textColor="#FF0A0D26" />
+            </LinearLayout>
+
+            <!-- 最近会议（有历史记录时显示，点击快速加入/创建） -->
+            <LinearLayout
+                android:id="@+id/llRecent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:background="@drawable/bg_glass"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="最近会议"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/neon_blue" />
+
+                    <TextView
+                        android:id="@+id/btnClearRecent"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="清空"
+                        android:textSize="12sp"
+                        android:textColor="#64748B"
+                        android:padding="6dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llRecentList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
         </LinearLayout>
+    </ScrollView>
 
-        <View
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
-
-        <!-- 底部：检查更新 -->
-        <TextView
-            android:id="@+id/tvCheckUpdate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="检查更新"
-            android:textSize="14sp"
-            android:textColor="@color/neon_cyan"
-            android:padding="10dp"
-            android:layout_marginBottom="28dp" />
-    </LinearLayout>
+    <!-- 底部固定：检查更新（滚动时始终可见，不被最近会议遮挡） -->
+    <TextView
+        android:id="@+id/tvCheckUpdate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:text="检查更新"
+        android:textSize="14sp"
+        android:textColor="@color/neon_cyan"
+        android:padding="10dp"
+        android:layout_marginBottom="28dp"
+        android:background="?attr/selectableItemBackground" />
 
 </FrameLayout>
