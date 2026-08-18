@@ -681,7 +681,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         isControlMode = !isControlMode
         binding.btnRemoteControl.text = if (isControlMode) "控制中" else "远程控制"
-        binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF2BD98F.toInt() else 0xFFFFFFFF.toInt())
+        binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF16A34A.toInt() else 0xFF1E293B.toInt())
         binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
         binding.btnCtrlText.visibility = if (isControlMode) View.VISIBLE else View.GONE
         if (!isControlMode) ctrlDownSent = false
@@ -864,7 +864,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateRemoteControlStatus() {
         val on = RemoteControlService.isAccessibilityOn()
         binding.tvCtrlStatus.text = if (on) "远程控制已就绪" else "未开启无障碍服务，观看方无法控制"
-        binding.tvCtrlStatus.setTextColor(if (on) 0xFF7CFC9C.toInt() else 0xFFFFC107.toInt())
+        binding.tvCtrlStatus.setTextColor(if (on) 0xFF15803D.toInt() else 0xFFB45309.toInt())
         binding.btnCtrlSetup.visibility = if (on) View.GONE else View.VISIBLE
     }
 
@@ -873,7 +873,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         RemoteControlService.controlEnabled = !RemoteControlService.controlEnabled
         binding.btnCtrlLock.text = if (RemoteControlService.controlEnabled) "停止控制" else "已锁定"
         binding.btnCtrlLock.setTextColor(
-            if (RemoteControlService.controlEnabled) 0xFFFFC107.toInt() else 0xFFFF5252.toInt()
+            if (RemoteControlService.controlEnabled) 0xFFB45309.toInt() else 0xFFDC2626.toInt()
         )
         Toast.makeText(
             this,
@@ -1001,7 +1001,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateVideoCallButton() {
         binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
         binding.btnCamera.setTextColor(
-            if (videoCallOn) Color.parseColor("#FF12865C") else Color.parseColor("#FFFFFFFF")
+            if (videoCallOn) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
         )
     }
 
@@ -1359,9 +1359,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnMic.setTextColor(
             when {
-                !on -> Color.parseColor("#FFFFFFFF")
+                !on -> Color.parseColor("#FF1E293B")
                 micMuted -> Color.parseColor("#FFD13232")
-                else -> Color.parseColor("#FF12865C")
+                else -> Color.parseColor("#FF15803D")
             }
         )
     }

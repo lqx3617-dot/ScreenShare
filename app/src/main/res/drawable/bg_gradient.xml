@@ -1,47 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 深蓝科技背景：提亮深蓝渐变 + 左上青色光晕 + 右下蓝色光晕，营造层次与氛围 -->
+<!-- 浅色毛玻璃背景：白底微蓝渐变 + 左上淡青光晕 + 右下淡蓝光晕 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 基础深蓝渐变（提亮一档） -->
+    <!-- 基础浅蓝白渐变 -->
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="135"
-                android:startColor="#FF1E2A4A"
-                android:centerColor="#FF16203A"
-                android:endColor="#FF0D1526" />
+                android:startColor="#FFF8FAFD"
+                android:centerColor="#FFF1F5FB"
+                android:endColor="#FFEAF1FA" />
         </shape>
     </item>
 
-    <!-- 左上青色光晕 -->
+    <!-- 左上淡青光晕 -->
     <item
-        android:width="380dp"
-        android:height="380dp"
+        android:width="420dp"
+        android:height="420dp"
         android:gravity="top|start"
-        android:left="-140dp"
-        android:top="-140dp">
+        android:left="-160dp"
+        android:top="-160dp">
         <shape android:shape="oval">
             <gradient
                 android:type="radial"
-                android:gradientRadius="190dp"
-                android:startColor="#2E3B82F6"
-                android:centerColor="#1A3B82F6"
+                android:gradientRadius="210dp"
+                android:startColor="#1F3B82F6"
+                android:centerColor="#123B82F6"
                 android:endColor="#003B82F6" />
         </shape>
     </item>
 
-    <!-- 右下蓝色光晕 -->
+    <!-- 右下淡蓝光晕 -->
     <item
-        android:width="340dp"
-        android:height="340dp"
+        android:width="380dp"
+        android:height="380dp"
         android:gravity="bottom|end"
-        android:right="-120dp"
-        android:bottom="-120dp">
+        android:right="-140dp"
+        android:bottom="-140dp">
         <shape android:shape="oval">
             <gradient
                 android:type="radial"
-                android:gradientRadius="170dp"
-                android:startColor="#2E4B8DF9"
-                android:centerColor="#1A4B8DF9"
+                android:gradientRadius="190dp"
+                android:startColor="#1A4B8DF9"
+                android:centerColor="#0E4B8DF9"
                 android:endColor="#004B8DF9" />
         </shape>
     </item>

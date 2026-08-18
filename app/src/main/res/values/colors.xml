@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 主背景色（深蓝科技：提亮的深蓝底，带层次） -->
-    <color name="bg_dark">#FF101A2E</color>
-    <color name="bg_card">#FF182238</color>
-    <color name="bg_input">#FF1E2A44</color>
+    <!-- 主背景色（浅色毛玻璃：白底微蓝） -->
+    <color name="bg_dark">#FFF4F7FB</color>
+    <color name="bg_card">#F2FFFFFF</color>
+    <color name="bg_input">#F0FFFFFF</color>
 
-    <!-- 主色（单色商务蓝强调，去荧光青/紫） -->
+    <!-- 主色（商务蓝强调，彩色底按钮用） -->
     <color name="neon_cyan">#FF3B82F6</color>
-    <color name="neon_blue">#FF4B8DF9</color>
-    <color name="neon_violet">#FF3358C9</color>
-    <color name="primary_green">#FF34C77B</color>
+    <color name="neon_blue">#FF2563EB</color>
+    <color name="neon_violet">#FF4F46E5</color>
+    <color name="primary_green">#FF16A34A</color>
     <color name="primary_blue">#FF3B82F6</color>
-    <color name="primary_orange">#FFFFB84D</color>
-    <color name="primary_red">#FFFF6B6B</color>
+    <color name="primary_orange">#FFEA580C</color>
+    <color name="primary_red">#FFDC2626</color>
     <color name="accent">#FF3B82F6</color>
 
-    <!-- 文字 -->
-    <color name="text_primary">#FFF2F6FF</color>
-    <color name="text_secondary">#FF94A3B8</color>
+    <!-- 文字（浅色底用深色文字） -->
+    <color name="text_primary">#FF0F172A</color>
+    <color name="text_secondary">#FF475569</color>
     <color name="text_hint">#FF64748B</color>
 
     <!-- 分割线/边框 -->
-    <color name="divider">#FF202838</color>
-    <color name="divider_neon">#333B82F6</color>
+    <color name="divider">#FFE2E8F0</color>
+    <color name="divider_neon">#663B82F6</color>
 
     <!-- 应用图标背景 -->
     <color name="ic_launcher_background">#4F46E5</color>
