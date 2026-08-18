@@ -180,6 +180,8 @@ class WebRTCPeer(
     private var cameraVideoSource: VideoSource? = null
     private var cameraVideoTrack: VideoTrack? = null
     private var cameraSurfaceTextureHelper: SurfaceTextureHelper? = null
+    // 当前摄像头设备名（用于前后切换判断）
+    private var cameraDeviceName: String? = null
     // host 端：每个 viewer 连接的摄像头发送器（同摄像头轨可 addTrack 到多条连接）
     private val cameraViewerSenders = mutableMapOf<Int, org.webrtc.RtpSender>()
     // viewer 端：主连接的摄像头发送器
@@ -844,6 +846,7 @@ class WebRTCPeer(
             cameraCapturer = capturer
             cameraVideoSource = source
             cameraVideoTrack = track
+            cameraDeviceName = deviceName
             // host 端：摄像头轨挂到每个 viewer 连接（同一轨可挂多条连接）
             if (viewerConnections.isNotEmpty()) {
                 viewerConnections.forEach { (vid, conn) ->
@@ -898,6 +901,7 @@ class WebRTCPeer(
         cameraCapturer?.stopCapture()
         cameraCapturer?.dispose()
         cameraCapturer = null
+        cameraDeviceName = null
         cameraSurfaceTextureHelper?.dispose()
         cameraSurfaceTextureHelper = null
         Log.d(TAG, "视频通话摄像头已停止")
@@ -905,6 +909,45 @@ class WebRTCPeer(
 
     /** 是否已开启视频通话摄像头 */
     fun isCameraOn(): Boolean = cameraVideoTrack != null
+
+    /** 是否当前使用前置摄像头 */
+    fun isUsingFrontCamera(): Boolean {
+        if (cameraDeviceName == null) return true
+        val enumerator = Camera2Enumerator(context)
+        return enumerator.isFrontFacing(cameraDeviceName!!)
+    }
+
+    /**
+     * 切换前后摄像头：Camera2 采集切换，无需重协商（画面本地翻转，编码流不变）。
+     * 若无对应朝向的摄像头则返回 false（调用方可提示用户）。
+     * @param front true=切到前置，false=切到后置
+     */
+    fun switchCamera(front: Boolean): Boolean {
+        val capturer = cameraCapturer ?: return false
+        if (disposed) return false
+        val enumerator = Camera2Enumerator(context)
+        val target = if (front) {
+            enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) }
+        } else {
+            enumerator.deviceNames.firstOrNull { enumerator.isBackFacing(it) }
+        } ?: return false
+        if (target == cameraDeviceName) return true
+        return try {
+            // CameraVideoCapturer.switchCamera 在前后摄之间快速切换（不变更采集会话）
+            if (capturer is CameraVideoCapturer) {
+                capturer.switchCamera(null)
+                cameraDeviceName = target
+                Log.d(TAG, "视频通话摄像头已切换: ${if (front) "前置" else "后置"} $target")
+                true
+            } else {
+                Log.w(TAG, "当前摄像头不支持快速切换，忽略")
+                false
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "切换摄像头失败: ${t.message}")
+            false
+        }
+    }
 
     /**
      * 重协商：基于当前连接状态重新生成 Offer 并发出（供开启/关闭麦克风后更新 SDP）。
@@ -1358,6 +1401,11 @@ class WebRTCPeer(
                                     lost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
                                     lostTotal += (s.members["packetsReceived"] as? Number)?.toLong() ?: 0L
                                     nackCount += (s.members["nackCount"] as? Number)?.toLong() ?: 0L
+                                    // 对端音频电平（inbound audio，0~32768 反映对方说话音量）
+                                    if ((s.members["mediaType"] as? String) == "audio") {
+                                        val lv = (s.members["audioLevel"] as? Number)?.toDouble()
+                                        if (lv != null) remoteAudioLevel = lv
+                                    }
                                 }
                                 "outbound-rtp" -> {
                                     outFps = (s.members["framesPerSecond"] as? Number)?.toDouble() ?: 0.0
@@ -1423,6 +1471,11 @@ class WebRTCPeer(
     private var curAdaptLevel = 0
     private var recoverTimer = 0
     private val adaptBitrateCaps = intArrayOf(12_000_000, 9_000_000, 6_000_000, 4_000_000, 2_500_000)
+    // 对端音频电平 0~32768（collectStatsFor 从 inbound audio 统计更新，供对讲状态指示）
+    @Volatile private var remoteAudioLevel = 0.0
+
+    /** 读取最近一次统计到的对端音频电平（0~32768，越大越响） */
+    fun remoteAudioLevel(): Double = remoteAudioLevel
     // 增量丢包统计兜底（fractionLost 未上报时用累计值做差估算）
     private var lastOutSentCum = 0L
     private var lastOutLostCum = 0L

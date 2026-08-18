@@ -184,9 +184,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 画中画（小窗）模式：true=处于系统 PiP，仅在 Android 8.0+ 有效
     private var inPipMode = false
     // 进入 PiP 时是否已将摄像头小窗放大铺满（退出时恢复原布局）
-    private var pipLayoutApplied = false
-    // 防重入：PiP 过渡期间系统可能再次触发 onUserLeaveHint，避免重复调用 enterPictureInPictureMode
+    private var pipLayoutApplied = false    // 防重入：PiP 过渡期间系统可能再次触发 onUserLeaveHint，避免重复调用 enterPictureInPictureMode
     @Volatile private var pipEntering = false
+    // 视频通话功能：小窗是否被用户点击放大全屏 / 隐藏、是否保持屏幕常亮
+    private var cameraPipMaximized = false
+    private var cameraPipHidden = false
+    private var keepScreenOnForCall = false
 
     // 相册查看（主 App 内 WebView 加载聚合相册页，无需链接）
     private var albumWebView: WebView? = null
@@ -258,6 +261,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnCtrlLock.setOnClickListener { onCtrlLockClicked() }
         binding.btnPip.setOnClickListener { enterPip() }
+        binding.btnFlipCamera.setOnClickListener { onFlipCameraClicked() }
+        binding.btnHidePip.setOnClickListener { toggleCameraPipHidden() }
         // 小窗（画中画）需要 Android 8.0+，低版本隐藏入口
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             binding.btnPip.visibility = View.GONE
@@ -482,12 +487,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun restorePipLayout() {
         if (!pipLayoutApplied) return
         pipLayoutApplied = false
+        // 用户手动放大的小窗，退出 PiP 后保持放大态
+        if (cameraPipMaximized) {
+            applyCameraPipMaximized(restore = false)
+            return
+        }
         val density = resources.displayMetrics.density
         val lp = FrameLayout.LayoutParams((120 * density).toInt(), (160 * density).toInt())
         lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
         lp.setMargins(0, (16 * density).toInt(), (16 * density).toInt(), 0)
         binding.flCameraPip.layoutParams = lp
-        binding.flCameraPip.visibility = View.VISIBLE
+        binding.flCameraPip.visibility = if (cameraPipHidden) View.GONE else View.VISIBLE
     }
 
     /**
@@ -947,6 +957,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         videoCallOn = true
+        // 视频通话保持屏幕常亮（避免观看过程中黑屏）
+        if (!keepScreenOnForCall) {
+            keepScreenOnForCall = true
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         // 麦克风联动：开摄像头自动开麦（未开时自动开启；仅挂载不协商，统一在下方触发一次）
         if (!p.isMicOn()) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -966,6 +981,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Log.e(TAG, "renegotiateVideoCall 异常: ${t.message}")
         }
         updateVideoCallButton()
+        setTalkPolling(true)
         Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
         } catch (t: Throwable) {
             Log.e(TAG, "onVideoCallClicked 异常: ${t.message}")
@@ -978,7 +994,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      * @param notify 是否经控制通道通知对端同步关闭（本端用户主动关闭时 true；收到对端通知时 false，避免互相通知死循环）
      */
     private fun closeVideoCall(notify: Boolean) {
-        val p = peer ?: return
+        val p = peer
+        // 视频通话关闭：移除屏幕常亮（peer 可能已断开，常亮仍需清理）
+        if (keepScreenOnForCall) {
+            keepScreenOnForCall = false
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        if (p == null) {
+            setTalkPolling(false)
+            releaseCameraPip()
+            return
+        }
         if (videoCallOn) {
             videoCallOn = false
             p.stopCameraVideo()
@@ -988,6 +1014,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             p.renegotiateVideoCall()
             updateVideoCallButton()
+            setTalkPolling(false)
         }
         // PIP 小窗显示的是对端摄像头画面，与本端是否开过摄像头无关，务必清理（否则对端画面卡在最后一帧）
         releaseCameraPip()
@@ -1003,6 +1030,97 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnCamera.setTextColor(
             if (videoCallOn) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
         )
+        // 视频通话增强控件仅通话中显示
+        binding.llCallExtras.visibility = if (videoCallOn) View.VISIBLE else View.GONE
+    }
+
+    // ======================== 视频通话增强功能 ========================
+
+    /** 切换前后摄像头（Camera2 采集内切换，无需重协商） */
+    private fun onFlipCameraClicked() {
+        val p = peer ?: return
+        if (!p.isCameraOn()) {
+            Toast.makeText(this, "摄像头未开启", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val targetFront = !p.isUsingFrontCamera()
+        if (p.switchCamera(targetFront)) {
+            Toast.makeText(
+                this,
+                if (targetFront) "已切换前置摄像头" else "已切换后置摄像头",
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            Toast.makeText(this, "设备无对应朝向摄像头", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // 对讲状态指示：后台线程周期性调 getStats 刷新对端音频电平，主线程只读电平更新 UI
+    private var talkPoller: Runnable? = null
+    private var talkStatsThread: android.os.HandlerThread? = null
+    private var talkStatsHandler: android.os.Handler? = null
+    private var talkStatsRunnable: Runnable? = null
+
+    /** 启动/停止对讲状态指示（视频通话开关时调用） */
+    private fun setTalkPolling(on: Boolean) {
+        val h = binding.root.handler ?: return
+        if (on) {
+            if (talkPoller != null) return
+            // 后台统计线程：每 1s 拉一次 getStats，刷新 WebRTC 侧 remoteAudioLevel
+            if (talkStatsThread == null) {
+                val t = android.os.HandlerThread("talk-stats-worker")
+                t.start()
+                talkStatsThread = t
+                talkStatsHandler = android.os.Handler(t.looper)
+                talkStatsRunnable = object : Runnable {
+                    override fun run() {
+                        val p = peer
+                        if (videoCallOn && p != null) {
+                            try {
+                                p.collectStats()
+                            } catch (t: Throwable) {
+                                Log.w(TAG, "对讲统计刷新失败: ${t.message}")
+                            }
+                            talkStatsHandler?.postDelayed(this, 1000)
+                        }
+                    }
+                }
+            }
+            talkStatsHandler?.removeCallbacksAndMessages(null)
+            talkStatsHandler?.post(talkStatsRunnable!!)
+            // 主线程 UI 轮询：每 250ms 读电平刷新指示
+            talkPoller = object : Runnable {
+                override fun run() {
+                    val p = peer
+                    if (!videoCallOn || p == null) {
+                        talkPoller = null
+                        return
+                    }
+                    val lv = p.remoteAudioLevel()
+                    val speaking = lv > 800 // 阈值：约 -60dB 以上视为对方在说话
+                    binding.tvTalkIndicator.text = when {
+                        speaking -> "对讲中 ${(lv / 327.68).toInt()}%"
+                        else -> "对讲待机"
+                    }
+                    binding.tvTalkIndicator.setTextColor(
+                        if (speaking) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
+                    )
+                    h.postDelayed(this, 250)
+                }
+            }
+            h.post(talkPoller!!)
+        } else {
+            talkPoller?.let { h.removeCallbacks(it) }
+            talkPoller = null
+            talkStatsHandler?.removeCallbacksAndMessages(null)
+            talkStatsRunnable = null
+            talkStatsHandler?.looper?.quitSafely()
+            talkStatsHandler = null
+            talkStatsThread?.join(500)
+            talkStatsThread = null
+            binding.tvTalkIndicator.text = "对讲待机"
+            binding.tvTalkIndicator.setTextColor(Color.parseColor("#FF1E293B"))
+        }
     }
 
     // ======================== 相册上传查看 ========================
@@ -2380,7 +2498,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.flCameraPip.addView(renderer, 0)
             cameraPipRenderer = renderer
             binding.tvCameraPipHint.visibility = View.GONE
-            binding.flCameraPip.visibility = View.VISIBLE
+            binding.flCameraPip.setOnClickListener { onCameraPipClicked() }
+            binding.flCameraPip.visibility = if (cameraPipHidden) View.GONE else View.VISIBLE
+            // 用户已放大小窗时保持放大态（重连/重挂载不丢状态）
+            if (cameraPipMaximized) {
+                applyCameraPipMaximized(restore = false)
+            }
 
             cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
             track.addSink(cameraPipSink!!)
@@ -2403,6 +2526,62 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         cameraPipRenderer = null
         binding.flCameraPip.visibility = View.GONE
         binding.tvCameraPipHint.visibility = View.VISIBLE
+    }
+
+    // ======================== 视频通话增强功能 ========================
+
+    /**
+     * 摄像头小窗放大/恢复：把 120x160 右上角小窗铺满全屏（保留控件在上层）。
+     * @param restore true=恢复小窗，false=放大全屏
+     */
+    private fun applyCameraPipMaximized(restore: Boolean) {
+        val density = resources.displayMetrics.density
+        if (restore) {
+            if (!cameraPipMaximized) return
+            cameraPipMaximized = false
+            // 恢复原布局（若 PiP 放大也一并恢复，避免冲突）
+            if (!pipLayoutApplied) {
+                val lp = FrameLayout.LayoutParams((120 * density).toInt(), (160 * density).toInt())
+                lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+                lp.setMargins(0, (16 * density).toInt(), (16 * density).toInt(), 0)
+                binding.flCameraPip.layoutParams = lp
+            }
+        } else {
+            if (cameraPipMaximized) return
+            cameraPipMaximized = true
+            binding.flCameraPip.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        binding.flCameraPip.requestLayout()
+    }
+
+    /** 摄像头小窗点击：放大全屏 / 恢复小窗（未隐藏时） */
+    private fun onCameraPipClicked() {
+        if (cameraPipHidden) return
+        if (cameraPipMaximized) {
+            applyCameraPipMaximized(restore = true)
+            Toast.makeText(this, "已恢复小窗", Toast.LENGTH_SHORT).show()
+        } else {
+            applyCameraPipMaximized(restore = false)
+            Toast.makeText(this, "点击小窗可恢复", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 隐藏 / 显示对方摄像头小窗 */
+    private fun toggleCameraPipHidden() {
+        cameraPipHidden = !cameraPipHidden
+        if (cameraPipHidden) {
+            binding.flCameraPip.visibility = View.GONE
+        } else {
+            binding.flCameraPip.visibility = View.VISIBLE
+        }
+        Toast.makeText(
+            this,
+            if (cameraPipHidden) "对方画面已隐藏" else "对方画面已显示",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     // ======================== 全屏观看 ========================
@@ -3251,6 +3430,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         videoCallOn = false
         binding.btnCamera.visibility = View.GONE
         binding.btnMic.visibility = View.GONE
+        // 视频通话增强：停止对讲轮询、隐藏增强控件、移除屏幕常亮
+        setTalkPolling(false)
+        binding.llCallExtras.visibility = View.GONE
+        if (keepScreenOnForCall) {
+            keepScreenOnForCall = false
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         binding.llStatus.visibility = View.VISIBLE
         videoRenderer?.scaleX = 1f
         videoRenderer?.scaleY = 1f

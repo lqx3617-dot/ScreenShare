@@ -431,6 +431,62 @@
                 android:paddingEnd="12dp" />
         </LinearLayout>
 
+        <!-- 第四列：视频通话增强（仅视频通话中可见） -->
+        <LinearLayout
+            android:id="@+id/llCallExtras"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginStart="8dp">
+
+            <TextView
+                android:id="@+id/btnFlipCamera"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:gravity="center"
+                android:text="切换前后摄"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnHidePip"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="隐藏对方画面"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+
+            <!-- 对讲状态指示：实时显示对方说话状态与音量 -->
+            <TextView
+                android:id="@+id/tvTalkIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="对讲待机"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+        </LinearLayout>
+
     </LinearLayout>
 
     <!-- 视频通话 PIP 小窗：显示对方摄像头人脸（host 与 viewer 通用，浮在右上角） -->
