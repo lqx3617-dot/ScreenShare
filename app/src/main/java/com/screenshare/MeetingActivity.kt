@@ -148,15 +148,22 @@ class MeetingActivity : AppCompatActivity() {
             animate().alpha(1f).translationY(0f).setDuration(400).setStartDelay(210)
                 .setInterpolator(decel).start()
         }
-        // 底部「检查更新」避开系统导航栏（Android 10 及以下内容延伸到系统栏会被遮挡点不到）
+        // 顶部头部条避开系统状态栏（Android 10 及以下内容延伸到系统栏会被遮挡点不到）
         val density = resources.displayMetrics.density
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            if (nav.bottom > 0) {
-                val lp = binding.tvCheckUpdate.layoutParams as? FrameLayout.LayoutParams
-                lp?.bottomMargin = (28 * density).toInt() + nav.bottom
-                binding.tvCheckUpdate.layoutParams = lp
+            val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            if (status.top > 0) {
+                val lp = binding.llBrand.layoutParams as? FrameLayout.LayoutParams
+                lp?.topMargin = status.top
+                binding.llBrand.layoutParams = lp
             }
+            val headerH = (58 * density).toInt()
+            binding.svContent.setPadding(
+                binding.svContent.paddingLeft,
+                headerH + status.top,
+                binding.svContent.paddingRight,
+                binding.svContent.paddingBottom
+            )
             insets
         }
     }
