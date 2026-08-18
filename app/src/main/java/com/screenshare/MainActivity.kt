@@ -171,6 +171,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 视频通话（双向摄像头人脸）：true=已开启视频通话（摄像头+麦克风联动）
     private var videoCallOn = false
 
+    // 观看端网络质量显示循环（RTT/接收帧率，帮助量化画面延迟）
+    private var viewerStatsThread: android.os.HandlerThread? = null
+    private var viewerStatsHandler: android.os.Handler? = null
+    private var viewerStatsRunnable: Runnable? = null
+
     // 画中画（小窗）模式：true=处于系统 PiP，仅在 Android 8.0+ 有效
     private var inPipMode = false
     // 进入 PiP 时是否已将摄像头小窗放大铺满（退出时恢复原布局）
@@ -1937,6 +1942,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun cleanupPeer() {
         stopAdaptiveLoop()
+        stopViewerStatsLoop()
         albumCancel = true
         peer?.disconnect()
         peer = null
@@ -2138,6 +2144,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
+                // 观看端显示实时网络延迟/接收帧率，便于量化画面延迟
+                startViewerStatsLoop()
             }
         }
     }
@@ -2145,6 +2153,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onDisconnected() {
         runOnUiThread {
             stopAdaptiveLoop()
+            stopViewerStatsLoop()
             updateUI("连接已断开")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
@@ -2876,6 +2885,54 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         adaptiveRunnable = null
         adaptiveThread?.quitSafely()
         adaptiveThread = null
+    }
+
+    /** 观看端：周期显示网络延迟与接收帧率（量化画面延迟，弱网时给出提示） */
+    private fun startViewerStatsLoop() {
+        stopViewerStatsLoop()
+        val thread = android.os.HandlerThread("viewer-stats")
+        thread.start()
+        viewerStatsThread = thread
+        val handler = android.os.Handler(thread.looper)
+        viewerStatsHandler = handler
+        val runnable = object : Runnable {
+            override fun run() {
+                try {
+                    val raw = peer?.collectStats()
+                    raw?.let {
+                        val json = org.json.JSONObject(it)
+                        val rtt = json.optInt("rtt", 0)
+                        val fps = json.optInt("inFps", 0)
+                        val w = json.optInt("inW", 0)
+                        val h = json.optInt("inH", 0)
+                        val rttText = if (rtt > 0) "${rtt}ms" else "--"
+                        val hint = when {
+                            rtt > 300 -> " ⚠️延迟高"
+                            rtt > 150 -> " ⚠️延迟偏高"
+                            else -> ""
+                        }
+                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$hint"
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed && peer != null) {
+                                binding.tvScanResult.text = text
+                                binding.tvScanResult.visibility = View.VISIBLE
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {}
+                handler.postDelayed(this, 2000)
+            }
+        }
+        viewerStatsRunnable = runnable
+        handler.post(runnable)
+    }
+
+    private fun stopViewerStatsLoop() {
+        viewerStatsRunnable?.let { viewerStatsHandler?.removeCallbacks(it) }
+        viewerStatsHandler = null
+        viewerStatsRunnable = null
+        viewerStatsThread?.quitSafely()
+        viewerStatsThread = null
     }
 
     // ======================== 结束会议 ========================

@@ -471,10 +471,10 @@ class WebRTCPeer(
                     params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
                 } catch (t: Throwable) {}
                 rtp.parameters = params
-                // 初始带宽保守起步（同主连接：1/2.5/12M），避免 viewer 刚加入即冲击带宽导致瞬时拥塞
+                // 初始带宽 4M 起步（同主连接），画面更快清晰；弱网由拥塞控制兜底降档
                 try {
-                    pc.setBitrate(1_000_000, 2_500_000, 12_000_000)
-                    Log.d(TAG, "viewer#$viewerId 初始带宽 1/2.5/12 Mbps")
+                    pc.setBitrate(1_000_000, 4_000_000, 12_000_000)
+                    Log.d(TAG, "viewer#$viewerId 初始带宽 1/4/12 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
                 }
@@ -1159,11 +1159,11 @@ class WebRTCPeer(
                     Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
                 }
                 rtp.parameters = params
-                // 打开应用瞬间丢包高：初始带宽 2.5M 保守起步，由拥塞控制按丢包率自适应爬升，
-                // 避免启动即冲击导致瞬间拥塞卡顿
+                // 初始带宽 4M 起步：低于 5M 峰值避免启动瞬间拥塞，高于 2.5M 让画面更快清晰
+                //（1080p30 屏幕共享 2.5M 起步爬坡期画面模糊，弱网由拥塞控制 + 弱网自适应兜底降档）
                 try {
-                    peerConnection?.setBitrate(1_000_000, 2_500_000, 12_000_000)
-                    Log.d(TAG, "已设置初始带宽 1/2.5/12 Mbps")
+                    peerConnection?.setBitrate(1_000_000, 4_000_000, 12_000_000)
+                    Log.d(TAG, "已设置初始带宽 1/4/12 Mbps")
                 } catch (t: Throwable) {
                     Log.w(TAG, "setBitrate 失败: ${t.message}")
                 }
