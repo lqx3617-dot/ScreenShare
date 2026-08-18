@@ -2830,7 +2830,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // UI 更新回主线程
                         binding.root.post {
                             if (!isFullscreen) return@post
-                            binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF00E5FF.toInt())
+                            binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF4B8DF9.toInt())
                             binding.tvFullscreenStats.text = fullText
                         }
                     }

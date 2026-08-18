@@ -493,7 +493,7 @@
             android:gravity="center"
             android:text=""
             android:textSize="12sp"
-            android:textColor="#FF00E5FF"
+            android:textColor="#FF4B8DF9"
             android:typeface="monospace"
             android:background="@drawable/bg_fullscreen_btn" />
     </FrameLayout>

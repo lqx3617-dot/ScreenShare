@@ -204,7 +204,7 @@ class MeetingActivity : AppCompatActivity() {
             textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.15f
-            setTextColor(Color.parseColor("#00E5FF"))
+            setTextColor(Color.parseColor("#4B8DF9"))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         val tvMeta = TextView(this).apply {

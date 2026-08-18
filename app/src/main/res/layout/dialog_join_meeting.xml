@@ -50,7 +50,7 @@
         android:textSize="16sp"
         android:textStyle="bold"
         android:textAllCaps="false"
-        android:textColor="#FF0A0D26"
+        android:textColor="#FFFFFFFF"
         android:background="@drawable/bg_btn_neon_violet" />
 
     <TextView

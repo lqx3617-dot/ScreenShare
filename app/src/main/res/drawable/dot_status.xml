@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 霓虹状态点：青色发光光晕 -->
+<!-- 状态点：商务蓝光晕 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
     <gradient
         android:type="radial"
-        android:startColor="#FF00E5FF"
-        android:centerColor="#FF00E5FF"
-        android:endColor="#2200E5FF" />
+        android:startColor="#FF4B8DF9"
+        android:centerColor="#FF4B8DF9"
+        android:endColor="#224B8DF9" />
     <size
         android:width="12dp"
         android:height="12dp" />

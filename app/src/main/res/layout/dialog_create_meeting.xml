@@ -80,7 +80,7 @@
         android:background="@drawable/bg_btn_neon_cyan"
         android:text="复制会议号"
         android:textAllCaps="false"
-        android:textColor="#FF0A0D26"
+        android:textColor="#FFFFFFFF"
         android:textSize="16sp"
         android:textStyle="bold" />
 

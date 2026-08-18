@@ -1,56 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 霓虹青渐变主按钮（创建房间）：青色渐变 + 外发光，按下提亮 -->
+<!-- 商务蓝渐变主按钮：蓝色渐变 + 柔和高光，按下提亮（去霓虹外发光） -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
-        <layer-list>
-            <item>
-                <shape android:shape="rectangle">
-                    <corners android:radius="18dp" />
-                    <gradient
-                        android:angle="0"
-                        android:startColor="#6600E5FF"
-                        android:endColor="#3300E5FF" />
-                </shape>
-            </item>
-            <item
-                android:left="1dp"
-                android:top="1dp"
-                android:right="1dp"
-                android:bottom="1dp">
-                <shape android:shape="rectangle">
-                    <corners android:radius="17dp" />
-                    <gradient
-                        android:angle="0"
-                        android:startColor="#FF7DF5FF"
-                        android:endColor="#FF6EB0FF" />
-                </shape>
-            </item>
-        </layer-list>
+        <shape android:shape="rectangle">
+            <corners android:radius="18dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#FF5B9BFF"
+                android:endColor="#FF3B82F6" />
+        </shape>
     </item>
     <item>
-        <layer-list>
-            <item>
-                <shape android:shape="rectangle">
-                    <corners android:radius="18dp" />
-                    <gradient
-                        android:angle="0"
-                        android:startColor="#3300E5FF"
-                        android:endColor="#0000E5FF" />
-                </shape>
-            </item>
-            <item
-                android:left="2dp"
-                android:top="2dp"
-                android:right="2dp"
-                android:bottom="2dp">
-                <shape android:shape="rectangle">
-                    <corners android:radius="16dp" />
-                    <gradient
-                        android:angle="0"
-                        android:startColor="#FF00E5FF"
-                        android:endColor="#FF4D9EFF" />
-                </shape>
-            </item>
-        </layer-list>
+        <shape android:shape="rectangle">
+            <corners android:radius="18dp" />
+            <gradient
+                android:angle="0"
+                android:startColor="#FF3B82F6"
+                android:endColor="#FF2E6FD8" />
+        </shape>
     </item>
 </selector>
