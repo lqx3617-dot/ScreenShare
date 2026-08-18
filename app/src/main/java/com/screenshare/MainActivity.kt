@@ -1701,7 +1701,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .trimEnd('/')
             .substringBeforeLast("/", BuildConfig.UPDATE_URL)
             .trimEnd('/')
-        return "【ScreenShare 屏幕共享】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
+        return "【共享屏界】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
     }
 
     /** 调起系统分享面板发送会议链接 */

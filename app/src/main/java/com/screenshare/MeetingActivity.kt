@@ -157,7 +157,7 @@ class MeetingActivity : AppCompatActivity() {
                 lp?.topMargin = status.top
                 binding.llBrand.layoutParams = lp
             }
-            val headerH = (58 * density).toInt()
+            val headerH = (64 * density).toInt()
             binding.svContent.setPadding(
                 binding.svContent.paddingLeft,
                 headerH + status.top,

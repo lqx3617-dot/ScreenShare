@@ -141,7 +141,7 @@
         </LinearLayout>
     </ScrollView>
 
-    <!-- 顶部头部条：左上角小 logo + ScreenShare，右上角检查更新（固定不随滚动） -->
+    <!-- 顶部头部条：左上角小 logo + 品牌名与介绍，右上角检查更新（固定不随滚动） -->
     <LinearLayout
         android:id="@+id/llBrand"
         android:layout_width="match_parent"
@@ -152,8 +152,8 @@
         android:background="@drawable/bg_brand_bar"
         android:paddingStart="20dp"
         android:paddingEnd="12dp"
-        android:paddingTop="14dp"
-        android:paddingBottom="14dp">
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
 
         <ImageView
             android:layout_width="30dp"
@@ -161,16 +161,30 @@
             android:src="@drawable/ic_brand_logo"
             android:contentDescription="@string/app_name" />
 
-        <TextView
+        <LinearLayout
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:layout_marginStart="10dp"
-            android:text="ScreenShare"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:letterSpacing="0.05" />
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/app_name"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:letterSpacing="0.05" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="随时随地，一键共享你的屏幕"
+                android:textSize="11sp"
+                android:textColor="@color/text_hint"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tvCheckUpdate"

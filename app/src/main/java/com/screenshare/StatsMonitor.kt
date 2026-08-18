@@ -87,7 +87,7 @@ object StatsMonitor {
         val mem = processMemoryMb(context)
         val loss = if (lossPct >= 0) "%.1f".format(lossPct) else "--"
         val delay = if (delayMs > 0) "$delayMs" else "--"
-        return "ScreenShare | FPS $fps | Bitrate ${if (bitrateMbps.isNotBlank()) "$bitrateMbps M" else "--"} | " +
+        return "共享屏界 | FPS $fps | Bitrate ${if (bitrateMbps.isNotBlank()) "$bitrateMbps M" else "--"} | " +
             "Delay $delay ms | Loss $loss% | CPU $cpu% | Memory ${mem}M"
     }
 }
