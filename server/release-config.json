@@ -1,4 +1,4 @@
 {
-  "changelog": "视频播放延迟再优化：观看端jitter帧大小百分位收紧至0.90，播放缓冲进一步降低",
+  "changelog": "UI 美化：工具条图标化、按钮涟漪反馈、品牌 Logo 与入场动画、卡片光晕、dimens 尺寸系统",
   "forced": false
 }

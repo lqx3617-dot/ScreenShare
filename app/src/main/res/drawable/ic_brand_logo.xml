@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 品牌 Logo：青色圆底 + 显示器 + 无线信号弧 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="56dp"
+    android:height="56dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- 圆底（半透明青） -->
+    <path
+        android:fillColor="#1A00E5FF"
+        android:pathData="M24,2a22,22 0 1,0 0,44a22,22 0 1,0 0,-44" />
+    <path
+        android:strokeColor="#FF00E5FF"
+        android:strokeWidth="1.6"
+        android:pathData="M24,2a22,22 0 1,0 0,44a22,22 0 1,0 0,-44" />
+    <!-- 显示器边框 -->
+    <path
+        android:strokeColor="#FF00E5FF"
+        android:strokeWidth="2"
+        android:strokeLineJoin="round"
+        android:pathData="M13,15 L35,15 A2,2 0 0 1 37,17 L37,29 A2,2 0 0 1 35,31 L13,31 A2,2 0 0 1 11,29 L11,17 A2,2 0 0 1 13,15 Z" />
+    <!-- 屏幕内容：青色渐变感的两条线 -->
+    <path
+        android:strokeColor="#807CF6FF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M15,21 L33,21" />
+    <path
+        android:strokeColor="#4D7C6BFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M15,26 L27,26" />
+    <!-- 底座 -->
+    <path
+        android:fillColor="#FF00E5FF"
+        android:pathData="M20,31 L28,31 L27,35 L21,35 Z" />
+    <!-- 无线信号弧 -->
+    <path
+        android:strokeColor="#FF7CF6FF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M15,10 A11,11 0 0 1 33,10" />
+</vector>

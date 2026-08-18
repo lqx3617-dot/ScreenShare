@@ -151,8 +151,11 @@
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="#FFFFFFFF"
+            android:drawableStart="@drawable/ic_mic"
+            android:drawablePadding="7dp"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingEnd="18dp"
+            android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_fullscreen_btn" />
 
         <TextView
@@ -165,8 +168,11 @@
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="#FFFFFFFF"
+            android:drawableStart="@drawable/ic_videocam"
+            android:drawablePadding="7dp"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingEnd="18dp"
+            android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_fullscreen_btn" />
 
         <TextView
@@ -175,12 +181,15 @@
             android:layout_height="52dp"
             android:layout_marginStart="10dp"
             android:gravity="center"
-            android:text="更多 ⋯"
+            android:text="更多"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="#FFFFFFFF"
+            android:drawableStart="@drawable/ic_more_horiz"
+            android:drawablePadding="7dp"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingEnd="18dp"
+            android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_fullscreen_btn" />
 
         <TextView
@@ -193,8 +202,11 @@
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="#FFFFE4E4"
+            android:drawableStart="@drawable/ic_call_end"
+            android:drawablePadding="7dp"
             android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:paddingEnd="18dp"
+            android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_btn_neon_red" />
     </LinearLayout>
 
@@ -227,6 +239,7 @@
                 android:text="远程控制"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
 
@@ -280,6 +293,7 @@
                 android:text="文本"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
 
@@ -291,6 +305,7 @@
                 android:text="相册"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
         </LinearLayout>
@@ -311,6 +326,7 @@
                 android:text="完整"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
 
@@ -323,6 +339,7 @@
                 android:text="⛶ 全屏"
                 android:textSize="12sp"
                 android:textColor="#FFFFFFFF"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
 
@@ -338,6 +355,7 @@
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
         </LinearLayout>
@@ -360,6 +378,7 @@
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
 
@@ -375,6 +394,7 @@
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn" />
 
             <TextView
@@ -389,6 +409,7 @@
                 android:textColor="#FFFFFFFF"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn" />
 
             <TextView
@@ -450,6 +471,7 @@
             android:text="退出全屏"
             android:textSize="14sp"
             android:textColor="#FFFFFFFF"
+            android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_fullscreen_btn" />
 
         <TextView

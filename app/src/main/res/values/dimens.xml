@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全局尺寸系统：间距 / 圆角 / 控件高度统一 -->
+<resources>
+    <!-- 间距 -->
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_sm">8dp</dimen>
+    <dimen name="space_md">12dp</dimen>
+    <dimen name="space_lg">16dp</dimen>
+    <dimen name="space_xl">24dp</dimen>
+
+    <!-- 圆角 -->
+    <dimen name="radius_sm">12dp</dimen>
+    <dimen name="radius_md">16dp</dimen>
+    <dimen name="radius_lg">22dp</dimen>
+    <dimen name="radius_xl">24dp</dimen>
+
+    <!-- 控件高度 -->
+    <dimen name="btn_height">52dp</dimen>
+    <dimen name="btn_height_sm">44dp</dimen>
+    <dimen name="input_height">60dp</dimen>
+
+    <!-- 图标 -->
+    <dimen name="icon_sm">20dp</dimen>
+    <dimen name="icon_md">24dp</dimen>
+</resources>

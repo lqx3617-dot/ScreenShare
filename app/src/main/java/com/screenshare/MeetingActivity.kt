@@ -129,6 +129,22 @@ class MeetingActivity : AppCompatActivity() {
         autoResumeMeeting()
         // 最近会议列表
         renderRecentMeetings()
+        // 入场动画：品牌区、操作卡片、最近会议 依次淡入上滑
+        val decel = android.view.animation.DecelerateInterpolator(1.6f)
+        binding.llBrand.apply {
+            alpha = 0f; translationY = 24f * resources.displayMetrics.density
+            animate().alpha(1f).translationY(0f).setDuration(360).setInterpolator(decel).start()
+        }
+        binding.llActions.apply {
+            alpha = 0f; translationY = 30f * resources.displayMetrics.density
+            animate().alpha(1f).translationY(0f).setDuration(400).setStartDelay(110)
+                .setInterpolator(decel).start()
+        }
+        binding.llRecent.apply {
+            alpha = 0f; translationY = 22f * resources.displayMetrics.density
+            animate().alpha(1f).translationY(0f).setDuration(400).setStartDelay(210)
+                .setInterpolator(decel).start()
+        }
     }
 
     override fun onResume() {
@@ -164,6 +180,10 @@ class MeetingActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 10.dp(), 0, 10.dp())
             setOnClickListener { enterMeeting(entry.action, entry.code) }
+            // 点击涟漪反馈（minSdk 24 支持 View.foreground）
+            val tv = android.util.TypedValue()
+            context.theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
+            foreground = context.getDrawable(tv.resourceId)
         }
         val tvCode = TextView(this).apply {
             text = entry.code
