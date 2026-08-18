@@ -44,6 +44,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.screenshare.databinding.ActivityMainBinding
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -263,6 +265,35 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         handleMeetingIntent(intent)
         // 画中画遥控动作（结束会议/开关视频）可能以 PendingIntent 方式唤起本 Activity
         handlePipIntent(intent)
+        // 底部控件避开系统导航栏：Android 10 及以下（API 29-）NoActionBar 主题下窗口内容
+        // 默认延伸到系统栏，硬编码 marginBottom 会被导航栏遮挡导致点不到；动态追加 nav inset
+        applySystemBarInsets()
+    }
+
+    /**
+     * 底部悬浮控件动态避开系统导航栏：在 XML 原始 marginBottom 基础上叠加 navigationBars 高度。
+     * API 30+ 窗口默认已消费系统栏 inset（此处拿到 0 不叠加，无副作用）；
+     * API 29 及以下内容延伸到系统栏，必须叠加避免按钮被导航栏遮住。
+     */
+    private fun applySystemBarInsets() {
+        val density = resources.displayMetrics.density
+        val bottomViews = listOf(
+            binding.llToolbar to 28,
+            binding.llMorePanel to 104,
+            binding.llCtrlStatus to 112,
+            binding.tvScanResult to 172
+        )
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            if (nav.bottom > 0) {
+                for ((view, dp) in bottomViews) {
+                    val lp = view.layoutParams as? FrameLayout.LayoutParams ?: continue
+                    lp.bottomMargin = (dp * density).toInt() + nav.bottom
+                    view.layoutParams = lp
+                }
+            }
+            insets
+        }
     }
 
     // ======================== 画中画（小窗，微信式可拖动） ========================

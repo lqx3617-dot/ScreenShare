@@ -13,6 +13,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.screenshare.databinding.ActivityMeetingBinding
 import org.json.JSONArray
 import org.json.JSONObject
@@ -144,6 +146,17 @@ class MeetingActivity : AppCompatActivity() {
             alpha = 0f; translationY = 22f * resources.displayMetrics.density
             animate().alpha(1f).translationY(0f).setDuration(400).setStartDelay(210)
                 .setInterpolator(decel).start()
+        }
+        // 底部「检查更新」避开系统导航栏（Android 10 及以下内容延伸到系统栏会被遮挡点不到）
+        val density = resources.displayMetrics.density
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            if (nav.bottom > 0) {
+                val lp = binding.tvCheckUpdate.layoutParams as? LinearLayout.LayoutParams
+                lp?.bottomMargin = (28 * density).toInt() + nav.bottom
+                binding.tvCheckUpdate.layoutParams = lp
+            }
+            insets
         }
     }
 
