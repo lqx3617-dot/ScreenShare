@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 主背景色（深色极简商务：深灰蓝底，去霓虹） -->
-    <color name="bg_dark">#FF0B0F17</color>
-    <color name="bg_card">#FF141B26</color>
-    <color name="bg_input">#FF1A2230</color>
+    <!-- 主背景色（深蓝科技：提亮的深蓝底，带层次） -->
+    <color name="bg_dark">#FF101A2E</color>
+    <color name="bg_card">#FF182238</color>
+    <color name="bg_input">#FF1E2A44</color>
 
     <!-- 主色（单色商务蓝强调，去荧光青/紫） -->
     <color name="neon_cyan">#FF3B82F6</color>
