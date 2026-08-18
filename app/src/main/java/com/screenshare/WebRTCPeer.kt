@@ -74,7 +74,13 @@ class WebRTCPeer(
                         // nack_limit 默认 3、nack_count_timeout 默认 60s：短时间内重传 3 帧就
                         // 在 jitter 上加 RTT 惩罚放大缓冲。提高阈值（15/5s）让轻微丢包不放大缓冲，
                         // 严重丢包仍触发惩罚降速保流畅
-                        "WebRTC-JitterEstimatorConfig/nack_limit:15,nack_count_timeout:5s/" +
+                        "WebRTC-JitterEstimatorConfig/nack_limit:15,nack_count_timeout:5s," +
+                            // max_frame_size_percentile: 视频播放（高动态）时 I 帧可达数百 KB，
+                            // 非线性 max（kPsi=0.9999 几乎不衰减）会永久记住超大 I 帧，
+                            // worst_case=max-avg 持续偏大 → jitter 估计长期偏高 → 播放缓冲 200-400ms。
+                            // 显式启用 95 百分位 max（窗口 300 帧），排除极端 I 帧，jitter 估计大幅回落。
+                            // 需显式声明才生效（默认 nullopt 走非线性 max），0.95 即 SDK 默认百分位值
+                            "max_frame_size_percentile:0.95/" +
                             // 零播放延迟渲染：到达即渲染，配合低延迟渲染路径进一步压播放缓冲。
                             // min_pacing 为解码最小帧间隔，默认 8ms 足够，显式声明避免默认值漂移
                             "WebRTC-ZeroPlayoutDelay/min_pacing:8ms/"
