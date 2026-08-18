@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 品牌头部条：半透明白毛玻璃 + 底部浅灰分隔 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#F0FBFFFF" />
+        </shape>
+    </item>
+    <item
+        android:gravity="bottom">
+        <shape android:shape="rectangle">
+            <size android:height="1dp" />
+            <solid android:color="#1F64748B" />
+        </shape>
+    </item>
+</layer-list>
