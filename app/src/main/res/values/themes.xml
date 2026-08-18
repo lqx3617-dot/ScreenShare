@@ -34,4 +34,21 @@
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
     </style>
+
+    <!-- 自定义玻璃卡片 Dialog：透明背景，居中，缩放淡入 -->
+    <style name="Theme.ScreenShare.Dialog.Overlay" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowCloseOnTouchOutside">true</item>
+        <item name="android:windowAnimationStyle">@style/DialogScaleFade</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- 弹窗入场动画：缩放 + 淡入 -->
+    <style name="DialogScaleFade">
+        <item name="android:windowEnterAnimation">@anim/dialog_scale_fade_in</item>
+        <item name="android:windowExitAnimation">@anim/dialog_scale_fade_out</item>
+    </style>
 </resources>

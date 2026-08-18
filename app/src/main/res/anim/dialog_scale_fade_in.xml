@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 弹窗入场：缩小到正常大小 + 淡入 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:duration="220">
+    <alpha
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0" />
+    <scale
+        android:fromXScale="0.9"
+        android:toXScale="1.0"
+        android:fromYScale="0.9"
+        android:toYScale="1.0"
+        android:pivotX="50%"
+        android:pivotY="50%" />
+</set>

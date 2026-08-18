@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.Manifest
 import android.app.Activity
+import android.app.Dialog
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -25,6 +26,7 @@ import android.util.Rational
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -39,7 +41,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
@@ -47,6 +48,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.screenshare.databinding.ActivityMainBinding
+import com.screenshare.databinding.DialogCreateMeetingBinding
+import com.screenshare.databinding.DialogEndMeetingBinding
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.webrtc.*
@@ -162,7 +165,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var layoutListenerAdded = false
 
     // 会议号弹窗（连接建立后自动关闭，避免遮挡后续界面）
-    private var meetingCodeDialog: AlertDialog? = null
+    private var meetingCodeDialog: Dialog? = null
 
     // 观看方帧率切换（60/30 帧）
     private var currentFps = 60
@@ -1661,38 +1664,32 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 弹窗展示生成的会议号，支持一键复制到剪贴板 */
     private fun showMeetingCodeDialog(code: String) {
         val clipboard = getSystemService(ClipboardManager::class.java)
-        val tv = TextView(this).apply {
-            text = code
-            textSize = 56f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#00E5FF"))
+        val bindingDialog = DialogCreateMeetingBinding.inflate(LayoutInflater.from(this))
+        bindingDialog.tvCreateDialogCode.text = code
+        bindingDialog.tvCreateDialogCode.setOnClickListener {
+            clipboard.setPrimaryClip(ClipData.newPlainText("会议号", code))
+            Toast.makeText(this, "会议号已复制：$code", Toast.LENGTH_LONG).show()
         }
-        val tvHint = TextView(this).apply {
-            text = "发给对方，对方输入会议号即可观看"
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, 8, 0, 0)
+        bindingDialog.btnCreateDialogCopy.setOnClickListener {
+            clipboard.setPrimaryClip(ClipData.newPlainText("会议号", code))
+            Toast.makeText(this, "会议号已复制：$code", Toast.LENGTH_LONG).show()
         }
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(tv)
-            addView(tvHint)
+        bindingDialog.btnCreateDialogShare.setOnClickListener {
+            shareMeetingLink(code)
         }
-        val dialog = AlertDialog.Builder(this, R.style.Theme_ScreenShare_Dialog)
-            .setTitle("快速会议已创建")
-            .setView(layout)
-            .setPositiveButton("复制会议号", { _, _ ->
-                clipboard.setPrimaryClip(ClipData.newPlainText("会议号", code))
-                Toast.makeText(this, "会议号已复制：$code", Toast.LENGTH_LONG).show()
-            })
-            .setNeutralButton("分享链接", { _, _ ->
-                shareMeetingLink(code)
-            })
-            .setNegativeButton("知道了", null)
-            .setCancelable(true)
-            .create()
+        bindingDialog.btnCreateDialogOk.setOnClickListener {
+            meetingCodeDialog?.dismiss()
+            meetingCodeDialog = null
+        }
+        bindingDialog.ivCreateDialogClose.setOnClickListener {
+            meetingCodeDialog?.dismiss()
+            meetingCodeDialog = null
+        }
+        val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog_Overlay)
+        dialog.setContentView(bindingDialog.root)
+        dialog.setCancelable(true)
+        dialog.setOnCancelListener { meetingCodeDialog = null }
+        dialog.setOnDismissListener { meetingCodeDialog = null }
         meetingCodeDialog = dialog
         dialog.show()
     }
@@ -2968,12 +2965,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // ======================== 结束会议 ========================
     private fun onStopClicked() {
-        AlertDialog.Builder(this, R.style.Theme_ScreenShare_Dialog)
-            .setTitle("结束会议")
-            .setMessage("确定要结束当前会议吗？")
-            .setPositiveButton("结束", { _, _ -> leaveMeeting("已结束会议") })
-            .setNegativeButton("取消", null)
-            .show()
+        val bindingDialog = DialogEndMeetingBinding.inflate(LayoutInflater.from(this))
+        val dialogEnd = Dialog(this, R.style.Theme_ScreenShare_Dialog_Overlay)
+        bindingDialog.btnEndDialogConfirm.setOnClickListener { dialogEnd.dismiss(); leaveMeeting("已结束会议") }
+        bindingDialog.btnEndDialogCancel.setOnClickListener { dialogEnd.dismiss() }
+        dialogEnd.setContentView(bindingDialog.root)
+        dialogEnd.setCancelable(true)
+        dialogEnd.show()
     }
 
     /** 结束会议：清理会话并返回会议连接页 */
