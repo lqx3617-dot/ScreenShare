@@ -78,9 +78,10 @@ class WebRTCPeer(
                             // max_frame_size_percentile: 视频播放（高动态）时 I 帧可达数百 KB，
                             // 非线性 max（kPsi=0.9999 几乎不衰减）会永久记住超大 I 帧，
                             // worst_case=max-avg 持续偏大 → jitter 估计长期偏高 → 播放缓冲 200-400ms。
-                            // 显式启用 95 百分位 max（窗口 300 帧），排除极端 I 帧，jitter 估计大幅回落。
-                            // 需显式声明才生效（默认 nullopt 走非线性 max），0.95 即 SDK 默认百分位值
-                            "max_frame_size_percentile:0.95/" +
+                            // 0.90 百分位 max（窗口 300 帧）排除极端 I 帧与超大 P 帧（top 10%），
+                            // 让 size-based jitter 项贴近真实到达抖动；弱网丢包由 nack_limit+RTT 加成兜底。
+                            // 需显式声明才生效（默认 nullopt 走非线性 max）
+                            "max_frame_size_percentile:0.90/" +
                             // 零播放延迟渲染：到达即渲染，配合低延迟渲染路径进一步压播放缓冲。
                             // min_pacing 为解码最小帧间隔，默认 8ms 足够，显式声明避免默认值漂移
                             "WebRTC-ZeroPlayoutDelay/min_pacing:8ms/"
