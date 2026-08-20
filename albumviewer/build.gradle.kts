@@ -45,7 +45,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 混淆（密钥等静态字符串不再明文可反编译直读）
+            isMinifyEnabled = true
+            isShrinkResources = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
