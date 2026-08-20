@@ -1142,7 +1142,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 (android.media.ToneGenerator.MAX_VOLUME * 0.5).toInt()
             )
             tg.startTone(toneType, durationMs)
-            binding.root.postDelayed({ try { tg.release() } catch (_: Throwable) {} }, durationMs + 200)
+            binding.root.postDelayed({ try { tg.release() } catch (_: Throwable) {} }, (durationMs + 200).toLong())
         } catch (t: Throwable) {
             Log.w(TAG, "提示音播放失败: ${t.message}")
         }
