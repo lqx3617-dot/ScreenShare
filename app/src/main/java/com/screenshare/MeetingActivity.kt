@@ -43,6 +43,35 @@ class MeetingActivity : AppCompatActivity() {
         private const val KEY_LIST = "list"
         private const val MAX_HISTORY = 8
 
+        // ==================== 专属房间（情侣快捷入口） ====================
+        private const val PREFS_FAVORITE = "favorite_room"
+        private const val KEY_FAV_CODE = "code"
+        private const val KEY_FAV_ROLE = "role"
+
+        /** 读取专属房间设置：Pair(房间号, 角色 action) 或 null（未设置） */
+        fun getFavoriteRoom(context: Context): Pair<String, String>? {
+            return try {
+                val p = context.getSharedPreferences(PREFS_FAVORITE, Context.MODE_PRIVATE)
+                val code = p.getString(KEY_FAV_CODE, null) ?: return null
+                val role = p.getString(KEY_FAV_ROLE, null) ?: ACTION_CREATE
+                if (!Regex("^[0-9]{4}$").matches(code)) null else code to role
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+        /** 保存专属房间设置 */
+        fun setFavoriteRoom(context: Context, action: String, code: String) {
+            context.getSharedPreferences(PREFS_FAVORITE, Context.MODE_PRIVATE)
+                .edit().putString(KEY_FAV_CODE, code).putString(KEY_FAV_ROLE, action).apply()
+        }
+
+        /** 清除专属房间设置 */
+        fun clearFavoriteRoom(context: Context) {
+            context.getSharedPreferences(PREFS_FAVORITE, Context.MODE_PRIVATE)
+                .edit().remove(KEY_FAV_CODE).remove(KEY_FAV_ROLE).apply()
+        }
+
         /** 会议历史条目 */
         data class MeetingEntry(val code: String, val action: String, val ts: Long)
 
@@ -125,11 +154,20 @@ class MeetingActivity : AppCompatActivity() {
             clearMeetingHistory(this)
             renderRecentMeetings()
         }
+        // 专属房间：点击进入/设置，右上角"换一个"重新设置
+        binding.llFavBody.setOnClickListener { onFavoriteClicked() }
+        binding.btnFavReset.setOnClickListener {
+            clearFavoriteRoom(this)
+            renderFavoriteCard()
+            onFavoriteClicked()
+        }
 
         // 分享链接唤起：冷启动解析 screenshare://join?code=XXXX
         handleShareLink(intent)
         // 会议未结束：上次会话未主动结束/未失败退出，点开 App 自动重连
         autoResumeMeeting()
+        // 专属房间卡片
+        renderFavoriteCard()
         // 最近会议列表
         renderRecentMeetings()
         // 入场动画：品牌区、操作卡片、最近会议 依次淡入上滑
@@ -172,6 +210,57 @@ class MeetingActivity : AppCompatActivity() {
         super.onResume()
         // 从会议室返回连接页时刷新（历史可能已变化）
         renderRecentMeetings()
+        renderFavoriteCard()
+    }
+
+    // ==================== 专属房间 ====================
+
+    /** 渲染专属房间卡片：已设置显示房间号+角色，未设置显示提示 */
+    private fun renderFavoriteCard() {
+        val fav = getFavoriteRoom(this)
+        if (fav == null) {
+            binding.tvFavCode.text = "未设置"
+            binding.tvFavHint.text = "点击设置我们的专属房间号"
+        } else {
+            binding.tvFavCode.text = fav.first
+            binding.tvFavHint.text = if (fav.second == ACTION_CREATE)
+                "你是共享方 · 点击进入"
+            else
+                "你是观看方 · 点击进入"
+        }
+    }
+
+    /** 专属房间点击：已设置直接进入；未设置弹窗输入房间号+选择角色 */
+    private fun onFavoriteClicked() {
+        val fav = getFavoriteRoom(this)
+        if (fav != null) {
+            enterMeeting(fav.second, fav.first)
+            return
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = "输入 4 位数字房间号（如 1314）"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            maxLines = 1
+        }
+        val roles = arrayOf("我是共享方（TA 看我的屏幕）", "我是观看方（我看 TA 的屏幕）")
+        var chosenRole = ACTION_CREATE
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("❤️ 设置专属房间")
+            .setMessage("双方约定同一个房间号，各自选好角色，之后一键进入")
+            .setView(input)
+            .setSingleChoiceItems(roles, 0) { _, which -> chosenRole = if (which == 0) ACTION_CREATE else ACTION_JOIN }
+            .setPositiveButton("进入") { _, _ ->
+                val code = input.text.toString().trim()
+                if (!Regex("^[0-9]{4}$").matches(code)) {
+                    Toast.makeText(this, "房间号需为 4 位数字", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                setFavoriteRoom(this, chosenRole, code)
+                renderFavoriteCard()
+                enterMeeting(chosenRole, code)
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 渲染最近会议区块：无历史时隐藏整块 */
