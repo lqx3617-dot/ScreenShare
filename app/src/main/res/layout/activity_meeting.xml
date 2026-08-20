@@ -90,6 +90,74 @@
                 android:textColor="#FFFFFFFF" />
             </LinearLayout>
 
+            <!-- 专属房间（情侣快捷入口：固定房间号，一键进入） -->
+            <LinearLayout
+                android:id="@+id/llFavorite"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:elevation="4dp"
+                android:background="@drawable/bg_glass">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="❤️ 我们的专属房间"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/neon_blue" />
+
+                    <TextView
+                        android:id="@+id/btnFavReset"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="换一个"
+                        android:textSize="12sp"
+                        android:textColor="#64748B"
+                        android:padding="6dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llFavBody"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="?attr/selectableItemBackground"
+                    android:padding="4dp">
+
+                    <TextView
+                        android:id="@+id/tvFavCode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="未设置"
+                        android:textSize="26sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/neon_cyan"
+                        android:letterSpacing="0.2" />
+
+                    <TextView
+                        android:id="@+id/tvFavHint"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="12dp"
+                        android:text="点击设置"
+                        android:textSize="12sp"
+                        android:textColor="#64748B" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- 最近会议（有历史记录时显示，点击快速加入/创建） -->
             <LinearLayout
                 android:id="@+id/llRecent"
