@@ -24,11 +24,11 @@ function isValidCode(code) {
   return /^[0-9A-Z]{8}$/.test(code);
 }
 
-/** 生成随机 8 位设备码（避免与冲突） */
+/** 生成随机 8 位设备码（避免与冲突）；密码学安全随机 */
 function genCode() {
   const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   let s = "";
-  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 8; i++) s += chars[crypto.randomInt(0, chars.length)];
   return s;
 }
 
@@ -41,6 +41,16 @@ function sendJson(ws, obj) {
 // ==================== 精简 WebSocket 服务器 ====================
 // 使用 node 原生 http upgrade + 手写 ws 帧（服务端对客户端发送掩码帧进行解包）
 const crypto = require("crypto");
+
+// 安全上限：单帧 64KB、分片累计 64KB、每 IP 10 连接、全局 2000 连接（防内存耗尽 DoS）
+const MAX_FRAME = 64 * 1024;
+const MAX_FRAGMENTED = 64 * 1024;
+const MAX_CONN_PER_IP = 10;
+const MAX_TOTAL_CONN = 2000;
+// 心跳超时：超过 45s 无任何消息视为掉线，强制断开（触发 close → 清理 registry）
+const HEARTBEAT_TIMEOUT = 45 * 1000;
+let totalConnections = 0;
+const ipConnections = new Map(); // ip -> count
 
 function acceptWs(req, socket) {
   const key = req.headers["sec-websocket-key"];
@@ -79,6 +89,8 @@ function createWsParser(onText, onClose) {
           len = Number(buf.readBigUInt64BE(2));
           offset = 10;
         }
+        // 单帧超限：直接断开（防内存耗尽 DoS）
+        if (len > MAX_FRAME) { onClose(); return; }
         const masked = (buf[1] & 0x80) !== 0;
         const maskLen = masked ? 4 : 0;
         if (buf.length < offset + maskLen + len) return;
@@ -93,6 +105,8 @@ function createWsParser(onText, onClose) {
         if (opcode === 0x9) { return; } // ping 忽略
         if (opcode === 0x2) { /* binary 忽略 */ continue; }
         fragmentedText += payload.toString("utf8");
+        // 分片累计超限：断开（防无限分片拼接 OOM）
+        if (fragmentedText.length > MAX_FRAGMENTED) { onClose(); return; }
         if (fin) {
           onText(fragmentedText);
           fragmentedText = "";
@@ -109,16 +123,25 @@ const server = http.createServer((req, res) => {
 
 server.on("upgrade", (req, socket) => {
   if ((req.headers.upgrade || "").toLowerCase() !== "websocket") { socket.destroy(); return; }
+  // 连接数限制：全局 + 每 IP
+  const ip = (req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  if (totalConnections >= MAX_TOTAL_CONN) { socket.destroy(); return; }
+  const ipCount = ipConnections.get(ip) || 0;
+  if (ipCount >= MAX_CONN_PER_IP) { socket.destroy(); return; }
+  ipConnections.set(ip, ipCount + 1);
+  totalConnections++;
   acceptWs(req, socket);
+  socket.lastSeen = Date.now();
 
   let deviceCode = null;
   let role = null; // "host" | "viewer"
-  let ip = "";
+  let ipAddr = "";
 
   const send = (obj) => sendJson({ readyState: 1, send: (s) => socket.write(encodeWsText(s)) }, obj);
 
   const parser = createWsParser(
     (text) => {
+      socket.lastSeen = Date.now();
       let msg;
       try { msg = JSON.parse(text); } catch (e) { return; }
       handleMessage(msg, send);
@@ -133,11 +156,18 @@ server.on("upgrade", (req, socket) => {
         role = "host";
         const want = normalizeCode(msg.deviceCode);
         const code = want && isValidCode(want) ? want : genCode();
+        // 防设备码劫持：已有在线连接占用该码时拒绝覆盖（重连场景旧连接断开后 registry 已清理）
+        const existing = registry.get(code);
+        if (existing && existing.ws !== socket && !existing.ws.destroyed) {
+          console.log(`[relay] register rejected: code ${code} already in use`);
+          send({ type: "relay-registered", deviceCode: formatCode(code), error: "设备码已被占用" });
+          return;
+        }
         deviceCode = code;
-        ip = String(msg.ip || "");
-        registry.set(code, { ws: socket, deviceName: String(msg.deviceName || "").slice(0, 40), ip, registeredAt: Date.now() });
-        console.log(`[relay] host registered ${code} ip=${ip} name=${msg.deviceName || ""} online=${registry.size}`);
-        send({ type: "relay-registered", deviceCode: formatCode(code), ip });
+        ipAddr = String(msg.ip || "");
+        registry.set(code, { ws: socket, deviceName: String(msg.deviceName || "").slice(0, 40), ip: ipAddr, registeredAt: Date.now() });
+        console.log(`[relay] host registered ${code} ip=${ipAddr} name=${msg.deviceName || ""} online=${registry.size}`);
+        send({ type: "relay-registered", deviceCode: formatCode(code), ip: ipAddr });
         break;
       }
       case "relay-sync": {
@@ -172,6 +202,9 @@ server.on("upgrade", (req, socket) => {
 
   socket.on("data", (chunk) => parser.push(chunk));
   socket.on("close", () => {
+    totalConnections--;
+    const n = (ipConnections.get(ip) || 1) - 1;
+    if (n <= 0) ipConnections.delete(ip); else ipConnections.set(ip, n);
     if (deviceCode && registry.get(deviceCode)?.ws === socket) {
       registry.delete(deviceCode);
       console.log(`[relay] host offline ${deviceCode} online=${registry.size}`);
@@ -179,6 +212,17 @@ server.on("upgrade", (req, socket) => {
   });
   socket.on("error", () => { try { socket.destroy(); } catch (e) {} });
 });
+
+// 心跳扫描：30s 周期，超过 45s 无消息的连接强制断开（触发 close → 清理 registry）
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, info] of registry) {
+    if (now - (info.ws.lastSeen || now) > HEARTBEAT_TIMEOUT) {
+      console.log(`[relay] ${code} idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
+      try { info.ws.destroy(); } catch (e) {}
+    }
+  }
+}, 30 * 1000).unref();
 
 /** 将 8 位码格式化为 XXXX XXXX */
 function formatCode(code) {
