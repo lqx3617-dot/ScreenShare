@@ -4,15 +4,21 @@
  * 协议（JSON over WebSocket）：
  *   client -> server:
  *     { "type": "create", "code": "1234" }                       // 共享方创建会议
- *     { "type": "join",   "code": "1234" }                       // 观看方加入
+ *     { "type": "join",   "code": "1234" }                       // 观看方请求加入（进入待确认）
+ *     { "type": "accept", "viewerId": n }                        // host 同意加入请求
+ *     { "type": "reject", "viewerId": n }                        // host 拒绝加入请求
  *     { "type": "relay",  "data": "<payload>", "viewerId": n }   // 中转信令（viewerId: host发往指定viewer）
  *     { "type": "ping" }
  *
  *   server -> client:
  *     { "type": "created", "code": "1234" }                      // 创建成功
- *     { "type": "joined",  "code": "1234", "viewerId": n }       // 加入成功
+ *     { "type": "join-pending" }                                 // 加入请求已提交，等待 host 确认
+ *     { "type": "join-request", "viewerId": n }                  // 有人请求加入（仅 host 收到，需确认）
+ *     { "type": "joined",  "code": "1234", "viewerId": n }       // host 同意，加入成功
+ *     { "type": "join-rejected" }                                // host 拒绝加入
+ *     { "type": "join-cancelled", "viewerId": n }                // 请求者超时/断开（仅 host 收到）
  *     { "type": "peer-ready" }                                   // 对端已加入（host 视角）
- *     { "type": "viewer-joined", "viewerId": n }                 // 新 viewer 加入（仅 host 收到）
+ *     { "type": "viewer-joined", "viewerId": n }                 // viewer 正式加入（仅 host 收到）
  *     { "type": "relay",     "data": "<payload>", "viewerId": n }
  *     { "type": "viewer-left", "viewerId": n }                   // 某 viewer 离开（仅 host 收到）
  *     { "type": "host-left" }                                    // host 离开（所有 viewer 收到）
@@ -20,6 +26,8 @@
  *
  * 行为：
  * - 会议 1 host + 多 viewer（从 1对1 升级为 1对多）
+ * - viewer 加入需 host 确认（防撞房）：join 只进入待确认队列，host accept 后才正式加入
+ * - 连接级状态互斥：同一连接已有角色时拒绝二次 create/join（防僵尸房间）
  * - host 离开：整房销毁，通知所有 viewer
  * - viewer 离开：仅移除该 viewer，通知 host
  */
@@ -109,6 +117,13 @@ setInterval(() => {
       try { ws.terminate(); } catch (e) {}
     }
   });
+  // pending 加入请求超时（30s 未确认）自动取消，通知 host
+  rooms.expirePendingAll().forEach(({ roomCode, viewerId, ws }) => {
+    try { ws.send(JSON.stringify({ type: "error", message: "加入请求已超时，请重试" })); } catch (e) {}
+    const host = rooms.getHost(roomCode);
+    send(host, { type: "join-cancelled", viewerId });
+    console.log(`[room ${roomCode}] pending join #${viewerId} expired`);
+  });
 }, 30 * 1000).unref();
 
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 512 * 1024 });
@@ -145,6 +160,11 @@ wss.on("connection", (ws) => {
 
     switch (msg.type) {
       case "create": {
+        // 状态机互斥：已有角色的连接不允许再 create（防同一连接制造僵尸房间）
+        if (role) {
+          send(ws, { type: "error", message: "已在房间中，请先离开当前会议" });
+          return;
+        }
         const code = normalizeCode(msg.code);
         if (!rooms.isValidCode(code)) {
           send(ws, { type: "error", message: "会议号需为 4 位数字" });
@@ -163,8 +183,13 @@ wss.on("connection", (ws) => {
       }
 
       case "join": {
+        // 状态机互斥
+        if (role) {
+          send(ws, { type: "error", message: "已在房间中，请先离开当前会议" });
+          return;
+        }
         const code = normalizeCode(msg.code);
-        const res = rooms.join(code, ws);
+        const res = rooms.requestJoin(code, ws);
         if (!res.ok) {
           send(ws, { type: "error", message: res.error });
           return;
@@ -172,11 +197,45 @@ wss.on("connection", (ws) => {
         roomCode = code;
         role = "viewer";
         viewerId = res.viewerId;
-        send(ws, { type: "joined", code, viewerId });
-        // 通知 host：新 viewer 加入（携带 viewerId 供 host 建立指定连接）
+        // 通知 viewer：等待 host 确认
+        send(ws, { type: "join-pending" });
+        // 通知 host：有人请求加入（等待确认）
         const host = rooms.getHost(code);
-        send(host, { type: "viewer-joined", viewerId });
-        console.log(`[room ${code}] viewer#${viewerId} joined`);
+        send(host, { type: "join-request", viewerId });
+        console.log(`[room ${code}] viewer#${viewerId} requested join (awaiting host)`);
+        break;
+      }
+
+      case "accept": {
+        if (role !== "host") {
+          send(ws, { type: "error", message: "仅会议创建者可同意加入" });
+          return;
+        }
+        const vid = parseInt(msg.viewerId, 10);
+        const viewerWs = rooms.acceptJoin(roomCode, vid);
+        if (!viewerWs) {
+          send(ws, { type: "error", message: "加入请求不存在或已过期" });
+          return;
+        }
+        send(viewerWs, { type: "joined", code: roomCode, viewerId: vid });
+        send(ws, { type: "viewer-joined", viewerId: vid });
+        console.log(`[room ${roomCode}] host accepted viewer#${vid}`);
+        break;
+      }
+
+      case "reject": {
+        if (role !== "host") {
+          send(ws, { type: "error", message: "仅会议创建者可拒绝加入" });
+          return;
+        }
+        const vid = parseInt(msg.viewerId, 10);
+        const viewerWs = rooms.rejectJoin(roomCode, vid);
+        if (!viewerWs) {
+          send(ws, { type: "error", message: "加入请求不存在或已过期" });
+          return;
+        }
+        send(viewerWs, { type: "join-rejected" });
+        console.log(`[room ${roomCode}] host rejected viewer#${vid}`);
         break;
       }
 
@@ -240,6 +299,10 @@ wss.on("connection", (ws) => {
       // host 离开：通知所有 viewer
       r.remainingViewers.forEach((v) => send(v, { type: "host-left" }));
       console.log(`[room ${roomCode}] closed (host left, ${r.remainingViewers.length} viewer(s) disconnected)`);
+    } else if (r.pendingRemoved != null) {
+      // pending 请求者断开：通知 host 取消
+      send(r.peerLeftWs, { type: "join-cancelled", viewerId: r.pendingRemoved });
+      console.log(`[room ${roomCode}] viewer#${viewerId} cancelled join request`);
     } else {
       // viewer 离开：通知 host
       if (r.peerLeftWs) send(r.peerLeftWs, { type: "viewer-left", viewerId });
