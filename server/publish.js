@@ -7,12 +7,16 @@ const fs = require("fs");
 const path = require("path");
 const { execFile } = require("child_process");
 
-const ANDROID_HOME = "/opt/android-sdk";
+const ANDROID_HOME = process.env.ANDROID_HOME || "/opt/android-sdk";
 const GRADLE = "/workspace/gradlew";
 const PROJECT_DIR = "/workspace";
-const KEYSTORE = "/workspace/signing/release.keystore";
-const KEYSTORE_PASS = "screenshare123";
-const KEYSTORE_ALIAS = "screenshare";
+const KEYSTORE = process.env.KEYSTORE_PATH || "/workspace/signing/release.keystore";
+// 签名密钥口令：优先从环境变量注入，不写死源码（安全加固）；未设置时回退旧值并告警
+const KEYSTORE_PASS = process.env.KEYSTORE_PASS || (() => {
+  console.warn("[publish] ⚠️ 未设置 KEYSTORE_PASS 环境变量，使用默认口令（建议尽快改为环境变量注入）");
+  return "screenshare123";
+})();
+const KEYSTORE_ALIAS = process.env.KEYSTORE_ALIAS || "screenshare";
 const BUILD_TOOLS = path.join(ANDROID_HOME, "build-tools", "34.0.0");
 const ZIPALIGN = path.join(BUILD_TOOLS, "zipalign");
 const APKSIGNER = path.join(BUILD_TOOLS, "apksigner");
