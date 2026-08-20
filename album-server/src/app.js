@@ -23,11 +23,28 @@ const ALBUM_ROOT = process.env.ALBUM_ROOT || "/workspace/albums";
 // 相册访问密钥：客户端（主 App 上传端 / 相册查看 App）请求须携带 x-album-key header 或 ?key= query。
 // 未配置密钥时保持开放（本地开发），生产必须设置。
 const ALBUM_KEY = process.env.ALBUM_KEY || "";
+if (!ALBUM_KEY) {
+  console.warn("[album] ⚠️ 未配置 ALBUM_KEY 环境变量！当前为全开放模式（任何人可上传/查看/删除相册），生产环境必须设置。");
+}
 const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
 const app = express();
 app.use(express.json({ limit: BODY_LIMIT }));
+// 统一安全响应头：防 MIME 嗅探执行（存储型 XSS 缓解）
+app.use((req, res, next) => {
+  res.set("X-Content-Type-Options", "nosniff");
+  res.set("X-Frame-Options", "SAMEORIGIN");
+  next();
+});
+
+// index 范围校验：照片 1..9999（与缩略图路由 [0-9]{4} 对齐），视频 1000000+（App 端 VIDEO_INDEX_BASE）
+function validPhotoIndex(index) {
+  return Number.isInteger(index) && index >= 1 && index <= 9999;
+}
+function validVideoIndex(index) {
+  return Number.isInteger(index) && index >= 1000000 && index <= 1999999;
+}
 
 // ==================== 访问鉴权中间件 ====================
 // 保护全部 /api/* 与 /all、/<token>/、/<token>/<pad>.jpg（缩略图）路由。
@@ -112,7 +129,7 @@ app.post("/api/upload", (req, res) => {
   if (action === "upload") {
     const index = parseInt(body.index, 10);
     const data = String(body.data || "");
-    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    if (!validPhotoIndex(index)) return json(res, 400, { error: "bad index" });
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
@@ -132,7 +149,7 @@ app.post("/api/upload", (req, res) => {
     // 视频缩略图：网格展示用，与照片共用 pad.jpg 通道；received 标记由后续 video-finish 完成
     const index = parseInt(body.index, 10);
     const data = String(body.data || "");
-    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    if (!validVideoIndex(index)) return json(res, 400, { error: "bad index" });
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
@@ -148,7 +165,7 @@ app.post("/api/upload", (req, res) => {
   if (action === "video-finish") {
     // 视频全部字节上传完成：received + videos 标记（缩略图已存），total 取最大 index
     const index = parseInt(body.index, 10);
-    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    if (!validVideoIndex(index)) return json(res, 400, { error: "bad index" });
     session.received.add(index);
     session.videos.add(index);
     session.total = Math.max(session.total, index);
@@ -160,7 +177,7 @@ app.post("/api/upload", (req, res) => {
   if (action === "original") {
     const index = parseInt(body.index, 10);
     const data = String(body.data || "");
-    if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+    if (!validPhotoIndex(index)) return json(res, 400, { error: "bad index" });
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
@@ -200,7 +217,7 @@ app.post("/api/video/upload", (req, res) => {
   const index = parseInt(body.index, 10);
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
-  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  if (!validVideoIndex(index)) return json(res, 400, { error: "bad index" });
 
   if (body.action === "reset") {
     // 断点续传失败重新开始时清空已写文件
@@ -241,7 +258,7 @@ app.get("/api/video", (req, res) => {
   const index = parseInt(req.query.index, 10);
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
-  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  if (!validVideoIndex(index)) return json(res, 400, { error: "bad index" });
   const file = path.join(sessionDir(token), "video", `${pad(index)}.mp4`);
   if (!fileExists(file)) return json(res, 404, { error: "video not ready" });
   const stat = fs.statSync(file);
@@ -253,18 +270,21 @@ app.get("/api/video", (req, res) => {
     if (m && (m[1] || m[2])) {
       start = m[1] ? parseInt(m[1], 10) : 0;
       end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
-      if (start > end || start >= stat.size) {
-        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
-        return res.end();
+      // 钳制非法/越界 Range（parseInt 可能 NaN，需显式校验），防流错误与负 Content-Length
+      if (!Number.isFinite(start) || !Number.isFinite(end)) start = 0, end = stat.size - 1;
+      start = Math.max(0, Math.min(start, stat.size - 1));
+      end = Math.max(start, Math.min(end, stat.size - 1));
+      if (start > 0 || end < stat.size - 1) {
+        code = 206;
+        headers["Content-Length"] = end - start + 1;
+        headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
       }
-      end = Math.min(end, stat.size - 1);
-      code = 206;
-      headers["Content-Length"] = end - start + 1;
-      headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
     }
   }
   res.writeHead(code, headers);
-  fs.createReadStream(file, { start, end }).pipe(res);
+  const stream = fs.createReadStream(file, { start, end });
+  stream.on("error", (e) => { try { res.destroy(); } catch (_) {} });
+  stream.pipe(res);
 });
 
 // ==================== GET 状态/按需原图/轮询 ====================
@@ -280,12 +300,14 @@ app.get("/api/original", (req, res) => {
   const index = parseInt(req.query.index, 10);
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
-  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  if (!validPhotoIndex(index)) return json(res, 400, { error: "bad index" });
   const file = path.join(sessionDir(token), "original", `${pad(index)}.jpg`);
   if (fileExists(file)) {
     const stat = fs.statSync(file);
     res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": stat.size, "Cache-Control": "public, max-age=86400" });
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    stream.on("error", (e) => { try { res.destroy(); } catch (_) {} });
+    stream.pipe(res);
     return;
   }
   if (!pending.has(token)) pending.set(token, new Set());
@@ -315,20 +337,27 @@ app.post("/api/dedup", (req, res) => {
   try {
     const sessions = db.listAll();
     const byMd5 = new Map(); // md5 -> [{token,index,thumbSize,hasOriginal,createdAt}]
+    let scanned = 0;
+    const MAX_SCAN = 5000; // 单次去重扫描上限，防全库大相册 OOM/CPU DoS
     for (const s of sessions) {
+      if (scanned >= MAX_SCAN) break;
       const dir = sessionDir(s.token);
       const vids = s.videos || [];
       const isVideo = (i) => (Array.isArray(vids) ? vids.indexOf(i) >= 0 : vids.has(i));
       for (const idx of s.received) {
+        if (scanned >= MAX_SCAN) break;
         if (isVideo(idx)) continue; // 视频不参与照片去重
         const thumb = path.join(dir, `${pad(idx)}.jpg`);
         if (!fileExists(thumb)) continue;
         let buf;
         try {
+          const st = fs.statSync(thumb);
+          if (st.size > 8 * 1024 * 1024) continue; // 单张超大文件跳过，防内存耗尽
           buf = fs.readFileSync(thumb);
         } catch (e) {
           continue;
         }
+        scanned++;
         const md5 = crypto.createHash("md5").update(buf).digest("hex");
         const hasOriginal = fileExists(path.join(dir, "original", `${pad(idx)}.jpg`));
         if (!byMd5.has(md5)) byMd5.set(md5, []);
@@ -370,11 +399,11 @@ app.post("/api/dedup", (req, res) => {
         removed.push({ token: it.token, index: it.index });
       }
     }
-    console.log(`[album] ${new Date().toISOString()} dedup groups=${groups} removed=${removed.length} freed=${freedBytes}B`);
-    return json(res, 200, { ok: true, groups, removed, freedBytes });
+    console.log(`[album] ${new Date().toISOString()} dedup groups=${groups} removed=${removed.length} freed=${freedBytes}B scanned=${scanned}`);
+    return json(res, 200, { ok: true, groups, removed, freedBytes, scanned });
   } catch (e) {
     console.log(`[album] ${new Date().toISOString()} dedup-fail: ${e.message}`);
-    return json(res, 500, { error: e.message });
+    return json(res, 500, { error: "dedup failed" });
   }
 });
 
@@ -388,7 +417,8 @@ app.post("/api/photo/delete", (req, res) => {
   const index = parseInt((req.body || {}).index, 10);
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
-  if (!index || index <= 0) return json(res, 400, { error: "bad index" });
+  // 照片或视频 index 均可删
+  if (!validPhotoIndex(index) && !validVideoIndex(index)) return json(res, 400, { error: "bad index" });
   const dir = sessionDir(token);
   // 删除缩略图 / 原图 / 视频文件
   const files = [
@@ -451,7 +481,8 @@ app.get("/all", (req, res) => {
 // Express 4 正则路由对非捕获组支持不稳，改用中间件手动匹配
 app.use((req, res, next) => {
   const p = req.path.replace(/\/+$/, ""); // /<token>/ 与 /<token> 均匹配
-  const m = /^\/([0-9a-f]{32})(?:\/([0-9]{4}\.jpg))?$/.exec(p);
+  // 文件名 4-7 位数字：照片缩略图 0001..9999，视频缩略图 1000000+（App 端 VIDEO_INDEX_BASE）
+  const m = /^\/([0-9a-f]{32})(?:\/([0-9]{4,7}\.jpg))?$/.exec(p);
   if (!m) return next();
   const token = m[1];
   const file = m[2];
@@ -466,7 +497,9 @@ app.use((req, res, next) => {
   if (!fileExists(filePath)) return res.status(404).type("text/plain").send("not found");
   const stat = fs.statSync(filePath);
   res.writeHead(200, { "Content-Type": "image/jpeg", "Content-Length": stat.size, "Cache-Control": "public, max-age=86400" });
-  fs.createReadStream(filePath).pipe(res);
+  const stream = fs.createReadStream(filePath);
+  stream.on("error", (e) => { try { res.destroy(); } catch (_) {} });
+  stream.pipe(res);
 });
 
 // 统一 404
