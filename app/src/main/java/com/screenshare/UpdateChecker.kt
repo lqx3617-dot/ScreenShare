@@ -317,7 +317,12 @@ object UpdateChecker {
             probe.setRequestProperty("Range", "bytes=0-0")
             probe.connect()
             val probeCode = probe.responseCode
-            val totalBytes = probe.contentLengthLong
+            // 真实总大小：Range 请求返回的 Content-Length 是「本段长度」（如 bytes=0-0 返回 1），
+            // 必须从 Content-Range: bytes 0-0/<total> 的 <total> 解析，否则 totalBytes 错成 1，
+            // 分段 end 算出 -1（bytes=0--1），服务器返回 200 全量导致各段覆盖写、下载永远卡住
+            val totalBytes = probe.getHeaderField("Content-Range")
+                ?.let { it.substringAfter('/').trim().toLongOrNull() }
+                ?: probe.contentLengthLong
             probe.disconnect()
 
             if (totalBytes <= 0) return false
@@ -348,7 +353,12 @@ object UpdateChecker {
             }
 
             latch.await()
-            !cancelled.get() && failedSegments.isEmpty()
+            if (cancelled.get()) return false
+            if (failedSegments.isEmpty()) return true
+            // 部分/全部分段失败：删除残file，降级单线程整文件下载（服务器可能忽略 Range）
+            Log.w(TAG, "分段下载失败 ${failedSegments.size}/${THREAD_COUNT}，降级单线程")
+            target.delete()
+            return downloadWhole(apkUrl, target, cancelled, onProgress)
         } catch (e: Exception) {
             Log.e(TAG, "下载准备失败: ${e.message}")
             false
@@ -363,7 +373,7 @@ object UpdateChecker {
             c.readTimeout = 60000
             c.connect()
             if (c.responseCode != 200) return false
-            val total = c.contentLengthLong
+            val total = c.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
             if (total <= 0) return false
             target.delete()
             val out = java.io.FileOutputStream(target)
@@ -410,6 +420,12 @@ object UpdateChecker {
             val code = c.responseCode
             if (code != 206 && code != 200) {
                 throw java.io.IOException("服务器返回 $code，不支持分段下载")
+            }
+            // 服务器对分段请求返回 200（忽略 Range 给全量）：各分段会同时写全量互相覆盖，
+            // 且进度按 total 累加会远超真实大小。拒绝这种响应，整体降级为单线程整文件下载。
+            if (code != 206) {
+                c.disconnect()
+                throw java.io.IOException("服务器忽略 Range 返回全量 200，降级单线程")
             }
 
             val input = c.inputStream

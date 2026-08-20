@@ -378,11 +378,13 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
     const m = /bytes=(\d*)-(\d*)/.exec(range);
     let start = m && m[1] ? parseInt(m[1], 10) : 0;
     let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
-    // 钳制非法/越界 Range（含 NaN），防负 Content-Length / 非安全整数导致进程崩溃
-    if (!Number.isFinite(start) || !Number.isFinite(end)) { start = 0; end = total - 1; }
+    // 钳制非法/越界 Range（含 NaN、start>end），防负 Content-Length / 非安全整数导致进程崩溃；
+    // 带 Range 的请求一律返回 206（除非请求的恰好是完整 0-(total-1)），
+    // 避免客户端分段请求（如 bytes=0--1）拿到 200 全量后各段互相覆盖导致下载卡死
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) { start = 0; end = total - 1; }
     start = Math.max(0, Math.min(start, total - 1));
     end = Math.max(start, Math.min(end, total - 1));
-    if (start === 0 && end === total - 1) {
+    if (start === 0 && end === total - 1 && m && m[1] === "" && m[2] === "") {
       res.writeHead(200, {
         "Content-Length": total,
         "Content-Type": "application/vnd.android.package-archive",
