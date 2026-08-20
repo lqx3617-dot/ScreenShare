@@ -576,6 +576,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         handlePipIntent(intent)
     }
 
+    /** 会议中按系统返回键：视为退出会议，清除自动重连记录并返回连接页（避免记录残留导致下次又自动连接） */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (isFinishing || isDestroyed) return
+        if (hostSessionActive || signalMode || peer != null) {
+            Toast.makeText(this, "已退出会议", Toast.LENGTH_SHORT).show()
+            leavingMeeting = true
+            clearMeetingResume()
+            cleanupPeer()
+            resetUI()
+            restoreSystemBars()
+            startActivity(Intent(this, MeetingActivity::class.java))
+            finish()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     /** 解析分享链接并自动加入：screenshare://join?code=XXXX */
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
@@ -2430,6 +2448,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
             resetUI()
+            // 连接已断开，清除自动重连记录，避免下次打开 App 又自动连接上次会议
+            clearMeetingResume()
             // 会议异常断开：返回连接页（主动离开时不重复跳转）
             if (!leavingMeeting && !isFinishing && !isDestroyed) {
                 restoreSystemBars()
@@ -3516,6 +3536,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } else if (requestCode == ScreenCapturerFactory.REQUEST_MEDIA_PROJECTION) {
             // 用户取消/拒绝了屏幕共享授权，明确提示（不再静默卡住），返回连接页
             Toast.makeText(this, "未授权屏幕共享，对方将无法看到画面", Toast.LENGTH_LONG).show()
+            // 清除自动重连记录：否则 meeting_resume 残留会导致下次打开又自动连接（用户反馈"取消不了"）
+            clearMeetingResume()
             leavingMeeting = true
             cleanupPeer()
             resetUI()

@@ -9,6 +9,7 @@ const path = require("path");
 
 const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
+const ARM64_APK = "/workspace/ScreenShare-arm64-signed.apk";
 const GRADLE = "/workspace/app/build.gradle.kts";
 
 // 下载引导首页展示的 MD5 校验值（与 version.json 动态计算的 md5 对应）
@@ -183,7 +184,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
 </style></head><body>
 <h1>共享屏界 下载中心</h1>
 <p class="sub">视频通话 / 屏幕共享 / 远程相册</p>
-<div class="card"><h2>主 App（共享屏界）</h2><p>屏幕共享、视频通话、远程相册上传</p><a class="btn" href="https://${base}/ScreenShare-allarch-signed.apk">下载主 App（约 25MB）</a></div>
+<div class="card"><h2>主 App（共享屏界）</h2><p>屏幕共享、视频通话、远程相册上传</p><a class="btn" href="https://${base}/ScreenShare-allarch-signed.apk">下载主 App（约 21MB，全兼容）</a><a class="btn" style="background:#10b981" href="https://${base}/ScreenShare-arm64-signed.apk">快速版（约 15MB，64 位手机专用）</a></div>
 <div class="card"><h2>相册查看 App</h2><p>独立相册浏览，查看全部照片</p><a class="btn violet" href="https://${base}/AlbumViewer-signed.apk">下载相册 App（约 6MB）</a></div>
 <div class="tip"><b>下载慢？</b> 当前网络单连接限速较慢，请使用支持「多线程下载」的浏览器或下载器（如夸克、UC、IDM、Aria2）下载，速度可提升数倍。下载后建议校验 MD5。</div>
 <div class="card"><h2>MD5 校验</h2><p class="md5">主 App: ${MAIN_MD5}<br>相册 App: ${ALBUM_MD5}</p></div>
@@ -339,7 +340,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
     done(200);
     return;
   }
-  if (urlPath !== "/ScreenShare-allarch-signed.apk" && urlPath !== "/AlbumViewer-signed.apk") {
+  if (urlPath !== "/ScreenShare-allarch-signed.apk" && urlPath !== "/ScreenShare-arm64-signed.apk" && urlPath !== "/AlbumViewer-signed.apk") {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("not found");
     done(404);
@@ -347,7 +348,9 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   }
   const apkPath = urlPath === "/AlbumViewer-signed.apk"
     ? "/workspace/AlbumViewer-signed.apk"
-    : APK;
+    : urlPath === "/ScreenShare-arm64-signed.apk"
+      ? ARM64_APK
+      : APK;
   let stat = null;
   try {
     stat = fs.statSync(apkPath);

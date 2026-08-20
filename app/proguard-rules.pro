@@ -27,6 +27,22 @@
 -dontoptimize org.webrtc.**
 -keepattributes *Annotation*
 
+# 保留全部 WebRTC 类
+-keep class org.webrtc.** { *; }
+# 保留 JNI 回调注解（native 侧通过方法名查找 Java 方法）
+-keep @org.webrtc.CalledByNative class * { *; }
+# 保留所有 JNI 回调方法名
+-keepclassmembers class * {
+    @org.webrtc.CalledByNative <methods>;
+}
+# 禁止优化 WebRTC 内部（防内联/改写破坏 JNI 注册表）
+-dontoptimize
+
+# 保留所有 native 方法名（JNI RegisterNatives 按方法名绑定，必须原名）
+-keepclasseswithmembers class * {
+    native <methods>;
+}
+
 # ==================== 应用内被反射/JNI 引用的类 ====================
 # 无障碍服务由系统通过 manifest 名称加载，需保留
 -keep class com.screenshare.RemoteControlService { *; }

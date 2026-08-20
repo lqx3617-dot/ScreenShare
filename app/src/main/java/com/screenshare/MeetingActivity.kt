@@ -355,7 +355,9 @@ class MeetingActivity : AppCompatActivity() {
 
     /**
      * 自动重连上次未结束的会议：
-     * 若存在持久化的会议记录（action+code，24h 内），直接进入该会议。
+     * 若存在持久化的会议记录（action+code，24h 内），弹出确认框询问是否自动连接，
+     * 用户可取消（取消时清除记录，不再自动连接）。避免误入上次未结束的会议
+     * （如闪退/异常退出后残留的会议记录导致每次打开都自动连接，且无法取消）。
      * 分享链接优先（handleShareLink 已处理）；无分享链接时生效。
      */
     private fun autoResumeMeeting() {
@@ -367,8 +369,19 @@ class MeetingActivity : AppCompatActivity() {
         if (System.currentTimeMillis() - p.getLong("ts", 0) > 24 * 3600 * 1000L) return
         if (action != ACTION_CREATE && action != ACTION_JOIN) return
         if (!Regex("^[0-9]{4}$").matches(code)) return
-        Toast.makeText(this, "自动连接上次会议（$code）...", Toast.LENGTH_SHORT).show()
-        enterMeeting(action, code)
+        val roleText = if (action == ACTION_CREATE) "共享方" else "观看方"
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("自动连接上次会议")
+            .setMessage("检测到上次会议（$code，$roleText）未结束。\n是否自动连接？")
+            .setPositiveButton("自动连接") { _, _ -> enterMeeting(action, code) }
+            .setNegativeButton("取消", null)
+            .setNeutralButton("取消并清除记录") { _, _ ->
+                p.edit().clear().apply()
+                Toast.makeText(this, "已清除自动连接记录", Toast.LENGTH_SHORT).show()
+            }
+            .setCancelable(true)
+            .setOnCancelListener { /* 用户按返回/点空白关闭：本次不连接，保留记录 */ }
+            .show()
     }
 
     override fun onNewIntent(intent: Intent) {

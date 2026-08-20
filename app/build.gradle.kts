@@ -11,12 +11,18 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 215
-        versionName = "1.212"
+        versionCode = 216
+        versionName = "1.213"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
+        // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            val abiOverride = project.findProperty("screenshare.abifilter") as String?
+            abiFilters += if (abiOverride != null && abiOverride.isNotBlank()) {
+                abiOverride.split(",")
+            } else {
+                listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
         // 从 gradle.properties 读取 TURN 配置，通过 BuildConfig 注入代码
         buildConfigField(
@@ -68,10 +74,15 @@ android {
 
     buildTypes {
         release {
-            // R8 混淆（密钥等静态字符串不再明文可反编译直读，显著提高逆向成本）
+            // R8 混淆开启，但通过 proguard-rules.pro 完整保留 WebRTC：
+            // keep org.webrtc.** + @CalledByNative 类/方法 + 全局 -dontoptimize，
+            // 防止 native 层按名查找 JNI 方法失败而闪退（v1.213 曾因 keep 不全崩溃）。
             isMinifyEnabled = true
             isShrinkResources = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
