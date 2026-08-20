@@ -174,11 +174,6 @@ class AlbumApi(private val context: Context) {
         return list
     }
 
-    /** 视频播放地址（支持 Range 拖动）；key 由 OkHttp/Coil 拦截器附加 */
-    fun videoUrl(token: String, index: Int): String {
-        return "$baseUrl/api/video?token=$token&index=$index"
-    }
-
     /** 重复照片检测结果 */
     data class DedupResult(
         val groups: Int,
