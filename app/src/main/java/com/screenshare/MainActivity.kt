@@ -1142,7 +1142,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 (android.media.ToneGenerator.MAX_VOLUME * 0.5).toInt()
             )
             tg.startTone(toneType, durationMs)
-            binding.root.postDelayed({ try { tg.release() } catch (_: Throwable) {} }, (durationMs + 200).toLong())
+            binding.root.postDelayed({ try { tg.release() } catch (_: Throwable) {} }, durationMs + 200)
         } catch (t: Throwable) {
             Log.w(TAG, "提示音播放失败: ${t.message}")
         }
@@ -1546,8 +1546,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flAlbumViewer.visibility = View.VISIBLE
         try {
             val key = BuildConfig.ALBUM_KEY
-            val sep = if (key.isNotEmpty()) "?key=$key" else ""
-            albumWebView?.loadUrl("$base/all$sep")
+            // key 走 header（不拼进 URL，防日志/地址栏泄露）；WebView 支持自定义 header
+            val headers = if (key.isNotEmpty()) mapOf("x-album-key" to key) else emptyMap()
+            albumWebView?.loadUrl("$base/all", headers)
         } catch (t: Throwable) {
             Log.e(TAG, "打开相册查看异常: ${t.message}")
         }
@@ -2042,6 +2043,35 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             override fun onRelay(data: String, viewerId: Int) {
                 runOnUiThread { handleSignalRelay(data, viewerId) }
+            }
+
+            override fun onJoinRequest(vid: Int) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    // 防撞房：host 确认是否同意对方加入（情侣模式，仅 1 个 viewer 槽位）
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("有人请求加入会议")
+                        .setMessage("会议号 $signalCode：是否同意对方加入观看你的屏幕？")
+                        .setPositiveButton("同意") { _, _ -> signalClient?.acceptViewer(vid) }
+                        .setNegativeButton("拒绝") { _, _ -> signalClient?.rejectViewer(vid) }
+                        .setCancelable(false)
+                        .show()
+                }
+            }
+
+            override fun onJoinPending() {
+                runOnUiThread {
+                    updateUI("⏳ 已发送加入请求，等待对方同意...")
+                    binding.tvScanResult.text = "会议号: $signalCode\n等待共享方确认加入请求..."
+                    binding.tvScanResult.visibility = View.VISIBLE
+                }
+            }
+
+            override fun onJoinRejected() {
+                runOnUiThread {
+                    updateUI("❌ 对方拒绝了加入请求")
+                    handleMeetingFailure()
+                }
             }
 
             override fun onViewerJoined(vid: Int) {
