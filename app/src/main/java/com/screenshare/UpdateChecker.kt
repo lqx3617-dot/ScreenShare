@@ -308,15 +308,20 @@ object UpdateChecker {
      */
     private fun downloadToFile(apkUrl: String, target: File, cancelled: AtomicBoolean, onProgress: (Long, Long) -> Unit): Boolean {
         return try {
-            val conn = URL(apkUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 30000
-            conn.readTimeout = 30000
-            conn.requestMethod = "GET"
-            conn.connect()
-            val totalBytes = conn.contentLengthLong
-            conn.disconnect()
+            // 先探测服务器是否支持 Range（206）；若返回 200 全量则降级单线程下载，
+            // 避免各分段从各自 start 覆盖写全量导致安装包损坏
+            val probe = URL(apkUrl).openConnection() as HttpURLConnection
+            probe.connectTimeout = 30000
+            probe.readTimeout = 30000
+            probe.requestMethod = "GET"
+            probe.setRequestProperty("Range", "bytes=0-0")
+            probe.connect()
+            val probeCode = probe.responseCode
+            val totalBytes = probe.contentLengthLong
+            probe.disconnect()
 
             if (totalBytes <= 0) return false
+            if (probeCode != 206) return downloadWhole(apkUrl, target, cancelled, onProgress)
 
             target.delete()
             RandomAccessFile(target, "rw").use { it.setLength(totalBytes.toLong()) }
@@ -346,6 +351,40 @@ object UpdateChecker {
             !cancelled.get() && failedSegments.isEmpty()
         } catch (e: Exception) {
             Log.e(TAG, "下载准备失败: ${e.message}")
+            false
+        }
+    }
+
+    /** 服务器不支持 Range 时的降级：单线程整文件下载 */
+    private fun downloadWhole(apkUrl: String, target: File, cancelled: AtomicBoolean, onProgress: (Long, Long) -> Unit): Boolean {
+        return try {
+            val c = URL(apkUrl).openConnection() as HttpURLConnection
+            c.connectTimeout = 30000
+            c.readTimeout = 60000
+            c.connect()
+            if (c.responseCode != 200) return false
+            val total = c.contentLengthLong
+            if (total <= 0) return false
+            target.delete()
+            val out = java.io.FileOutputStream(target)
+            val input = c.inputStream
+            val buf = ByteArray(64 * 1024)
+            var done = 0L
+            while (true) {
+                if (cancelled.get()) {
+                    out.close(); input.close(); c.disconnect()
+                    return false
+                }
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                done += n
+                onProgress(done, total)
+            }
+            out.close(); input.close(); c.disconnect()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "整文件下载失败: ${e.message}")
             false
         }
     }
