@@ -11,6 +11,10 @@ const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
 const GRADLE = "/workspace/app/build.gradle.kts";
 
+// 下载引导首页展示的 MD5 校验值（与 version.json 动态计算的 md5 对应）
+const MAIN_MD5 = process.env.MAIN_MD5 || "";
+const ALBUM_MD5 = process.env.ALBUM_MD5 || "";
+
 const publish = require("./publish");
 
 // 发布配置：从 release-config.json 加载（App 内云发布会更新此文件），forced 是否强制更新
@@ -163,6 +167,30 @@ const server = http.createServer((req, res) => {
   const done = (code) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${urlPath} -> ${code} (${Date.now() - t0}ms)${req.headers.range ? " range=" + req.headers.range : ""} ua=${(req.headers["user-agent"] || "").slice(0, 80)}`);
   };
+  // 下载引导首页：手机浏览器打开根路径时展示两个 APK 下载入口 + 加速提示
+  if (urlPath === "/" && req.method === "GET") {
+    const base = (process.env.DOWNLOAD_BASE || req.headers.host || "localhost").trim().replace(/^https?:\/\//i, "");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>共享屏界 下载中心</title><style>
+body{font-family:-apple-system,sans-serif;background:#f4f7fb;margin:0;padding:24px 16px;color:#0f172a}
+h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24px}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(15,23,42,.08);padding:20px;margin-bottom:16px}
+.card h2{font-size:16px;margin:0 0 4px}.card p{color:#475569;font-size:13px;margin:0 0 12px}
+.btn{display:block;background:#3b82f6;color:#fff;text-decoration:none;font-size:15px;font-weight:600;border-radius:12px;padding:12px 0;text-align:center}
+.btn.violet{background:#4f46e5}
+.tip{background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:12px;font-size:12px;color:#1e40af;line-height:1.7;margin-top:16px}
+.tip b{color:#1d4ed8}.md5{font-family:monospace;font-size:11px;color:#64748b;word-break:break-all}
+</style></head><body>
+<h1>共享屏界 下载中心</h1>
+<p class="sub">视频通话 / 屏幕共享 / 远程相册</p>
+<div class="card"><h2>主 App（共享屏界）</h2><p>屏幕共享、视频通话、远程相册上传</p><a class="btn" href="https://${base}/ScreenShare-allarch-signed.apk">下载主 App（约 25MB）</a></div>
+<div class="card"><h2>相册查看 App</h2><p>独立相册浏览，查看全部照片</p><a class="btn violet" href="https://${base}/AlbumViewer-signed.apk">下载相册 App（约 6MB）</a></div>
+<div class="tip"><b>下载慢？</b> 当前网络单连接限速较慢，请使用支持「多线程下载」的浏览器或下载器（如夸克、UC、IDM、Aria2）下载，速度可提升数倍。下载后建议校验 MD5。</div>
+<div class="card"><h2>MD5 校验</h2><p class="md5">主 App: ${MAIN_MD5}<br>相册 App: ${ALBUM_MD5}</p></div>
+</body></html>`);
+    done(200);
+    return;
+  }
   // App 内云发布：提交发布任务
   if (urlPath === "/api/publish" && req.method === "POST") {
     if (!publishAuthorized(req)) {
