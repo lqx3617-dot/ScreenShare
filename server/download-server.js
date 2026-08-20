@@ -16,6 +16,14 @@ const publish = require("./publish");
 // 发布配置：从 release-config.json 加载（App 内云发布会更新此文件），forced 是否强制更新
 const RELEASE_CONFIG = publish.loadConfig();
 
+// 发布接口鉴权 token：未配置时拒绝所有发布（防公网任意触发构建），部署必须显式设置 PUBLISH_TOKEN
+const PUBLISH_TOKEN = process.env.PUBLISH_TOKEN || "";
+function publishAuthorized(req) {
+  if (!PUBLISH_TOKEN) return false;
+  const h = req.headers["x-publish-token"] || req.headers["authorization"] || "";
+  return h === PUBLISH_TOKEN || h === `Bearer ${PUBLISH_TOKEN}`;
+}
+
 // 当前正在执行的发布任务（单任务互斥）+ 已完成任务历史（供状态查询）
 let currentTask = null;
 const taskHistory = new Map();
@@ -157,6 +165,12 @@ const server = http.createServer((req, res) => {
   };
   // App 内云发布：提交发布任务
   if (urlPath === "/api/publish" && req.method === "POST") {
+    if (!publishAuthorized(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden" }));
+      done(403);
+      return;
+    }
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 1024 * 64) req.destroy(); });
     req.on("end", () => {
@@ -171,9 +185,9 @@ const server = http.createServer((req, res) => {
         done(400);
         return;
       }
-      if (!changelog) {
+      if (!changelog || changelog.length > 2000) {
         res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "更新说明不能为空" }));
+        res.end(JSON.stringify({ error: "更新说明不能为空且不超过 2000 字" }));
         done(400);
         return;
       }
@@ -211,10 +225,19 @@ const server = http.createServer((req, res) => {
         Object.assign(RELEASE_CONFIG, publish.loadConfig());
         currentTask = null;
         taskHistory.set(task.id, task);
+        // 任务历史上限 50 条，防长期内存增长
+        if (taskHistory.size > 50) {
+          const oldest = taskHistory.keys().next().value;
+          if (oldest) taskHistory.delete(oldest);
+        }
       }).catch((e) => {
         console.error("publish task error", e);
         currentTask = null;
         taskHistory.set(task.id, task);
+        if (taskHistory.size > 50) {
+          const oldest = taskHistory.keys().next().value;
+          if (oldest) taskHistory.delete(oldest);
+        }
       });
     });
     return;
@@ -322,15 +345,31 @@ const server = http.createServer((req, res) => {
 
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
-    const start = m && m[1] ? parseInt(m[1], 10) : 0;
-    const end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+    let start = m && m[1] ? parseInt(m[1], 10) : 0;
+    let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+    // 钳制非法/越界 Range（含 NaN），防负 Content-Length / 非安全整数导致进程崩溃
+    if (!Number.isFinite(start) || !Number.isFinite(end)) { start = 0; end = total - 1; }
+    start = Math.max(0, Math.min(start, total - 1));
+    end = Math.max(start, Math.min(end, total - 1));
+    if (start === 0 && end === total - 1) {
+      res.writeHead(200, {
+        "Content-Length": total,
+        "Content-Type": "application/vnd.android.package-archive",
+        "Accept-Ranges": "bytes",
+      });
+      fs.createReadStream(apkPath).pipe(res);
+      done(200);
+      return;
+    }
     res.writeHead(206, {
       "Content-Range": `bytes ${start}-${end}/${total}`,
       "Content-Length": end - start + 1,
       "Content-Type": "application/vnd.android.package-archive",
       "Accept-Ranges": "bytes",
     });
-    fs.createReadStream(apkPath, { start, end }).pipe(res);
+    const stream = fs.createReadStream(apkPath, { start, end });
+    stream.on("error", () => { try { res.destroy(); } catch (_) {} });
+    stream.pipe(res);
     done(206);
   } else {
     res.writeHead(200, {
@@ -338,7 +377,9 @@ const server = http.createServer((req, res) => {
       "Content-Type": "application/vnd.android.package-archive",
       "Accept-Ranges": "bytes",
     });
-    fs.createReadStream(apkPath).pipe(res);
+    const stream = fs.createReadStream(apkPath);
+    stream.on("error", () => { try { res.destroy(); } catch (_) {} });
+    stream.pipe(res);
     done(200);
   }
 });
