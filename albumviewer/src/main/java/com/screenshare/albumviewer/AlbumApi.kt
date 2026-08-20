@@ -54,7 +54,24 @@ class AlbumApi(private val context: Context) {
 
     fun thumbUrl(token: String, index: Int): String {
         val pad = index.toString().padStart(4, '0')
-        return "$baseUrl/$token/$pad.jpg" + (if (albumKey.isNotEmpty()) "?key=$albumKey" else "")
+        // key 走 header（Coil 拦截器自动附加），不再拼进 URL 查询串（防日志/Referer 泄露）
+        return "$baseUrl/$token/$pad.jpg"
+    }
+
+    /** 视频播放地址（支持 Range 拖动）；key 由 OkHttp/Coil 拦截器附加 */
+    fun videoUrl(token: String, index: Int): String {
+        return "$baseUrl/api/video?token=$token&index=$index"
+    }
+
+    /** 供保存/兜底下载复用同一带鉴权 header 的 client */
+    fun httpGetBytes(url: String): ByteArray? {
+        return try {
+            client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) null else resp.body?.bytes()
+            }
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     suspend fun getStatus(token: String): AlbumStatus? = withContext(Dispatchers.IO) {
@@ -157,9 +174,9 @@ class AlbumApi(private val context: Context) {
         return list
     }
 
-    /** 视频播放地址（支持 Range 拖动） */
+    /** 视频播放地址（支持 Range 拖动）；key 由 OkHttp/Coil 拦截器附加 */
     fun videoUrl(token: String, index: Int): String {
-        return "$baseUrl/api/video?token=$token&index=$index" + (if (albumKey.isNotEmpty()) "&key=$albumKey" else "")
+        return "$baseUrl/api/video?token=$token&index=$index"
     }
 
     /** 重复照片检测结果 */
