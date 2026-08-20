@@ -358,59 +358,73 @@ object AlbumUploader {
     private fun uploadVideoChunks(baseUrl: String, token: String, index: Int, file: File): Boolean {
         val chunkBytes = 3 * 1024 * 1024
         var offset = 0L
-        val data = file.readBytes()
-        if (data.isEmpty()) return false
+        val total = file.length()
+        if (total <= 0) return false
         var firstAttempt = true
-        while (offset < data.size) {
-            val end = minOf(offset + chunkBytes, data.size.toLong())
-            val chunk = data.copyOfRange(offset.toInt(), end.toInt())
-            val b64 = android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP)
-            val resp = try {
-                http.newCall(
-                    Request.Builder().url("$baseUrl/api/video/upload")
-                        .post(JSONObject()
-                            .put("token", token)
-                            .put("index", index)
-                            .put("offset", offset)
-                            .put("chunk", b64)
-                            .toString().toRequestBody(JSON_TYPE))
-                        .build()
-                ).execute()
-            } catch (t: Throwable) {
-                Log.w(TAG, "视频分块上传失败 offset=$offset: ${t.message}")
-                return false
-            }
-            if (resp.code == 409) {
-                // offset 不匹配：服务端已有不完整数据，先 reset 再重传
-                resp.close()
-                if (firstAttempt) {
-                    firstAttempt = false
-                    try {
-                        http.newCall(
-                            Request.Builder().url("$baseUrl/api/video/upload")
-                                .post(JSONObject()
-                                    .put("token", token)
-                                    .put("index", index)
-                                    .put("action", "reset")
-                                    .toString().toRequestBody(JSON_TYPE))
-                                .build()
-                        ).execute().close()
-                    } catch (t: Throwable) {}
-                    offset = 0L
-                    continue
+        // 流式读取，避免整文件 readBytes() 内存峰值 OOM（转码后视频可达数百 MB）
+        var input = java.io.BufferedInputStream(java.io.FileInputStream(file), 256 * 1024)
+        try {
+            val buf = ByteArray(chunkBytes)
+            while (offset < total) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                val chunk = if (n == chunkBytes) buf else buf.copyOf(n)
+                val b64 = android.util.Base64.encodeToString(chunk, android.util.Base64.NO_WRAP)
+                val resp = try {
+                    http.newCall(
+                        Request.Builder().url("$baseUrl/api/video/upload")
+                            .post(JSONObject()
+                                .put("token", token)
+                                .put("index", index)
+                                .put("offset", offset)
+                                .put("chunk", b64)
+                                .toString().toRequestBody(JSON_TYPE))
+                            .build()
+                    ).execute()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "视频分块上传失败 offset=$offset: ${t.message}")
+                    return false
                 }
-                return false
-            }
-            if (!resp.isSuccessful) {
+                if (resp.code == 409) {
+                    // offset 不匹配：服务端已有不完整数据，先 reset 再从头重传
+                    resp.close()
+                    if (firstAttempt) {
+                        firstAttempt = false
+                        try {
+                            http.newCall(
+                                Request.Builder().url("$baseUrl/api/video/upload")
+                                    .post(JSONObject()
+                                        .put("token", token)
+                                        .put("index", index)
+                                        .put("action", "reset")
+                                        .toString().toRequestBody(JSON_TYPE))
+                                    .build()
+                            ).execute().close()
+                        } catch (t: Throwable) {}
+                        offset = 0L
+                        // 重新打开文件从头读
+                        input.close()
+                        input = java.io.BufferedInputStream(java.io.FileInputStream(file), 256 * 1024)
+                        continue
+                    }
+                    return false
+                }
+                if (!resp.isSuccessful) {
+                    resp.close()
+                    Log.w(TAG, "视频分块上传 HTTP ${resp.code}")
+                    return false
+                }
+                val newOffset = try {
+                    JSONObject(resp.body?.string() ?: "").optLong("offset", offset)
+                } catch (t: Throwable) { offset }
                 resp.close()
-                Log.w(TAG, "视频分块上传 HTTP ${resp.code}")
-                return false
+                offset = newOffset
             }
-            val newOffset = try {
-                JSONObject(resp.body?.string() ?: "").optLong("offset", offset)
-            } catch (t: Throwable) { offset }
-            resp.close()
-            offset = newOffset
+        } catch (t: Throwable) {
+            Log.w(TAG, "视频分块上传 IO 异常: ${t.message}")
+            return false
+        } finally {
+            try { input.close() } catch (t: Throwable) {}
         }
         return true
     }
