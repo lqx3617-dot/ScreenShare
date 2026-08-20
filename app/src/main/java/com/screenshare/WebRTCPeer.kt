@@ -1840,7 +1840,7 @@ class WebRTCPeer(
                 val enc = params.encodings?.firstOrNull()
                 if (enc != null) {
                     enc.maxBitrateBps = capBps
-                    enc.maxFramerate = capFps
+                    enc.maxFramerate = capFps.toDouble()
                 }
                 sender.parameters = params
                 Log.d(TAG, "摄像头弱网自适应: 档位$level 码率上限${capBps / 1000}kbps 帧率$capFps")
