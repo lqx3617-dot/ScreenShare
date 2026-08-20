@@ -28,6 +28,12 @@ class SignalClient(
         fun onPeerReady()
         /** 收到对端转发的信令数据（SDP/ICE 编码串）；viewerId 标识来源/目标 viewer（host 多路用） */
         fun onRelay(data: String, viewerId: Int)
+        /** 有人请求加入（仅 host 收到，等待确认）；调用 acceptViewer/rejectViewer 回应 */
+        fun onJoinRequest(viewerId: Int)
+        /** 加入请求已提交，等待 host 确认（仅 viewer 收到） */
+        fun onJoinPending()
+        /** host 拒绝了加入请求（仅 viewer 收到） */
+        fun onJoinRejected()
         /** 新 viewer 加入（仅 host 收到），viewerId 用于建立对应连接 */
         fun onViewerJoined(viewerId: Int)
         /** 某 viewer 离开（仅 host 收到） */
@@ -71,6 +77,8 @@ class SignalClient(
     private val pendingRelays = java.util.concurrent.ConcurrentLinkedQueue<String>()
     // V3.1: 应用层心跳——10s 周期 ping 保持连接活跃，防止移动网络假断开
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // 自动重连 Handler：disconnect 时必须移除待执行的重连任务，避免退出后仍发起连接
+    private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // V3.2: 心跳假死检测——超过 30s 未收到 pong 视为 WebSocket 假死，主动断开并自动重连
     private var lastPongMs = 0L
     private val heartbeatRunnable = object : Runnable {
@@ -142,13 +150,14 @@ class SignalClient(
 
     /** 自动重连：网络波动（如 Software caused connection abort）时几次重试通常能恢复 */
     private fun scheduleRetry(failMsg: String) {
+        if (closedByUs) return
         if (attempt >= MAX_ATTEMPTS) {
             listener.onError(failMsg)
             return
         }
         val delayMs = RETRY_BASE_MS * attempt
         listener.onRetrying("信令连接异常，${delayMs / 1000} 秒后自动重试（第 $attempt/$MAX_ATTEMPTS 次）...")
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tryConnect() }, delayMs)
+        retryHandler.postDelayed({ tryConnect() }, delayMs)
     }
 
     private fun handleMessage(text: String) {
@@ -165,6 +174,9 @@ class SignalClient(
                 listener.onRoomReady("joined", myViewerId)
                 flushPending()
             }
+            "join-pending" -> listener.onJoinPending()
+            "join-request" -> listener.onJoinRequest(json.optInt("viewerId", 0))
+            "join-rejected" -> listener.onJoinRejected()
             "peer-ready" -> listener.onPeerReady()
             "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0))
             "viewer-left" -> listener.onViewerLeft(json.optInt("viewerId", 0))
@@ -174,6 +186,22 @@ class SignalClient(
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> Log.w(TAG, "未知消息: ${json.optString("type")}")
         }
+    }
+
+    /** host 同意 viewer 加入 */
+    fun acceptViewer(viewerId: Int) {
+        webSocket?.send(JSONObject().apply {
+            put("type", "accept")
+            put("viewerId", viewerId)
+        }.toString())
+    }
+
+    /** host 拒绝 viewer 加入 */
+    fun rejectViewer(viewerId: Int) {
+        webSocket?.send(JSONObject().apply {
+            put("type", "reject")
+            put("viewerId", viewerId)
+        }.toString())
     }
 
     /** 发送信令数据到对端（SDP/ICE 编码串）。host 发给指定 viewer 需传 viewerId；viewer 发 host 传 0 即可 */
@@ -223,6 +251,7 @@ class SignalClient(
     fun disconnect() {
         closedByUs = true
         heartbeatHandler.removeCallbacksAndMessages(null)
+        retryHandler.removeCallbacksAndMessages(null)
         webSocket?.close(1000, "bye")
         webSocket = null
     }
