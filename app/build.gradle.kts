@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 216
-        versionName = "1.213"
+        versionCode = 215
+        versionName = "1.212"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         ndk {
@@ -68,7 +68,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 混淆（密钥等静态字符串不再明文可反编译直读，显著提高逆向成本）
+            isMinifyEnabled = true
+            isShrinkResources = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
