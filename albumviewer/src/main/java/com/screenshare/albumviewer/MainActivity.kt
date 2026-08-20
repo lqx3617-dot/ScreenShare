@@ -30,10 +30,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import coil.Coil
+import coil.ImageLoader
 import okhttp3.OkHttpClient
 import java.io.File
 import java.io.FileOutputStream
@@ -66,6 +69,22 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        // Coil 全局配置：图片请求自动附加相册访问密钥 header（key 不再进 URL 查询串，防日志/Referer 泄露）
+        Coil.setImageLoader(
+            ImageLoader.Builder(this)
+                .okHttpClient(
+                    OkHttpClient.Builder()
+                        .addInterceptor { chain ->
+                            val orig = chain.request()
+                            val req = if (BuildConfig.ALBUM_KEY.isNotEmpty()) {
+                                orig.newBuilder().header("x-album-key", BuildConfig.ALBUM_KEY).build()
+                            } else orig
+                            chain.proceed(req)
+                        }
+                        .build()
+                )
+                .build()
+        )
 
         etLink = findViewById(R.id.et_link)
         tvError = findViewById(R.id.tv_error)
@@ -534,13 +553,33 @@ class MainActivity : AppCompatActivity() {
             tvTip.visibility = View.VISIBLE
             val orig = api.pollOriginal(token, index, maxTries = 20)
             if (orig != null) {
-                ivFull.setImageBitmap(BitmapFactory.decodeByteArray(orig, 0, orig.size))
-                tvTip.visibility = View.GONE
+                // IO 线程采样解码：大图先读边界再按目标尺寸降采样，避免主线程全尺寸解码 OOM/ANR
+                val bmp = withContext(Dispatchers.IO) {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(orig, 0, orig.size, bounds)
+                    val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+                    BitmapFactory.decodeByteArray(orig, 0, orig.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
+                if (bmp != null) {
+                    ivFull.setImageBitmap(bmp)
+                    tvTip.visibility = View.GONE
+                } else {
+                    tvTip.text = "原图加载失败"
+                }
             } else {
                 tvTip.text = "共享方不在线，显示预览图"
             }
         }
         dialog.setOnDismissListener { origJob.cancel() }
+    }
+
+    /** 计算采样率：长边目标不超过 2048px（全屏展示足够清晰，避免 12MP+ 照片 OOM） */
+    private fun sampleSizeFor(w: Int, h: Int): Int {
+        if (w <= 0 || h <= 0) return 1
+        val maxDim = 2048
+        var sample = 1
+        while (maxOf(w, h) / (sample * 2) >= maxDim) sample *= 2
+        return sample
     }
 
     /** 长按照片弹出菜单：保存原图 / 删除 */
@@ -593,10 +632,7 @@ class MainActivity : AppCompatActivity() {
         scope.launch {
             // 优先原图（共享方在线时实时压缩上传），拿不到用缩略图兜底
             val data = api.fetchOriginal(token, index)
-                ?: runCatching {
-                    val req = okhttp3.Request.Builder().url(api.thumbUrl(token, index)).build()
-                    okhttp3.OkHttpClient().newCall(req).execute().use { it.body?.bytes() }
-                }.getOrNull()
+                ?: api.httpGetBytes(api.thumbUrl(token, index))
             if (data != null) {
                 val name = "album_${token.take(8)}_$index.jpg"
                 val ok = saveToGallery(name, data)
