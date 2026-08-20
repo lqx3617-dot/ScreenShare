@@ -8,12 +8,21 @@ function pad(i) {
   return String(i).padStart(4, "0");
 }
 
+/** 嵌入 JS 字符串的安全转义：防 `\`、`"`、`</script>` 注入（XSS） */
+function jsString(s) {
+  return String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/<\//g, "<\\/");
+}
+
 function renderAlbumPage(session, key) {
   const isVideo = (i) => session.videos && session.videos.has(i);
   const K = key ? "?key=" + encodeURIComponent(key) : "";
   const q = (url) => (key ? url + K : url);
-  const idx = Array.from({ length: session.total }, (_, i) => i + 1)
-    .filter((i) => session.received.has(i))
+  // 直接遍历 received（升序），不再按 total 生成大数组（防 index 伪造导致 Array.from 内存耗尽）
+  const idx = Array.from(session.received)
+    .sort((a, b) => a - b)
     .map(
       (i) =>
         `<a class="p${isVideo(i) ? " v" : ""}" href="javascript:void(0)" onclick="openView(${i},${isVideo(i)})"><img loading="lazy" src="${pad(i)}.jpg${K}" alt=""><span class="vb">▶</span></a>`
@@ -39,7 +48,7 @@ body{margin:0;background:#111;font-family:-apple-system,sans-serif}
 ${idx ? `<div class="grid">${idx}</div>` : `<div class="none">${done ? "相册是空的" : "照片正在上传，请稍后刷新"}</div>`}
 <div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none"></video></div>
 <script>
-var TOKEN="${session.token}", DONE=${done}, RECEIVED=${session.received.size}, ALBUM_KEY="${key ? key.replace(/"/g, '\\"') : ""}";
+var TOKEN="${session.token}", DONE=${done}, RECEIVED=${session.received.size}, ALBUM_KEY="${key ? jsString(key) : ""}";
 function K(){return ALBUM_KEY?"?key="+encodeURIComponent(ALBUM_KEY):"";}
 function openView(i,isV){
   var ov=document.getElementById("ov"), img=document.getElementById("ovimg"), vid=document.getElementById("ovvideo");
@@ -89,7 +98,7 @@ module.exports = { renderAlbumPage, renderAllAlbumPage };
  */
 function renderAllAlbumPage(key) {
   const K = key ? "?key=" + encodeURIComponent(key) : "";
-  const KJS = key ? key.replace(/"/g, '\\"') : "";
+  const KJS = key ? jsString(key) : "";
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>相册 · 全部照片</title><style>
 body{margin:0;background:#111;font-family:-apple-system,sans-serif}
 .top{position:sticky;top:0;background:rgba(17,17,17,.92);backdrop-filter:blur(8px);color:#fff;padding:12px 16px;font-size:15px;z-index:10;display:flex;align-items:center;justify-content:space-between}
