@@ -11,8 +11,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-        versionCode = 216
-        versionName = "1.213"
+        versionCode = 217
+        versionName = "1.214"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -74,15 +74,14 @@ android {
 
     buildTypes {
         release {
-            // R8 混淆开启，但通过 proguard-rules.pro 完整保留 WebRTC：
-            // keep org.webrtc.** + @CalledByNative 类/方法 + 全局 -dontoptimize，
-            // 防止 native 层按名查找 JNI 方法失败而闪退（v1.213 曾因 keep 不全崩溃）。
-            isMinifyEnabled = true
+            // R8 混淆彻底关闭（v1.213 开启 R8 导致进会议闪退）。
+            // 根因：WebRTC 依赖大量 JNI 与运行时反射（PeerConnectionFactory、
+            // @CalledByNative 回调），R8 的优化/内联/裁剪会破坏 native 层按名
+            // 查找 Java 方法与 JNI 注册表，即使 keep 规则也难完全覆盖，崩溃发生在
+            // native 层（Java 崩溃上报捕获不到）。关闭 R8 与 v1.133 及之前稳定版一致。
+            // native .so 占体积大头，混淆 dex 收益低（APK 约 +4MB）。
+            isMinifyEnabled = false
             isShrinkResources = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
     }
 
