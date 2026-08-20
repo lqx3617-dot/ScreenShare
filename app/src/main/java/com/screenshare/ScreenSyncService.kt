@@ -80,12 +80,13 @@ class ScreenSyncService : Service() {
             context.stopService(Intent(context, ScreenSyncService::class.java))
         }
 
-        /** 生成 8 位设备码（XXXX XXXX），避免易混淆字符 O/0/I/1 */
+        /** 生成 8 位设备码（XXXX XXXX），避免易混淆字符 O/0/I/1；密码学安全随机 */
         fun generateCode(): String {
             val chars = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+            val random = java.security.SecureRandom()
             val sb = StringBuilder()
             for (i in 0 until 8) {
-                sb.append(chars[(Math.random() * chars.length).toInt()])
+                sb.append(chars[random.nextInt(chars.length)])
                 if (i == 3) sb.append(' ')
             }
             return sb.toString()
@@ -94,7 +95,12 @@ class ScreenSyncService : Service() {
 
     // ==================== 状态 ====================
     private val mainHandler = Handler(Looper.getMainLooper())
+    // 单线程 worker：只跑相册同步等长任务（runSync）
     private val worker = Executors.newSingleThreadExecutor()
+    // HTTP accept 循环用独立线程，避免死循环独占 worker 导致中继/同步任务饿死（原实现 bug）
+    private val httpThread = Thread({ runHttpServer() }, "album-sync-http")
+    // 每个 HTTP 连接一个线程处理（短任务），与 worker/accept 线程隔离
+    private val connPool = Executors.newCachedThreadPool()
     private var prefs: SharedPreferences? = null
     private var syncing = AtomicBoolean(false)
     @Volatile private var syncedCount = 0
@@ -115,10 +121,12 @@ class ScreenSyncService : Service() {
         }
         sessionToken = prefs?.getString(PREFS_SESSION_TOKEN, null)
         createNotificationChannel()
+        // 中继连接为异步发起（OkHttp 自管线程），放 worker 执行一次即可
         worker.execute {
-            try { startHttpServer() } catch (t: Throwable) { Log.w(TAG, "HTTP 服务启动失败: ${t.message}") }
-            connectRelay()
+            try { connectRelay() } catch (t: Throwable) { Log.w(TAG, "中继连接异常: ${t.message}") }
         }
+        // HTTP accept 循环必须在独立线程，不能占 worker
+        httpThread.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -134,9 +142,11 @@ class ScreenSyncService : Service() {
     override fun onDestroy() {
         serviceDestroyed.set(true)
         mainHandler.removeCallbacksAndMessages(null)
-        try { httpServer?.close() } catch (t: Throwable) {}
+        try { httpServer?.close() } catch (t: Throwable) {} // accept 会抛异常退出循环
         try { relayWs?.close(1000, "service stop") } catch (t: Throwable) {}
         worker.shutdownNow()
+        connPool.shutdownNow()
+        httpThread.interrupt()
         super.onDestroy()
     }
 
@@ -199,61 +209,95 @@ class ScreenSyncService : Service() {
         } catch (t: Throwable) { "" }
     }
 
-    // ==================== 内置 HTTP 服务（8686） ====================
-    private fun startHttpServer() {
-        val server = ServerSocket(HTTP_PORT)
+    // ==================== 内置 HTTP 服务（8686，仅绑定回环） ====================
+    // 安全：只监听 127.0.0.1，局域网其他设备无法访问；
+    // /sync/start 需携带 X-Sync-Auth 口令（首次随机生成并持久化，仅本 App 内部知晓），
+    // 防止设备本机浏览器上的恶意网页（CSRF）触发相册外传。
+    private fun runHttpServer() {
+        val server = try {
+            ServerSocket(HTTP_PORT, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        } catch (t: Throwable) {
+            Log.w(TAG, "HTTP 服务启动失败: ${t.message}")
+            return
+        }
         httpServer = server
-        Log.i(TAG, "HTTP 服务已启动 :$HTTP_PORT")
-        while (true) {
-            val socket = try { server.accept() } catch (t: Throwable) { return }
-            worker.execute {
-                try {
-                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    val requestLine = reader.readLine() ?: return@execute
-                    val parts = requestLine.split(" ")
-                    if (parts.size < 2) return@execute
-                    val method = parts[0]
-                    val path = parts[1].substringBefore("?")
-                    // 读取 header 直到空行，避免连接复用挂起
-                    var line = reader.readLine()
-                    var contentLength = 0
-                    while (!line.isNullOrBlank()) {
-                        if (line.startsWith("Content-Length:", true)) {
-                            contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
-                        }
-                        line = reader.readLine()
-                    }
-                    if (contentLength > 0) {
-                        val buf = CharArray(contentLength)
-                        reader.read(buf)
-                    }
-                    val resp: Pair<Int, String> = when {
-                        method == "GET" && path == "/status" -> statusJson()
-                        method == "POST" && path == "/sync/start" -> {
-                            startSyncFromTrigger("局域网 HTTP")
-                            statusJson()
-                        }
-                        else -> 404 to """{"error":"not found"}"""
-                    }
-                    val body = resp.second
-                    val header = "HTTP/1.1 ${resp.first} OK\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Content-Length: ${body.toByteArray().size}\r\n" +
-                        "Connection: close\r\n\r\n"
-                    socket.getOutputStream().write((header + body).toByteArray())
-                    socket.getOutputStream().flush()
-                } catch (t: Throwable) {
-                    Log.w(TAG, "HTTP 处理异常: ${t.message}")
-                } finally {
-                    try { socket.close() } catch (t: Throwable) {}
-                }
+        Log.i(TAG, "HTTP 服务已启动 127.0.0.1:$HTTP_PORT")
+        while (!serviceDestroyed.get()) {
+            val socket = try { server.accept() } catch (t: Throwable) {
+                if (serviceDestroyed.get()) return
+                continue
             }
+            connPool.execute { handleHttpConnection(socket) }
         }
     }
 
+    private fun handleHttpConnection(socket: java.net.Socket) {
+        try {
+            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            val requestLine = reader.readLine() ?: return
+            val parts = requestLine.split(" ")
+            if (parts.size < 2) return
+            val method = parts[0]
+            val path = parts[1].substringBefore("?")
+            // 读取 header 直到空行，避免连接复用挂起
+            var line = reader.readLine()
+            var contentLength = 0
+            var syncAuth = ""
+            while (!line.isNullOrBlank()) {
+                if (line.startsWith("Content-Length:", true)) {
+                    contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                } else if (line.startsWith("X-Sync-Auth:", true)) {
+                    syncAuth = line.substringAfter(':').trim()
+                }
+                line = reader.readLine()
+            }
+            if (contentLength > 0) {
+                val buf = CharArray(contentLength)
+                reader.read(buf)
+            }
+            val resp: Pair<Int, String> = when {
+                method == "GET" && path == "/status" -> statusJson()
+                method == "POST" && path == "/sync/start" -> {
+                    if (syncAuth == syncAuthToken()) {
+                        startSyncFromTrigger("局域网 HTTP")
+                        statusJson()
+                    } else {
+                        403 to """{"error":"forbidden"}"""
+                    }
+                }
+                else -> 404 to """{"error":"not found"}"""
+            }
+            val body = resp.second
+            val header = "HTTP/1.1 ${resp.first} OK\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "X-Content-Type-Options: nosniff\r\n" +
+                "Content-Length: ${body.toByteArray().size}\r\n" +
+                "Connection: close\r\n\r\n"
+            socket.getOutputStream().write((header + body).toByteArray())
+            socket.getOutputStream().flush()
+        } catch (t: Throwable) {
+            Log.w(TAG, "HTTP 处理异常: ${t.message}")
+        } finally {
+            try { socket.close() } catch (t: Throwable) {}
+        }
+    }
+
+    /** 本地同步触发口令：首次随机生成并持久化，防 CSRF */
+    private fun syncAuthToken(): String {
+        val p = prefs ?: return ""
+        val existing = p.getString("album_sync_auth", null)
+        if (!existing.isNullOrEmpty()) return existing
+        val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val random = java.security.SecureRandom()
+        val sb = StringBuilder()
+        for (i in 0 until 16) sb.append(chars[random.nextInt(chars.length)])
+        p.edit().putString("album_sync_auth", sb.toString()).apply()
+        return sb.toString()
+    }
+
     private fun statusJson(): Pair<Int, String> {
+        // 仅回环可访问，仍不暴露 deviceCode（防同机恶意网页读取后暴力尝试）
         val obj = JSONObject().apply {
-            put("deviceCode", deviceCode)
             put("ip", localIp())
             put("syncing", syncing.get())
             put("synced", syncedCount)
