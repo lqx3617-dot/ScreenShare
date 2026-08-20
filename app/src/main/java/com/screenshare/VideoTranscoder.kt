@@ -18,6 +18,7 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.util.Log
 import android.view.Surface
+import android.os.SystemClock
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -179,8 +180,20 @@ object VideoTranscoder {
 
             // 安全计数器防止死循环
             var spins = 0
+            // 真实时间超时保护：按视频时长给上限（时长×3 + 2 分钟），无时长信息时 10 分钟；
+            // 防止编解码器异常（如驱动卡死）时无限空转，卡住相册同步后台线程
+            val startWall = SystemClock.elapsedRealtime()
+            val deadline = if (durationUs > 0) {
+                startWall + durationUs / 1000 * 3 + 120_000L
+            } else {
+                startWall + 10 * 60_000L
+            }
             while (!(vSignalSent && vOutputEos) || (audioEncoder != null && !aOutputEos)) {
                 if (writeErr != null) throw java.io.IOException("转码写入失败: ${writeErr?.message}")
+                if (SystemClock.elapsedRealtime() > deadline) {
+                    Log.w(TAG, "转码超时保护退出（时长=${durationUs / 1_000_000}s，已转 ${(SystemClock.elapsedRealtime() - startWall) / 1000}s）")
+                    break
+                }
 
                 // ===== 视频喂输入 =====
                 if (!vInputDone) {
