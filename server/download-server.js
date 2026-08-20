@@ -383,6 +383,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       res.writeHead(200, {
         "Content-Length": total,
         "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": `attachment; filename="${urlPath.split("/").pop()}"`,
         "Accept-Ranges": "bytes",
       });
       fs.createReadStream(apkPath).pipe(res);
@@ -393,6 +394,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       "Content-Range": `bytes ${start}-${end}/${total}`,
       "Content-Length": end - start + 1,
       "Content-Type": "application/vnd.android.package-archive",
+      "Content-Disposition": `attachment; filename="${urlPath.split("/").pop()}"`,
       "Accept-Ranges": "bytes",
     });
     const stream = fs.createReadStream(apkPath, { start, end });
@@ -403,6 +405,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
     res.writeHead(200, {
       "Content-Length": total,
       "Content-Type": "application/vnd.android.package-archive",
+      "Content-Disposition": `attachment; filename="${urlPath.split("/").pop()}"`,
       "Accept-Ranges": "bytes",
     });
     const stream = fs.createReadStream(apkPath);
