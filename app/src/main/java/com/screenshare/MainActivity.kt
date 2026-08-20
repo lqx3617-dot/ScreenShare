@@ -263,6 +263,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnPip.setOnClickListener { enterPip() }
         binding.btnFlipCamera.setOnClickListener { onFlipCameraClicked() }
         binding.btnHidePip.setOnClickListener { toggleCameraPipHidden() }
+        binding.btnCamQuality.setOnClickListener { onCameraQualityClicked() }
+        binding.btnLocalPreview.setOnClickListener { onLocalPreviewClicked() }
+        binding.btnBrightness.setOnClickListener { onBrightnessClicked() }
+        binding.btnMirror.setOnClickListener { onMirrorClicked() }
         // 小窗（画中画）需要 Android 8.0+，低版本隐藏入口
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             binding.btnPip.visibility = View.GONE
@@ -862,7 +866,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
                 "video-call-off" -> {
                     // 共享方关闭视频通话：同步关闭本端（观看方）摄像头与 PIP 小窗，避免画面卡住残留
-                    runOnUiThread { closeVideoCall(notify = false) }
+                    runOnUiThread {
+                        playTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
+                        closeVideoCall(notify = false)
+                    }
                 }
             }
         } catch (t: Throwable) {
@@ -982,6 +989,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         updateVideoCallButton()
         setTalkPolling(true)
+        // 用户已开启本端预览时，开摄像头后自动建立本地渲染
+        if (localPreviewOn) {
+            setupLocalPreview()
+        }
         Toast.makeText(this, "视频通话已开启", Toast.LENGTH_SHORT).show()
         } catch (t: Throwable) {
             Log.e(TAG, "onVideoCallClicked 异常: ${t.message}")
@@ -1003,6 +1014,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (p == null) {
             setTalkPolling(false)
             releaseCameraPip()
+            releaseLocalPreview()
             return
         }
         if (videoCallOn) {
@@ -1018,6 +1030,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         // PIP 小窗显示的是对端摄像头画面，与本端是否开过摄像头无关，务必清理（否则对端画面卡在最后一帧）
         releaseCameraPip()
+        releaseLocalPreview()
         // 通知对端同步关闭其 PIP 小窗与摄像头（否则对端画面会卡在最后一帧）
         if (notify) {
             p.sendControl("""{"type":"video-call-off"}""")
@@ -1050,8 +1063,88 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 if (targetFront) "已切换前置摄像头" else "已切换后置摄像头",
                 Toast.LENGTH_SHORT
             ).show()
+            // 本端预览镜像跟随朝向切换
+            if (binding.flLocalPreview.visibility == View.VISIBLE) {
+                localPreviewRenderer?.setMirror(targetFront)
+            }
         } else {
             Toast.makeText(this, "设备无对应朝向摄像头", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // 视频通话增强状态：本端预览开关 / 镜面开关 / 亮度等级（0=原始，1~4 逐渐变暗）
+    private var localPreviewOn = false
+    private var cameraMirrorOn = false
+    private var brightnessLevel = 0
+
+    /** 画质档位切换：480P ⇄ 720P */
+    private fun onCameraQualityClicked() {
+        val p = peer ?: return
+        if (!p.isCameraOn()) {
+            Toast.makeText(this, "摄像头未开启", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val now720 = p.toggleCameraQuality()
+        binding.btnCamQuality.text = if (now720) "画质 720P" else "画质 480P"
+        binding.btnCamQuality.setTextColor(
+            if (now720) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
+        )
+        Toast.makeText(this, if (now720) "画质已切换 720P" else "画质已切换 480P", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 本端预览开关 */
+    private fun onLocalPreviewClicked() {
+        localPreviewOn = !localPreviewOn
+        if (localPreviewOn) {
+            setupLocalPreview()
+            binding.btnLocalPreview.text = "本端预览 关"
+        } else {
+            releaseLocalPreview()
+            binding.btnLocalPreview.text = "本端预览 开"
+        }
+        Toast.makeText(this, if (localPreviewOn) "本端预览已开启" else "本端预览已关闭", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 亮度调节：循环 原始→微暗→较暗→很暗→极暗 */
+    private fun onBrightnessClicked() {
+        brightnessLevel = (brightnessLevel + 1) % 5
+        applyBrightness()
+        val label = arrayOf("原始", "微暗", "较暗", "很暗", "极暗")[brightnessLevel]
+        Toast.makeText(this, "对方画面亮度: $label", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 镜面开关：本端预览 + 对方小窗渲染层水平镜像（仅显示效果，不改变编码流） */
+    private fun onMirrorClicked() {
+        cameraMirrorOn = !cameraMirrorOn
+        cameraPipRenderer?.setMirror(cameraMirrorOn)
+        if (binding.flLocalPreview.visibility == View.VISIBLE) {
+            localPreviewRenderer?.setMirror(cameraMirrorOn)
+        }
+        binding.btnMirror.text = if (cameraMirrorOn) "镜面 开" else "镜面 关"
+        Toast.makeText(this, if (cameraMirrorOn) "画面已镜像" else "画面已恢复", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 应用亮度遮罩：0=原始(无遮罩)，1~4 黑色遮罩透明度递增 */
+    private fun applyBrightness() {
+        val alpha = intArrayOf(0, 0x30, 0x5A, 0x80, 0xB0)[brightnessLevel]
+        val color = (alpha shl 24)
+        binding.vCameraPipBrightness.setBackgroundColor(color)
+        binding.vLocalPreviewBrightness.setBackgroundColor(color)
+        binding.vCameraPipBrightness.visibility = if (alpha > 0) View.VISIBLE else View.INVISIBLE
+        binding.vLocalPreviewBrightness.visibility = if (alpha > 0) View.VISIBLE else View.INVISIBLE
+    }
+
+    /** 播放系统提示音（视频通话接通/对方关闭/断线提示） */
+    private fun playTone(toneType: Int, durationMs: Int = 200) {
+        try {
+            val tg = android.media.ToneGenerator(
+                android.media.AudioManager.STREAM_MUSIC,
+                (android.media.ToneGenerator.MAX_VOLUME * 0.5).toInt()
+            )
+            tg.startTone(toneType, durationMs)
+            binding.root.postDelayed({ try { tg.release() } catch (_: Throwable) {} }, (durationMs + 200).toLong())
+        } catch (t: Throwable) {
+            Log.w(TAG, "提示音播放失败: ${t.message}")
         }
     }
 
@@ -1736,7 +1829,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
                     "video-call-off" -> {
                         // 观看方关闭视频通话：同步关闭本端（共享方）摄像头与 PIP 小窗，避免画面卡住残留
-                        runOnUiThread { closeVideoCall(notify = false) }
+                        runOnUiThread {
+                            playTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
+                            closeVideoCall(notify = false)
+                        }
                     }
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
@@ -2478,6 +2574,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 Log.e(TAG, "setupCameraPip: eglBaseContext 未就绪，跳过摄像头 PIP 渲染")
                 return
             }
+            // 对方画面首次到达（接通）提示音，重连/重挂载不重复响
+            if (cameraPipTrack == null && videoCallOn) {
+                playTone(android.media.ToneGenerator.TONE_PROP_BEEP2)
+            }
             // 移除旧的 PIP sink / renderer，避免重连时残留
             val oldTrack = cameraPipTrack
             cameraPipSink?.let { oldTrack?.removeSink(it) }
@@ -2491,12 +2591,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             val renderer = SurfaceViewRenderer(this)
             renderer.init(eglCtx, null)
             renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+            renderer.setMirror(cameraMirrorOn)
             renderer.layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
             binding.flCameraPip.addView(renderer, 0)
             cameraPipRenderer = renderer
+            // 亮度遮罩跟随当前调节等级（新 renderer 挂载后遮罩层仍保留在上层）
+            applyBrightness()
             binding.tvCameraPipHint.visibility = View.GONE
             binding.flCameraPip.setOnClickListener { onCameraPipClicked() }
             binding.flCameraPip.visibility = if (cameraPipHidden) View.GONE else View.VISIBLE
@@ -2526,6 +2629,61 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         cameraPipRenderer = null
         binding.flCameraPip.visibility = View.GONE
         binding.tvCameraPipHint.visibility = View.VISIBLE
+    }
+
+    // ======================== 视频通话本端预览 ========================
+
+    private var localPreviewTrack: VideoTrack? = null
+    private var localPreviewSink: VideoSink? = null
+    private var localPreviewRenderer: SurfaceViewRenderer? = null
+
+    /**
+     * 本端摄像头预览：把本端 cameraVideoTrack 渲染到左下角小窗。
+     * 本地渲染同一轨道，不涉及网络/协商；开启视频通话时默认显示。
+     */
+    private fun setupLocalPreview() {
+        val p = peer ?: return
+        val track = p.cameraVideoTrack() ?: return
+        try {
+            val eglCtx = eglBaseContext
+            if (eglCtx == null) return
+            releaseLocalPreview()
+            localPreviewTrack = track
+            val renderer = SurfaceViewRenderer(this)
+            renderer.init(eglCtx, null)
+            renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+            renderer.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            // 前置摄像头本端预览默认镜像（与习惯一致），后置不镜像
+            val front = p.isUsingFrontCamera()
+            renderer.setMirror(front)
+            binding.flLocalPreview.addView(renderer, 0)
+            localPreviewRenderer = renderer
+            binding.tvLocalPreviewHint.visibility = View.GONE
+            binding.flLocalPreview.visibility = View.VISIBLE
+            localPreviewSink = VideoSink { frame -> renderer.onFrame(frame) }
+            track.addSink(localPreviewSink!!)
+        } catch (t: Throwable) {
+            Log.e(TAG, "setupLocalPreview 异常: ${t.message}")
+        }
+    }
+
+    /** 清理本端预览 */
+    private fun releaseLocalPreview() {
+        localPreviewSink?.let { localPreviewTrack?.removeSink(it) }
+        localPreviewSink = null
+        localPreviewTrack = null
+        localPreviewRenderer?.let { r ->
+            if (r.parent == binding.flLocalPreview) {
+                binding.flLocalPreview.removeView(r)
+            }
+            r.release()
+        }
+        localPreviewRenderer = null
+        binding.flLocalPreview.visibility = View.GONE
+        binding.tvLocalPreviewHint.visibility = View.VISIBLE
     }
 
     // ======================== 视频通话增强功能 ========================
@@ -3410,6 +3568,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         exitFullscreen()
         releaseFullscreenRenderer()
         releaseCameraPip()
+        releaseLocalPreview()
         binding.btnStop.visibility = View.GONE
         binding.llToolbar.visibility = View.GONE
         binding.llMorePanel.visibility = View.GONE

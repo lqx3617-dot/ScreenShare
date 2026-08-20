@@ -186,6 +186,9 @@ class WebRTCPeer(
     private val cameraViewerSenders = mutableMapOf<Int, org.webrtc.RtpSender>()
     // viewer 端：主连接的摄像头发送器
     private var cameraSender: org.webrtc.RtpSender? = null
+    // 摄像头弱网自适应：最近一次码率/帧率上限（防重复设置）
+    private var lastCameraBitrateCap = 0
+    private var lastCameraFpsCap = 0
 
     // ===== V3.1: WebRTC 连接状态管理 =====
     enum class ConnectionStatus { CONNECTING, CONNECTED, RECONNECTING, FAILED }
@@ -909,6 +912,43 @@ class WebRTCPeer(
 
     /** 是否已开启视频通话摄像头 */
     fun isCameraOn(): Boolean = cameraVideoTrack != null
+
+    /** 本端摄像头轨道（供 MainActivity 本地预览渲染；null=未开启） */
+    fun cameraVideoTrack(): VideoTrack? = cameraVideoTrack
+
+    /** 当前摄像头采集分辨率档位（0=480p, 1=720p） */
+    private var cameraQualityLevel = 0
+
+    /**
+     * 切换视频通话画质档位：480p(640x480@30) 与 720p(1280x720@30) 之间切换。
+     * changeCaptureFormat 热切换采集分辨率，不影响发送器与会话（无重协商）。
+     * @return true=切到 720p, false=切回 480p
+     */
+    fun toggleCameraQuality(): Boolean {
+        val capturer = cameraCapturer ?: return cameraQualityLevel == 1
+        if (disposed) return cameraQualityLevel == 1
+        return try {
+            cameraQualityLevel = if (cameraQualityLevel == 0) 1 else 0
+            if (cameraQualityLevel == 1) {
+                capturer.changeCaptureFormat(1280, 720, 30)
+                Log.d(TAG, "摄像头画质切换: 720p")
+            } else {
+                capturer.changeCaptureFormat(640, 480, 30)
+                Log.d(TAG, "摄像头画质切换: 480p")
+            }
+            // 切档后重置弱网码率上限缓存，让 applyCameraAdaptation 按新档位重新设置
+            lastCameraBitrateCap = 0
+            applyCameraAdaptation()
+            cameraQualityLevel == 1
+        } catch (t: Throwable) {
+            Log.e(TAG, "切换摄像头画质失败: ${t.message}")
+            cameraQualityLevel = if (cameraQualityLevel == 0) 1 else 0
+            false
+        }
+    }
+
+    /** 当前摄像头画质档位是否为 720p */
+    fun isCamera720p(): Boolean = cameraQualityLevel == 1
 
     /** 是否当前使用前置摄像头 */
     fun isUsingFrontCamera(): Boolean {
@@ -1667,8 +1707,7 @@ class WebRTCPeer(
     }
 
     /** 弱网自适应公共实现：档位状态机 + 码率/降级策略 + 采集分辨率调整（主连接与 viewer 连接共用） */
-    private fun applyNetworkAdaptation(
-        pc: PeerConnection,
+    private fun applyNetworkAdaptation(        pc: PeerConnection,
         sender: org.webrtc.RtpSender,
         tag: String,
         fractionLossPct: Double,
@@ -1713,6 +1752,8 @@ class WebRTCPeer(
             }
         }
         val cap = adaptBitrateCaps[curAdaptLevel]
+        // 摄像头通话轨随档位同步自适应（码率/帧率上限），弱网时降低人脸画面数据量
+        applyCameraAdaptation()
         // 仅档位变化时调码率/策略，避免周期重置影响拥塞控制收敛
         if (lastAdaptBitrateCap != cap) {
             lastAdaptBitrateCap = cap
@@ -1772,6 +1813,43 @@ class WebRTCPeer(
         }
     }
 
+    /**
+     * 摄像头通话轨弱网自适应：随当前弱网档位调节摄像头发送器的码率/帧率上限。
+     * 摄像头 640x480@30 是人脸小画面，弱网时优先降码率上限与帧率上限（不降采集分辨率，保持清晰度），
+     * 屏幕共享主轨的自适应已由 applyNetworkAdaptation 处理，此处只作用 camera_track 的 sender。
+     * host 端对每个 viewer 连接的 camera sender、viewer 端对主连接的 camera sender 均生效。
+     */
+    private fun applyCameraAdaptation() {
+        val cameraSenders = buildList {
+            cameraSender?.let { add(it) }
+            cameraViewerSenders.values.forEach { add(it) }
+        }
+        if (cameraSenders.isEmpty()) return
+        // 档位 0(网络好)~4(最差)：码率上限 1200→800→500→300→200kbps，帧率 30→24→20→15→15
+        val bitrateCaps = intArrayOf(1_200_000, 800_000, 500_000, 300_000, 200_000)
+        val fpsCaps = intArrayOf(30, 24, 20, 15, 15)
+        val level = curAdaptLevel.coerceIn(0, bitrateCaps.size - 1)
+        val capBps = bitrateCaps[level]
+        val capFps = fpsCaps[level]
+        if (capBps == lastCameraBitrateCap && capFps == lastCameraFpsCap) return
+        lastCameraBitrateCap = capBps
+        lastCameraFpsCap = capFps
+        for (sender in cameraSenders) {
+            try {
+                val params = sender.parameters
+                val enc = params.encodings?.firstOrNull()
+                if (enc != null) {
+                    enc.maxBitrateBps = capBps
+                    enc.maxFramerate = capFps
+                }
+                sender.parameters = params
+                Log.d(TAG, "摄像头弱网自适应: 档位$level 码率上限${capBps / 1000}kbps 帧率$capFps")
+            } catch (t: Throwable) {
+                Log.w(TAG, "摄像头自适应调参失败: ${t.message}")
+            }
+        }
+    }
+
     /** 重置弱网自适应状态（断开/重新连接时调用） */
     fun resetAdaptiveState() {
         curAdaptLevel = 0
@@ -1783,6 +1861,8 @@ class WebRTCPeer(
         encLoadSamples = 0
         encRecoverSamples = 0
         lastCaptureFps = 30
+        lastCameraBitrateCap = 0
+        lastCameraFpsCap = 0
     }
 
     fun disconnect() {

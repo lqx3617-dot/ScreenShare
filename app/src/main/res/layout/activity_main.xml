@@ -485,6 +485,70 @@
                 android:paddingEnd="12dp"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnCamQuality"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="画质 480P"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnLocalPreview"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="本端预览 开"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnBrightness"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="亮度"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnMirror"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="镜面 关"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#FF1E293B"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn"
+                android:visibility="gone" />
         </LinearLayout>
 
     </LinearLayout>
@@ -509,6 +573,44 @@
             android:textSize="11sp"
             android:textColor="@color/text_hint"
             android:background="#88000000" />
+        <!-- 对方画面亮度遮罩：跟随亮度调节，纯显示层不改变视频流 -->
+        <View
+            android:id="@+id/vCameraPipBrightness"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#00000000"
+            android:clickable="false"
+            android:visibility="invisible" />
+    </FrameLayout>
+
+    <!-- 视频通话本端预览小窗：显示自己摄像头画面（确认对方看到的内容），浮在左下角 -->
+    <FrameLayout
+        android:id="@+id/flLocalPreview"
+        android:layout_width="100dp"
+        android:layout_height="133dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="104dp"
+        android:background="@drawable/bg_video_frame"
+        android:elevation="30dp"
+        android:visibility="gone">
+        <TextView
+            android:id="@+id/tvLocalPreviewHint"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="本端预览"
+            android:textSize="11sp"
+            android:textColor="@color/text_hint"
+            android:background="#88000000" />
+        <!-- 本端预览亮度遮罩：跟随亮度调节 -->
+        <View
+            android:id="@+id/vLocalPreviewBrightness"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#00000000"
+            android:clickable="false"
+            android:visibility="invisible" />
     </FrameLayout>
 
     <!-- 全屏叠加层：在 FrameLayout 最外层，覆盖所有内容 -->
