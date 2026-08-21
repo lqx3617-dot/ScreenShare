@@ -19,6 +19,8 @@ keystore.properties
 /ScreenShare-allarch-signed.apk
 /ScreenShare-allarch-signed.apk.aligned
 /ScreenShare-allarch-signed.apk.idsig
+/ScreenShare-allarch-signed.apk.*
+/ScreenShare-*.signed.apk
 /AlbumViewer-signed.apk
 /AlbumViewer-signed.apk.idsig
 /build-tmp/
