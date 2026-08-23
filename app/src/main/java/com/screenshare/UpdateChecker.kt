@@ -477,7 +477,55 @@ object UpdateChecker {
         else -> "%.1f MB".format(bytes.toDouble() / 1048576)
     }
 
+    /** 验证 APK 签名与当前已安装应用一致，防止中间人替换安装包 */
+    private fun verifyApkSignature(context: Context, apk: File): Boolean {
+        return try {
+            val pm = context.packageManager
+            val archiveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNATURES)
+            } ?: return false
+
+            val currentInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+            } ?: return false
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val apkSignatures = archiveInfo.signingInfo?.apkContentsSigners ?: return false
+                val currentSignatures = currentInfo.signingInfo?.apkContentsSigners ?: return false
+                apkSignatures.contentEquals(currentSignatures)
+            } else {
+                @Suppress("DEPRECATION")
+                val apkSignatures = archiveInfo.signatures ?: return false
+                @Suppress("DEPRECATION")
+                val currentSignatures = currentInfo.signatures ?: return false
+                apkSignatures.contentEquals(currentSignatures)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "签名验证失败: ${e.message}")
+            false
+        }
+    }
+
     private fun installApk(context: Context, apk: File) {
+        // 安装前验证 APK 签名与当前应用一致
+        if (!verifyApkSignature(context, apk)) {
+            apk.delete()
+            (context as? android.app.Activity)?.runOnUiThread {
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("安全警告")
+                    .setMessage("下载的 APK 签名与当前应用不匹配，已拒绝安装，请从官方渠道更新。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
+            return
+        }
+
         // Android 8+ 需要"安装未知应用"权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             (context as? android.app.Activity)?.runOnUiThread {

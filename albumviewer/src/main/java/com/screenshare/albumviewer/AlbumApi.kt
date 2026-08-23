@@ -35,18 +35,7 @@ data class AlbumDevice(
 class AlbumApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
-    private val albumKey = BuildConfig.ALBUM_KEY
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .addInterceptor { chain ->
-            val orig = chain.request()
-            val req = if (albumKey.isNotEmpty()) {
-                orig.newBuilder().header("x-album-key", albumKey).build()
-            } else orig
-            chain.proceed(req)
-        }
-        .build()
+    private val client = HttpClientProvider.client
 
     companion object {
         private val JSON_MEDIA: okhttp3.MediaType = "application/json; charset=utf-8".toMediaType()

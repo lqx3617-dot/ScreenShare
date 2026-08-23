@@ -69,20 +69,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        // Coil 全局配置：图片请求自动附加相册访问密钥 header（key 不再进 URL 查询串，防日志/Referer 泄露）
+        // Coil 全局配置：复用共享 OkHttpClient（自动附加相册访问密钥 header）
         Coil.setImageLoader(
             ImageLoader.Builder(this)
-                .okHttpClient(
-                    OkHttpClient.Builder()
-                        .addInterceptor { chain ->
-                            val orig = chain.request()
-                            val req = if (BuildConfig.ALBUM_KEY.isNotEmpty()) {
-                                orig.newBuilder().header("x-album-key", BuildConfig.ALBUM_KEY).build()
-                            } else orig
-                            chain.proceed(req)
-                        }
-                        .build()
-                )
+                .okHttpClient(HttpClientProvider.client)
                 .build()
         )
 
@@ -694,8 +684,6 @@ class MainActivity : AppCompatActivity() {
         var onThumbClick: ((Int) -> Unit)? = null
         var onThumbLongClick: ((Int) -> Unit)? = null
         private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
-        private val albumKey = BuildConfig.ALBUM_KEY
-
         fun setEmpty() {
             photos = emptyList()
             notifyDataSetChanged()
@@ -714,8 +702,8 @@ class MainActivity : AppCompatActivity() {
 
         fun thumbUrl(photo: AlbumPhoto): String {
             val pad = photo.index.toString().padStart(4, '0')
-            val k = if (albumKey.isNotEmpty()) "?key=$albumKey" else ""
-            return "$baseUrl/${photo.token}/$pad.jpg$k"
+            // key 走 Coil 拦截器自动附加 header，不拼入 URL 查询串（防日志/Referer 泄露）
+            return "$baseUrl/${photo.token}/$pad.jpg"
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

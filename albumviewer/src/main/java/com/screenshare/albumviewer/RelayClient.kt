@@ -27,11 +27,7 @@ class RelayClient(
     companion object {
         private const val TAG = "RelayClient"
         private const val TIMEOUT_MS = 15000L
-        private val client by lazy {
-            OkHttpClient.Builder()
-                .pingInterval(10, TimeUnit.SECONDS)
-                .build()
-        }
+        private val client = HttpClientProvider.client
     }
 
     private var ws: WebSocket? = null

@@ -20,11 +20,7 @@ data class PublishStatus(
 class PublishApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.PUBLISH_URL.trimEnd('/')
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .build()
+    private val client = HttpClientProvider.client
 
     /**
      * 提交发布任务。返回 taskId；失败抛异常（消息即错误原因）。

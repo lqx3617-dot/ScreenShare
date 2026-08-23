@@ -15,7 +15,9 @@
 const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
+const fsp = fs.promises;
 const path = require("path");
+const rateLimit = require("express-rate-limit");
 const db = require("./db");
 const { renderAlbumPage, renderAllAlbumPage } = require("./web");
 
@@ -31,10 +33,30 @@ const BODY_LIMIT = "12mb";
 
 const app = express();
 app.use(express.json({ limit: BODY_LIMIT }));
+
+// 速率限制：上传/去重/删除等写操作 30 次/分钟，读操作 60 次/分钟
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+
 // 统一安全响应头：防 MIME 嗅探执行（存储型 XSS 缓解）
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("X-Frame-Options", "SAMEORIGIN");
+  res.set("X-XSS-Protection", "0"); // 已废弃但兼容旧浏览器
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 });
 
@@ -44,6 +66,11 @@ function validPhotoIndex(index) {
 }
 function validVideoIndex(index) {
   return Number.isInteger(index) && index >= 1000000 && index <= 1999999;
+}
+
+/** JPEG 魔数校验：检查 buffer 前 2 字节是否为 FF D8 */
+function isJpeg(buf) {
+  return buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xD8;
 }
 
 // ==================== 访问鉴权中间件 ====================
@@ -104,7 +131,7 @@ function json(res, code, obj) {
 }
 
 // ==================== POST /api/upload ====================
-app.post("/api/upload", (req, res) => {
+app.post("/api/upload", writeLimiter, async (req, res) => {
   const body = req.body || {};
   const action = body.action;
 
@@ -113,7 +140,11 @@ app.post("/api/upload", (req, res) => {
     // device 可选：远程相册同步按设备分组；普通会议上传不携带则空
     const device = String(body.device || "").trim().slice(0, 64);
     db.createSession(token, Date.now(), device);
-    fs.mkdirSync(sessionDir(token), { recursive: true });
+    try {
+      await fsp.mkdir(sessionDir(token), { recursive: true });
+    } catch (e) {
+      console.log(`[album] ${new Date().toISOString()} create-mkdir-fail ${token}: ${e.message}`);
+    }
     pending.set(token, new Set());
     console.log(`[album] ${new Date().toISOString()} create ${token} device=${device || "-"}`);
     return json(res, 200, { token });
@@ -133,7 +164,11 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
-      fs.writeFileSync(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} upload-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
+      await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
       session.received.add(index);
       session.total = Math.max(session.total, index);
       db.saveSession(session);
@@ -153,7 +188,11 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
-      fs.writeFileSync(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} video-thumb-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
+      await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
       console.log(`[album] ${new Date().toISOString()} video-thumb ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true });
     } catch (e) {
@@ -181,9 +220,13 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} original-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
       const dir = path.join(sessionDir(token), "original");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${pad(index)}.jpg`), buf);
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(path.join(dir, `${pad(index)}.jpg`), buf);
       pending.get(token)?.delete(index);
       session.originals.add(index);
       db.saveSession(session);
@@ -211,7 +254,7 @@ app.post("/api/upload", (req, res) => {
 //   GET  /api/video?token=<t>&index=N  → 视频流（支持 Range，观看方拖动进度）
 const VIDEO_CHUNK = 3 * 1024 * 1024; // 单块目标 3MB 二进制
 
-app.post("/api/video/upload", (req, res) => {
+app.post("/api/video/upload", writeLimiter, async (req, res) => {
   const body = req.body || {};
   const token = String(body.token || "");
   const index = parseInt(body.index, 10);
@@ -222,7 +265,7 @@ app.post("/api/video/upload", (req, res) => {
   if (body.action === "reset") {
     // 断点续传失败重新开始时清空已写文件
     try {
-      fs.rmSync(path.join(sessionDir(token), "video", `${pad(index)}.mp4`), { force: true });
+      await fsp.rm(path.join(sessionDir(token), "video", `${pad(index)}.mp4`), { force: true });
     } catch (e) {}
     return json(res, 200, { ok: true });
   }
@@ -233,18 +276,19 @@ app.post("/api/video/upload", (req, res) => {
     const buf = Buffer.from(chunk, "base64");
     if (buf.length === 0) return json(res, 400, { error: "empty chunk" });
     const dir = path.join(sessionDir(token), "video");
-    fs.mkdirSync(dir, { recursive: true });
+    await fsp.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${pad(index)}.mp4`);
     // offset 断言：必须与当前文件长度一致（顺序写入），不一致说明客户端丢块
     const offset = parseInt(body.offset, 10) || 0;
     let cur = 0;
     try {
-      cur = fs.statSync(file).size;
+      const st = await fsp.stat(file);
+      cur = st.size;
     } catch (e) {}
     if (cur !== offset) {
       return json(res, 409, { error: "offset mismatch", expected: cur, got: offset });
     }
-    fs.appendFileSync(file, buf);
+    await fsp.appendFile(file, buf);
     console.log(`[album] ${new Date().toISOString()} video-chunk ${token} idx=${index} offset=${offset}+${buf.length}`);
     return json(res, 200, { ok: true, offset: cur + buf.length });
   } catch (e) {
@@ -333,7 +377,7 @@ app.get("/api/pending", (req, res) => {
  * 删除其余照片的缩略图与原图文件，并从 DB received/originals 中移除。
  * 返回 {ok, groups, removed:[{token,index}], freedBytes}。
  */
-app.post("/api/dedup", (req, res) => {
+app.post("/api/dedup", writeLimiter, (req, res) => {
   try {
     const sessions = db.listAll();
     const byMd5 = new Map(); // md5 -> [{token,index,thumbSize,hasOriginal,createdAt}]
@@ -412,7 +456,7 @@ app.post("/api/dedup", (req, res) => {
  * 并从 DB received/originals/videos 移除。返回 {ok}。
  *   POST /api/photo/delete body={token, index}
  */
-app.post("/api/photo/delete", (req, res) => {
+app.post("/api/photo/delete", writeLimiter, async (req, res) => {
   const token = String((req.body || {}).token || "");
   const index = parseInt((req.body || {}).index, 10);
   const session = loadSession(token);
@@ -428,7 +472,7 @@ app.post("/api/photo/delete", (req, res) => {
   ];
   for (const f of files) {
     try {
-      fs.rmSync(f, { force: true });
+      await fsp.rm(f, { force: true });
     } catch (e) {}
   }
   // 从 DB 移除
@@ -446,10 +490,11 @@ app.get("/api/devices", (req, res) => {
 });
 
 /** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
-app.get("/api/albums", (req, res) => {
+app.get("/api/albums", async (req, res) => {
   // 扫描磁盘目录，把旧版 meta.json 会话懒迁移入库，确保历史照片也归拢进聚合视图
   try {
-    for (const name of fs.readdirSync(ALBUM_ROOT)) {
+    const names = await fsp.readdir(ALBUM_ROOT);
+    for (const name of names) {
       if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
     }
   } catch (e) {}
