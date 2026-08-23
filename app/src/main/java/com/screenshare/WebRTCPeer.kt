@@ -1430,7 +1430,21 @@ class WebRTCPeer(
                         var outLossPct = -1.0 // fractionLost：远端直接报告的丢包率 0~1，未上报时为 -1
                         var outEncImpl = ""    // 编码器实现（判断软编/硬编：如 HWEncoder/H264 / SWEncoder）
                         var outQualityLimit = "" // 编码瓶颈：cpu/bandwidth/none
+                        // 诊断：当前选中的候选对路径（host/srflx/relay + 地址），用于定位 P2P 直连失败问题
+                        var selPath = ""
+                        var pathType = "" // 仅用于诊断去重：host/srflx/relay 组合，不含 IP
                         val stats = report.statsMap
+                        // 第一遍：索引各 candidate 的 id -> 地址与类型（本地/远端）
+                        val candAddr = HashMap<String, String>()
+                        for ((_, s) in stats) {
+                            val members = s.members ?: continue
+                            if (s.type == "local-candidate" || s.type == "remote-candidate") {
+                                val ip = (members["ip"] as? String) ?: ""
+                                val port = (members["port"] as? Number)?.toInt() ?: 0
+                                val ctype = (members["candidateType"] as? String) ?: "?"
+                                candAddr[s.id] = "$ctype $ip:$port"
+                            }
+                        }
                         for ((_, s) in stats) {
                             when (s.type) {
                                 "inbound-rtp" -> {
@@ -1463,10 +1477,20 @@ class WebRTCPeer(
                                     if (frac != null && frac >= 0) outLossPct = frac * 100.0
                                 }
                                 "candidate-pair" -> {
-                                    val active = s.members["nominated"]
-                                    if (active == true || active?.toString() == "true") {
-                                        val r = (s.members["currentRoundTripTime"] as? Number)?.toDouble()
-                                        if (r != null && r > 0) rtt = r * 1000.0
+                                    val members = s.members
+                                    if (members != null) {
+                                        val active = members["nominated"]
+                                        if (active == true || active?.toString() == "true") {
+                                            val r = (members["currentRoundTripTime"] as? Number)?.toDouble()
+                                            if (r != null && r > 0) rtt = r * 1000.0
+                                            // 记录选中路径：local:host 192.168.x → remote:relay 1.2.x（local→remote 方向）
+                                            val loc = (members["localCandidateId"] as? String) ?: ""
+                                            val rem = (members["remoteCandidateId"] as? String) ?: ""
+                                            val locStr = candAddr[loc] ?: "?"
+                                            val remStr = candAddr[rem] ?: "?"
+                                            selPath = "${locStr} → ${remStr}"
+                                            pathType = locStr.substringBefore(" ") + "→" + remStr.substringBefore(" ")
+                                        }
                                     }
                                 }
                                 else -> {}
@@ -1491,6 +1515,8 @@ class WebRTCPeer(
                             put("outLossPct", outLossPct)
                             put("encImpl", outEncImpl)
                             put("qualityLimit", outQualityLimit)
+                            put("path", selPath)
+                            put("pathType", pathType)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")
