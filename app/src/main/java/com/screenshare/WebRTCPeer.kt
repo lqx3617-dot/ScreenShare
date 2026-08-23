@@ -1430,7 +1430,19 @@ class WebRTCPeer(
                         var outLossPct = -1.0 // fractionLost：远端直接报告的丢包率 0~1，未上报时为 -1
                         var outEncImpl = ""    // 编码器实现（判断软编/硬编：如 HWEncoder/H264 / SWEncoder）
                         var outQualityLimit = "" // 编码瓶颈：cpu/bandwidth/none
+                        // 诊断：当前选中的候选对路径（host/srflx/relay + 地址），用于定位 P2P 直连失败问题
+                        var selPath = ""
                         val stats = report.statsMap
+                        // 第一遍：索引各 candidate 的 id -> 地址与类型（本地/远端）
+                        val candAddr = HashMap<String, String>()
+                        for ((_, s) in stats) {
+                            if (s.type == "local-candidate" || s.type == "remote-candidate") {
+                                val ip = (s.members["ip"] as? String) ?: ""
+                                val port = (s.members["port"] as? Number)?.toInt() ?: 0
+                                val ctype = (s.members["candidateType"] as? String) ?: "?"
+                                candAddr[s.id] = "$ctype $ip:$port"
+                            }
+                        }
                         for ((_, s) in stats) {
                             when (s.type) {
                                 "inbound-rtp" -> {
@@ -1467,6 +1479,10 @@ class WebRTCPeer(
                                     if (active == true || active?.toString() == "true") {
                                         val r = (s.members["currentRoundTripTime"] as? Number)?.toDouble()
                                         if (r != null && r > 0) rtt = r * 1000.0
+                                        // 记录选中路径：本地候选类型 + 远端候选类型
+                                        val loc = (s.members["localCandidateId"] as? String) ?: ""
+                                        val rem = (s.members["remoteCandidateId"] as? String) ?: ""
+                                        selPath = "${candAddr[rem] ?: "?"} <- ${candAddr[loc] ?: "?"}"
                                     }
                                 }
                                 else -> {}
@@ -1491,6 +1507,7 @@ class WebRTCPeer(
                             put("outLossPct", outLossPct)
                             put("encImpl", outEncImpl)
                             put("qualityLimit", outQualityLimit)
+                            put("path", selPath)
                         }.toString()
                     } catch (t: Throwable) {
                         Log.w(TAG, "统计解析失败: ${t.message}")

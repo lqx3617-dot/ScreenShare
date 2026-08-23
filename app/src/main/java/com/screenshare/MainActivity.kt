@@ -3192,6 +3192,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         )
                         val fullText = panelText + qualityText
                         val warn = !isHostView && lostPct >= 1.0
+                        // 诊断：真实连接路径（host/srflx/relay），附加到状态条便于现场观察
+                        val selPath = json.optString("path", "")
+                        val fullTextWithPath = if (selPath.isNotBlank()) fullText + " | 路径:${selPath.take(60)}" else fullText
                         // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
                         if (isHostView) {
                             val impl = json.optString("encImpl", "")
@@ -3201,7 +3204,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val isSoftEnc = impl.contains("SW", true) || impl.contains("OpenH264", true) || impl.contains("Software", true)
                             val anomaly = isSoftEnc || limit == "cpu" || lossPct >= 3.0 || rttMs >= 500
                             if (anomaly) {
-                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView"
+                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView|$selPath"
                                 if (sig != lastDiagSig) {
                                     lastDiagSig = sig
                                     reportDiagnostic(
@@ -3209,7 +3212,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                             "quality=${peer?.calculateQuality(if (lossPct >= 0) lossPct else 0.0, rttMs) ?: 0} " +
                                             "outFps=${json.optInt("outFps", 0)} inFps=${json.optInt("inFps", 0)} " +
                                             "res=${json.optInt("outW", 0)}x${json.optInt("outH", 0)} " +
-                                            "outBytes=${json.optLong("outBytes", 0)}"
+                                            "outBytes=${json.optLong("outBytes", 0)} path=$selPath"
                                     )
                                 }
                             }
@@ -3218,7 +3221,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         binding.root.post {
                             if (!isFullscreen) return@post
                             binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF4B8DF9.toInt())
-                            binding.tvFullscreenStats.text = fullText
+                            binding.tvFullscreenStats.text = fullTextWithPath
                         }
                     }
                 } catch (t: Throwable) {
@@ -3320,13 +3323,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val fps = json.optInt("inFps", 0)
                         val w = json.optInt("inW", 0)
                         val h = json.optInt("inH", 0)
+                        val selPath = json.optString("path", "")
                         val rttText = if (rtt > 0) "${rtt}ms" else "--"
                         val hint = when {
                             rtt > 300 -> " ⚠️延迟高"
                             rtt > 150 -> " ⚠️延迟偏高"
                             else -> ""
                         }
-                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$hint"
+                        val pathText = if (selPath.isNotBlank()) " | 路径:${selPath.take(50)}" else ""
+                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text

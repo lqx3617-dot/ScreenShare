@@ -348,3 +348,15 @@ Entries discovered by the Agent during task execution should follow this format:
 
 
 
+
+## 连接路径诊断与 TURN 不可行（2026-08-23）
+[Project Knowledge Summary]
+- Date: 2026-08-23
+- Context: Discovered by Agent while 排查同 WiFi 延迟高连接（用户已切同一 WiFi 仍高延迟）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - **新增连接路径诊断（v1.216/219）**：WebRTCPeer.collectStatsFor 先建 candAddr 索引（id→候选 "类型 ip:port"，local/remote-candidate 读取 candidateType 字段），后遍历 candidate-pair selected 用 nominated 标志取当前选中对，经 candAddr 生成 selPath（格式如 "host 192.168.5.23<->host 192.168.5.31"）；写入 JSON "path" 字段。MainActivity 状态条与 viewer 统计循环（startViewerStatsLoop）均显示 " | 路径:<selPath>"。
+  - **本环境 TURN 中继不可行**：裸 3478 公网不通（TCP 后立即 EOF）、`PORT-域名:443` 是 HTTP 层反向代理不是裸 TCP → TURN over TCP 走 443 返回 HTTP 400。验证需用 coturn 客户端工具分配测试（TURN 是二进制协议非 HTTP，curl 无法测）。无需再尝试 TURN via 443。
+  - **域名不可移植**：当前域名 10d780a80ffc046e，与 MEMORY 中旧成功域名 6d639d2de20eb686 是不同实例，裸 3478 是否可用视实例而定，不能想当然复用旧配置。
+  - 用户同 WiFi（192.168.5.x）下 host 候选已同网段但延迟仍高 → 最可能 AP 隔离（client isolation）或路由器不支持 NAT hairpin，导致 host 打洞失败回退 srflx；srflx 在同一 NAT 下也需 hairpin 才可达。已用 selPath 诊断定位实际路径（若显示 srflx 即坐实 AP 隔离/hairpin 问题）。
+  - 部署修正：下载服务器必须带 DOWNLOAD_BASE=8090-10d780a80ffc046e.monkeycode-ai.online 重启，否则 version.json 的 url 回退 127.0.0.1 导致公网下载失败（本地测试 127.0.0.1 正常会掩盖此 bug）。
