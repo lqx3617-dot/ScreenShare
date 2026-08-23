@@ -3,6 +3,7 @@ package com.screenshare
 import android.content.Context
 import android.media.projection.MediaProjection
 import android.util.Log
+import java.util.concurrent.atomic.AtomicBoolean
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
@@ -307,6 +308,9 @@ class WebRTCPeer(
 
         // 注意：不用废弃的 onAddStream——远端轨统一由下方 onAddTrack/onTrack 回调处理，
         // 两者都实现会导致同一轨道被通知两次（重复渲染/重复注册）
+        // 但 SDK 的 PeerConnection.Observer.onAddStream 是抽象方法必须实现，此处留空（兼容旧接口签名）
+        override fun onAddStream(stream: MediaStream?) {}
+        override fun onRemoveStream(stream: MediaStream?) {}
         override fun onDataChannel(channel: org.webrtc.DataChannel?) {
             Log.d(TAG, "onDataChannel: ${channel?.label()}")
             if (channel?.label() == SYSTEM_AUDIO_LABEL) {
