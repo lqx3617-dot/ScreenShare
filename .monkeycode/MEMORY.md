@@ -360,3 +360,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - **域名不可移植**：当前域名 10d780a80ffc046e，与 MEMORY 中旧成功域名 6d639d2de20eb686 是不同实例，裸 3478 是否可用视实例而定，不能想当然复用旧配置。
   - 用户同 WiFi（192.168.5.x）下 host 候选已同网段但延迟仍高 → 最可能 AP 隔离（client isolation）或路由器不支持 NAT hairpin，导致 host 打洞失败回退 srflx；srflx 在同一 NAT 下也需 hairpin 才可达。已用 selPath 诊断定位实际路径（若显示 srflx 即坐实 AP 隔离/hairpin 问题）。
   - 部署修正：下载服务器必须带 DOWNLOAD_BASE=8090-10d780a80ffc046e.monkeycode-ai.online 重启，否则 version.json 的 url 回退 127.0.0.1 导致公网下载失败（本地测试 127.0.0.1 正常会掩盖此 bug）。
+
+## 审查提交引入的 KEYSTORE_PASS 依赖与编译修复（2026-08-23）
+[Project Knowledge Summary]
+- Date: 2026-08-23
+- Context: Discovered by Agent while 部署审查提交（18a3c23）后构建/重启下载服务器
+- Category: Environment Configuration
+- Instructions:
+  - **代码审查提交（18a3c23 "feat: 代码审查"）把 publish.js 签名口令改为仅从 KEYSTORE_PASS 环境变量注入**，未设置时顶层抛异常终止。download-server.js 启动时 require("./publish") 会连带触发 → 无 KEYSTORE_PASS 时下载服务器崩溃、8090 公网 530。**重启 download-server 必须带 KEYSTORE_PASS=screenshare123**（与签名口令一致）。
+  - 审查提交删除 WebRTCPeer.kt pcObserver 的 onAddStream/onRemoveStream，但 SDK PeerConnection.Observer 的 onAddStream 是抽象方法必须实现 → 编译报"Object is not abstract"。修复：在 pcObserver 补回空实现 override fun onAddStream/onRemoveStream（保留"不使用废弃 onAddStream 避免重复通知"的意图），并补 import java.util.concurrent.atomic.AtomicBoolean（新增 negotiating 字段用到）。
+  - 审查提交同时新增：album-server express-rate-limit 限流+JPEG魔数校验+CSP/HSTS/Permissions-Policy 安全头、UpdateChecker.kt 安装前 verifyApkSignature 签名校验、WebRTCPeer 协商防重入 AtomicBoolean、CameraCapture onFail 改 return null、MainActivity buildJson 防注入、ScreenSyncService syncedIdSet 性能优化。**注意这些是新增依赖/改动，构建前需确认 album-server 已 npm i 装入 express-rate-limit（在 album-server 目录 npm install），且生产环境相册服务需 ALBUM_KEY 才生效限流与鉴权。**
