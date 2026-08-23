@@ -714,8 +714,8 @@ class MainActivity : AppCompatActivity() {
 
         fun thumbUrl(photo: AlbumPhoto): String {
             val pad = photo.index.toString().padStart(4, '0')
-            val k = if (albumKey.isNotEmpty()) "?key=$albumKey" else ""
-            return "$baseUrl/${photo.token}/$pad.jpg$k"
+            // key 走 header（Coil 拦截器自动附加），不再拼进 URL 查询串（防日志/Referer 泄露）
+            return "$baseUrl/${photo.token}/$pad.jpg"
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

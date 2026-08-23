@@ -124,7 +124,7 @@ object CameraCapture {
             }
             if (openError != null) {
                 onFail("${label}打开失败: ${openError!!.message}")
-                throw openError!!
+                return null
             }
             val d = device ?: run { onFail("${label}设备为空"); return null }
 

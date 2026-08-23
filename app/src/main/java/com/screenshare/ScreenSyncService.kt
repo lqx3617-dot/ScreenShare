@@ -405,7 +405,10 @@ class ScreenSyncService : Service() {
             }
             val syncedIds = prefs.getStringSet(PREFS_SYNCED_IDS, HashSet())?.toMutableSet()
                 ?: HashSet()
-            val pending = allIds.filter { it.toString() !in syncedIds }
+            // 一次性把已同步集合转成 Long Set，避免对全量 id 逐个 toString() 比较产生大量字符串分配
+            val syncedIdSet = HashSet<Long>(syncedIds.size)
+            for (s in syncedIds) s.toLongOrNull()?.let { syncedIdSet.add(it) }
+            val pending = allIds.filter { it !in syncedIdSet }
             totalCount = allIds.size + allVideoIds.size
             syncedCount = syncedIds.size
             if (pending.isEmpty() && allVideoIds.isEmpty()) {

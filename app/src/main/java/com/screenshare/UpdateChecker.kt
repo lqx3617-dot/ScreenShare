@@ -11,6 +11,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.pm.PackageInfo
+import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -477,7 +479,54 @@ object UpdateChecker {
         else -> "%.1f MB".format(bytes.toDouble() / 1048576)
     }
 
+    /**
+     * 校验下载的 APK 签名与当前已安装应用是否一致。
+     * 防止恶意替换更新：MD5 只防传输损坏，不防中间人伪造（攻击者可同时改 MD5）。
+     * @return 签名一致返回 true；无法解析或签名不一致返回 false。
+     */
+    private fun verifyApkSignature(context: Context, apk: File): Boolean {
+        return try {
+            val cur = context.packageManager.getPackageInfo(context.packageName, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+            val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+                ?: return false
+            archive.applicationInfo.sourceDir = apk.absolutePath
+            archive.applicationInfo.publicSourceDir = apk.absolutePath
+
+            val curSigs = if (Build.VERSION.SDK_INT >= 28) {
+                val si = cur.signingInfo ?: return false
+                if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                cur.signatures
+            }
+            val apkSigs = if (Build.VERSION.SDK_INT >= 28) {
+                val si = archive.signingInfo ?: return false
+                if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                archive.signatures
+            }
+            if (curSigs == null || apkSigs == null) return false
+            curSigs.any { curSig -> apkSigs.any { it.toByteArray().contentEquals(curSig.toByteArray()) } }
+        } catch (e: Exception) {
+            Log.e(TAG, "签名校验异常: ${e.message}")
+            false
+        }
+    }
+
     private fun installApk(context: Context, apk: File) {
+        // 安全：安装前校验 APK 签名与当前应用一致，防恶意替换
+        if (!verifyApkSignature(context, apk)) {
+            Log.e(TAG, "APK 签名校验失败，拒绝安装")
+            (context as? android.app.Activity)?.runOnUiThread {
+                AlertDialog.Builder(context)
+                    .setTitle("安装已阻止")
+                    .setMessage("下载的更新包签名与本应用不一致，已拒绝安装。请从官方渠道获取更新。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
+            return
+        }
         // Android 8+ 需要"安装未知应用"权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             (context as? android.app.Activity)?.runOnUiThread {

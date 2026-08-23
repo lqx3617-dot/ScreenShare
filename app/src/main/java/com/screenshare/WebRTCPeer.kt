@@ -146,7 +146,9 @@ class WebRTCPeer(
         var videoSender: org.webrtc.RtpSender? = null,
         var micSender: org.webrtc.RtpSender? = null,
         var systemAudioChannel: DataChannel? = null,
-        var controlChannel: DataChannel? = null
+        var controlChannel: DataChannel? = null,
+        // 防重入：该连接上是否有未完成的 Offer 协商（避免并发 createOffer 竞态导致协商失败）
+        val negotiating: AtomicBoolean = AtomicBoolean(false)
     )
     private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
     // viewer 断线重建计数（防持续弱网下无限重建）与上限
@@ -303,18 +305,8 @@ class WebRTCPeer(
         }
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
 
-        @Deprecated("Deprecated in Java")
-        override fun onAddStream(stream: MediaStream?) {
-            stream?.videoTracks?.firstOrNull()?.let { track ->
-                if (track.id() == CAMERA_TRACK_ID) {
-                    listener.onRemoteCameraTrack(track)
-                } else {
-                    listener.onRemoteVideoTrack(track)
-                }
-            }
-        }
-        @Deprecated("Deprecated in Java")
-        override fun onRemoveStream(stream: MediaStream?) {}
+        // 注意：不用废弃的 onAddStream——远端轨统一由下方 onAddTrack/onTrack 回调处理，
+        // 两者都实现会导致同一轨道被通知两次（重复渲染/重复注册）
         override fun onDataChannel(channel: org.webrtc.DataChannel?) {
             Log.d(TAG, "onDataChannel: ${channel?.label()}")
             if (channel?.label() == SYSTEM_AUDIO_LABEL) {
@@ -561,6 +553,11 @@ class WebRTCPeer(
     /** 为该 viewer 创建 Offer 并发起协商（host 端） */
     fun createOfferFor(viewerId: Int) {
         val conn = viewerConnections[viewerId] ?: return
+        // 防重入：该连接已有未完成的 Offer 协商时跳过本次（createOffer 并发调用会互相干扰导致协商失败）
+        if (!conn.negotiating.compareAndSet(false, true)) {
+            Log.d(TAG, "viewer#$viewerId 正在协商中，跳过重复 createOffer")
+            return
+        }
         val pc = conn.pc
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -570,15 +567,22 @@ class WebRTCPeer(
             override fun onCreateSuccess(sdp: SessionDescription) {
                 pc.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
+                        conn.negotiating.set(false)
                         val ld = pc.localDescription
                         listener.onViewerOfferReady(viewerId, ld ?: sdp)
                     }
-                    override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId setLocalDescription 失败: $error") }
+                    override fun onSetFailure(error: String?) {
+                        conn.negotiating.set(false)
+                        Log.e(TAG, "viewer#$viewerId setLocalDescription 失败: $error")
+                    }
                     override fun onCreateSuccess(p0: SessionDescription?) {}
                     override fun onCreateFailure(p0: String?) {}
                 }, sdp)
             }
-            override fun onCreateFailure(error: String?) { Log.e(TAG, "viewer#$viewerId 创建 Offer 失败: $error") }
+            override fun onCreateFailure(error: String?) {
+                conn.negotiating.set(false)
+                Log.e(TAG, "viewer#$viewerId 创建 Offer 失败: $error")
+            }
             override fun onSetSuccess() {}
             override fun onSetFailure(error: String?) {}
         }, constraints)
@@ -1534,8 +1538,9 @@ class WebRTCPeer(
     }
 
     // 腾讯会议式弱网自适应状态（v1.101）
-    private var curAdaptLevel = 0
-    private var recoverTimer = 0
+    // collectStatsFor 统计线程读、主线程写，需 @Volatile 保证跨线程可见性
+    @Volatile private var curAdaptLevel = 0
+    @Volatile private var recoverTimer = 0
     private val adaptBitrateCaps = intArrayOf(12_000_000, 9_000_000, 6_000_000, 4_000_000, 2_500_000)
     // 对端音频电平 0~32768（collectStatsFor 从 inbound audio 统计更新，供对讲状态指示）
     @Volatile private var remoteAudioLevel = 0.0

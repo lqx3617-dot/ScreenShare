@@ -11,11 +11,12 @@ const ANDROID_HOME = process.env.ANDROID_HOME || "/opt/android-sdk";
 const GRADLE = "/workspace/gradlew";
 const PROJECT_DIR = "/workspace";
 const KEYSTORE = process.env.KEYSTORE_PATH || "/workspace/signing/release.keystore";
-// 签名密钥口令：优先从环境变量注入，不写死源码（安全加固）；未设置时回退旧值并告警
-const KEYSTORE_PASS = process.env.KEYSTORE_PASS || (() => {
-  console.warn("[publish] ⚠️ 未设置 KEYSTORE_PASS 环境变量，使用默认口令（建议尽快改为环境变量注入）");
-  return "screenshare123";
-})();
+// 签名密钥口令：仅从环境变量注入，禁止写入源码
+// 未设置时直接抛出异常，防止使用弱口令签名
+const KEYSTORE_PASS = process.env.KEYSTORE_PASS;
+if (!KEYSTORE_PASS) {
+  throw new Error("[publish] 必须设置 KEYSTORE_PASS 环境变量（签名密钥口令），当前未设置，终止发布");
+}
 const KEYSTORE_ALIAS = process.env.KEYSTORE_ALIAS || "screenshare";
 const BUILD_TOOLS = path.join(ANDROID_HOME, "build-tools", "34.0.0");
 const ZIPALIGN = path.join(BUILD_TOOLS, "zipalign");

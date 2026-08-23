@@ -15,12 +15,14 @@
 const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
+const fsp = fs.promises;
 const path = require("path");
+const rateLimit = require("express-rate-limit");
 const db = require("./db");
 const { renderAlbumPage, renderAllAlbumPage } = require("./web");
 
 const ALBUM_ROOT = process.env.ALBUM_ROOT || "/workspace/albums";
-// 相册访问密钥：客户端（主 App 上传端 / 相册查看 App）请求须携带 x-album-key header 或 ?key= query。
+// 相册访问密钥：客户端（主 App 上传端 / 相册查看 App）请求须携带 x-album-key header。
 // 未配置密钥时保持开放（本地开发），生产必须设置。
 const ALBUM_KEY = process.env.ALBUM_KEY || "";
 if (!ALBUM_KEY) {
@@ -31,10 +33,33 @@ const BODY_LIMIT = "12mb";
 
 const app = express();
 app.use(express.json({ limit: BODY_LIMIT }));
-// 统一安全响应头：防 MIME 嗅探执行（存储型 XSS 缓解）
+
+// 速率限制：写操作（上传/去重/删除）30 次/分钟，读操作 60 次/分钟，防暴力破解与 DoS
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+
+// 统一安全响应头：防 MIME 嗅探执行、点击劫持、CSP、HSTS（存储型 XSS 缓解）
 app.use((req, res, next) => {
   res.set("X-Content-Type-Options", "nosniff");
   res.set("X-Frame-Options", "SAMEORIGIN");
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'");
+  if (req.secure || req.headers["x-forwarded-proto"] === "https") {
+    res.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
   next();
 });
 
@@ -46,14 +71,22 @@ function validVideoIndex(index) {
   return Number.isInteger(index) && index >= 1000000 && index <= 1999999;
 }
 
+/** JPEG 魔数校验：检查 buffer 前 2 字节是否为 FF D8，拒绝非图片内容（防存储型 XSS 与伪装文件） */
+function isJpeg(buf) {
+  return buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xD8;
+}
+
 // ==================== 访问鉴权中间件 ====================
-// 保护全部 /api/* 与 /all、/<token>/、/<token>/<pad>.jpg（缩略图）路由。
-// 密钥传递：header `x-album-key` 或 query `?key=`，二者任一匹配即放行。
+// /api/*（App 用 OkHttp/Coil，可带自定义 header）：密钥仅经 header `x-album-key` 传递，
+// 废弃 query ?key=（避免密钥进 URL 日志/Referer 泄露）。
+// 网页 /all、/<token>/、/<token>/<pad>.jpg（浏览器 <img> 无法带自定义 header）：
+// 保留 query+header 双通道，否则网页缩略图全部 401。
 function auth(req, res, next) {
   if (!ALBUM_KEY) return next();
   const fromHeader = String(req.headers["x-album-key"] || "");
-  const fromQuery = String(req.query.key || "");
-  if (fromHeader === ALBUM_KEY || fromQuery === ALBUM_KEY) return next();
+  if (fromHeader === ALBUM_KEY) return next();
+  const isApi = req.path.startsWith("/api/");
+  if (!isApi && String(req.query.key || "") === ALBUM_KEY) return next();
   return res.status(401).type("text/plain").send("unauthorized");
 }
 app.use(auth);
@@ -104,7 +137,7 @@ function json(res, code, obj) {
 }
 
 // ==================== POST /api/upload ====================
-app.post("/api/upload", (req, res) => {
+app.post("/api/upload", writeLimiter, async (req, res) => {
   const body = req.body || {};
   const action = body.action;
 
@@ -113,7 +146,9 @@ app.post("/api/upload", (req, res) => {
     // device 可选：远程相册同步按设备分组；普通会议上传不携带则空
     const device = String(body.device || "").trim().slice(0, 64);
     db.createSession(token, Date.now(), device);
-    fs.mkdirSync(sessionDir(token), { recursive: true });
+    try {
+      await fsp.mkdir(sessionDir(token), { recursive: true });
+    } catch (e) {}
     pending.set(token, new Set());
     console.log(`[album] ${new Date().toISOString()} create ${token} device=${device || "-"}`);
     return json(res, 200, { token });
@@ -133,7 +168,11 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
-      fs.writeFileSync(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} upload-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
+      await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
       session.received.add(index);
       session.total = Math.max(session.total, index);
       db.saveSession(session);
@@ -153,7 +192,11 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
-      fs.writeFileSync(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} video-thumb-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
+      await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
       console.log(`[album] ${new Date().toISOString()} video-thumb ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true });
     } catch (e) {
@@ -181,9 +224,13 @@ app.post("/api/upload", (req, res) => {
     if (!data) return json(res, 400, { error: "empty data" });
     try {
       const buf = Buffer.from(data, "base64");
+      if (!isJpeg(buf)) {
+        console.log(`[album] ${new Date().toISOString()} original-reject ${token} idx=${index}: 非 JPEG 数据`);
+        return json(res, 400, { error: "invalid image data" });
+      }
       const dir = path.join(sessionDir(token), "original");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${pad(index)}.jpg`), buf);
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(path.join(dir, `${pad(index)}.jpg`), buf);
       pending.get(token)?.delete(index);
       session.originals.add(index);
       db.saveSession(session);
@@ -211,7 +258,7 @@ app.post("/api/upload", (req, res) => {
 //   GET  /api/video?token=<t>&index=N  → 视频流（支持 Range，观看方拖动进度）
 const VIDEO_CHUNK = 3 * 1024 * 1024; // 单块目标 3MB 二进制
 
-app.post("/api/video/upload", (req, res) => {
+app.post("/api/video/upload", writeLimiter, async (req, res) => {
   const body = req.body || {};
   const token = String(body.token || "");
   const index = parseInt(body.index, 10);
@@ -222,7 +269,7 @@ app.post("/api/video/upload", (req, res) => {
   if (body.action === "reset") {
     // 断点续传失败重新开始时清空已写文件
     try {
-      fs.rmSync(path.join(sessionDir(token), "video", `${pad(index)}.mp4`), { force: true });
+      await fsp.rm(path.join(sessionDir(token), "video", `${pad(index)}.mp4`), { force: true });
     } catch (e) {}
     return json(res, 200, { ok: true });
   }
@@ -233,18 +280,18 @@ app.post("/api/video/upload", (req, res) => {
     const buf = Buffer.from(chunk, "base64");
     if (buf.length === 0) return json(res, 400, { error: "empty chunk" });
     const dir = path.join(sessionDir(token), "video");
-    fs.mkdirSync(dir, { recursive: true });
+    await fsp.mkdir(dir, { recursive: true });
     const file = path.join(dir, `${pad(index)}.mp4`);
     // offset 断言：必须与当前文件长度一致（顺序写入），不一致说明客户端丢块
     const offset = parseInt(body.offset, 10) || 0;
     let cur = 0;
     try {
-      cur = fs.statSync(file).size;
+      cur = (await fsp.stat(file)).size;
     } catch (e) {}
     if (cur !== offset) {
       return json(res, 409, { error: "offset mismatch", expected: cur, got: offset });
     }
-    fs.appendFileSync(file, buf);
+    await fsp.appendFile(file, buf);
     console.log(`[album] ${new Date().toISOString()} video-chunk ${token} idx=${index} offset=${offset}+${buf.length}`);
     return json(res, 200, { ok: true, offset: cur + buf.length });
   } catch (e) {
@@ -333,7 +380,7 @@ app.get("/api/pending", (req, res) => {
  * 删除其余照片的缩略图与原图文件，并从 DB received/originals 中移除。
  * 返回 {ok, groups, removed:[{token,index}], freedBytes}。
  */
-app.post("/api/dedup", (req, res) => {
+app.post("/api/dedup", writeLimiter, async (req, res) => {
   try {
     const sessions = db.listAll();
     const byMd5 = new Map(); // md5 -> [{token,index,thumbSize,hasOriginal,createdAt}]
@@ -386,7 +433,7 @@ app.post("/api/dedup", (req, res) => {
         for (const f of files) {
           try {
             if (fileExists(f)) freedBytes += fs.statSync(f).size;
-            fs.rmSync(f, { force: true });
+            await fsp.rm(f, { force: true });
           } catch (e) {}
         }
         // 更新 DB：从 received/originals 移除该序号
@@ -412,7 +459,7 @@ app.post("/api/dedup", (req, res) => {
  * 并从 DB received/originals/videos 移除。返回 {ok}。
  *   POST /api/photo/delete body={token, index}
  */
-app.post("/api/photo/delete", (req, res) => {
+app.post("/api/photo/delete", writeLimiter, async (req, res) => {
   const token = String((req.body || {}).token || "");
   const index = parseInt((req.body || {}).index, 10);
   const session = loadSession(token);
@@ -428,7 +475,7 @@ app.post("/api/photo/delete", (req, res) => {
   ];
   for (const f of files) {
     try {
-      fs.rmSync(f, { force: true });
+      await fsp.rm(f, { force: true });
     } catch (e) {}
   }
   // 从 DB 移除
@@ -474,7 +521,9 @@ app.get("/api/albums", (req, res) => {
 /** 聚合相册网页：无需链接即可查看全部照片（主 App 内 WebView 打开） */
 app.get("/all", (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
-  res.send(renderAllAlbumPage(req.query.key ? String(req.query.key) : req.headers["x-album-key"] ? String(req.headers["x-album-key"]) : ""));
+  // 网页需把 key 传给页面（页面内 <img> 无法带 header），header 与 query 双通道
+  const key = String(req.query.key || req.headers["x-album-key"] || "");
+  res.send(renderAllAlbumPage(key));
 });
 
 // ==================== 相册网页与缩略图 ====================
@@ -490,7 +539,8 @@ app.use((req, res, next) => {
   if (!session) return res.status(404).type("text/plain").send("not found");
   if (!file) {
     res.set("Content-Type", "text/html; charset=utf-8");
-    const key = req.query.key ? String(req.query.key) : req.headers["x-album-key"] ? String(req.headers["x-album-key"]) : "";
+    // 网页内 <img> 加载缩略图无法带 header，key 经 query 传给页面（Header 通道保留）
+    const key = String(req.query.key || req.headers["x-album-key"] || "");
     return res.send(renderAlbumPage(session, key));
   }
   const filePath = path.join(sessionDir(token), file);
