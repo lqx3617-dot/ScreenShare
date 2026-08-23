@@ -660,6 +660,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
+    /** IP 脱敏：1.2.3.4 → 1.2.3.*，仅用于 UI 显示，诊断上报保留完整地址 */
+    private fun maskIp(text: String): String {
+        // IPv4: 替换最后一段为 *
+        return text.replace(Regex("""\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b""")) { "${it.groupValues[1]}.*" }
+    }
+
     /** 诊断上报：把编码器/瓶颈/丢包/延迟信息 POST 到信令服务器 /diag 落盘，便于远程定位真机问题 */
     private fun reportDiagnostic(text: String) {
         val role = if (isHost) "host" else "viewer"
@@ -3194,7 +3200,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val warn = !isHostView && lostPct >= 1.0
                         // 诊断：真实连接路径（host/srflx/relay），附加到状态条便于现场观察
                         val selPath = json.optString("path", "")
-                        val fullTextWithPath = if (selPath.isNotBlank()) fullText + " | 路径:${selPath.take(60)}" else fullText
+                        val pathType = json.optString("pathType", "")
+                        // UI 显示时脱敏 IP，诊断上报保留完整路径
+                        val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
+                        val fullTextWithPath = if (maskedPath.isNotBlank()) fullText + " | 路径:${maskedPath.take(60)}" else fullText
                         // 诊断自动上报：软编/CPU瓶颈/高丢包/高延迟时上报一次，值变化才重报（去重防刷屏）
                         if (isHostView) {
                             val impl = json.optString("encImpl", "")
@@ -3204,7 +3213,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val isSoftEnc = impl.contains("SW", true) || impl.contains("OpenH264", true) || impl.contains("Software", true)
                             val anomaly = isSoftEnc || limit == "cpu" || lossPct >= 3.0 || rttMs >= 500
                             if (anomaly) {
-                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView|$selPath"
+                                // 去重只取路径类型组合（host→relay），不含 IP，避免 NAT 重绑定导致重复上报
+                                val sig = "$impl|$limit|$lossPct|$rttMs|$isHostView|$pathType"
                                 if (sig != lastDiagSig) {
                                     lastDiagSig = sig
                                     reportDiagnostic(
@@ -3330,7 +3340,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             rtt > 150 -> " ⚠️延迟偏高"
                             else -> ""
                         }
-                        val pathText = if (selPath.isNotBlank()) " | 路径:${selPath.take(50)}" else ""
+                        val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
+                        val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
                         val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
