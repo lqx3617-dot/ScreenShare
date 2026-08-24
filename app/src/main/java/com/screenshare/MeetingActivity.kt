@@ -189,6 +189,8 @@ class MeetingActivity : AppCompatActivity() {
             renderFavoriteCard()
             onFavoriteClicked()
         }
+        // 专属房间「换角色」：不换房间号，仅翻转共享方/观看方
+        binding.btnFavSwap.setOnClickListener { onFavoriteSwapRole() }
         // 专属房间「喊TA」：通知对方快上屏
         binding.btnFavCall.setOnClickListener { onCallPeer() }
 
@@ -268,6 +270,7 @@ class MeetingActivity : AppCompatActivity() {
             binding.tvFavHint.text = "点击设置我们的专属房间号"
             binding.favStatusDot.visibility = View.GONE
             binding.btnFavCall.visibility = View.GONE
+            binding.btnFavSwap.visibility = View.GONE
             return
         }
         binding.tvFavCode.text = fav.first
@@ -290,6 +293,8 @@ class MeetingActivity : AppCompatActivity() {
         }
         // 观看方角色才显示"喊TA"（host 是常驻共享方，不需要喊）
         binding.btnFavCall.visibility = if (!isHostRole) View.VISIBLE else View.GONE
+        // 切换角色按钮：已设置房间时始终显示
+        binding.btnFavSwap.visibility = View.VISIBLE
     }
 
     /** 查询专属房间在线状态并刷新 UI；同时更新「喊TA」按钮可用性 */
@@ -326,6 +331,25 @@ class MeetingActivity : AppCompatActivity() {
             s.startsWith("ws://") -> "http://" + s.removePrefix("ws://").removeSuffix("/ws")
             else -> null
         }
+    }
+
+    /** 专属房间「换角色」：保持房间号不变，仅翻转共享方/观看方 */
+    private fun onFavoriteSwapRole() {
+        val fav = getFavoriteRoom(this) ?: return
+        val newRole = if (fav.second == ACTION_CREATE) ACTION_JOIN else ACTION_CREATE
+        val newRoleText = if (newRole == ACTION_CREATE) "共享方（TA 看我的屏幕）" else "观看方（我看 TA 的屏幕）"
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("切换角色")
+            .setMessage("房间号 ${fav.first} 保持不变，切换后你成为：$newRoleText")
+            .setPositiveButton("切换") { _, _ ->
+                setFavoriteRoom(this, newRole, fav.first)
+                favOnline = null
+                renderFavoriteCard()
+                queryFavStatus(fav.first)
+                Toast.makeText(this, "已切换为$newRoleText", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 专属房间「喊TA」：通知对方上屏（观看方发起，host 收到 come-on 提示） */

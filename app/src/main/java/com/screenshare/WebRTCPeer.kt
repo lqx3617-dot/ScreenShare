@@ -85,7 +85,15 @@ class WebRTCPeer(
                             "max_frame_size_percentile:0.90/" +
                             // 零播放延迟渲染：到达即渲染，配合低延迟渲染路径进一步压播放缓冲。
                             // min_pacing 为解码最小帧间隔，默认 8ms 足够，显式声明避免默认值漂移
-                            "WebRTC-ZeroPlayoutDelay/min_pacing:8ms/"
+                            "WebRTC-ZeroPlayoutDelay/min_pacing:8ms/" +
+                            // 强制视频接收端 playout delay 上限（SDK144 key 经 so 字符串 min_playout_delay_ms 核验确实存在）。
+                            // Java 层无法用 API 设置 playout delay，但该 field trial 可从全局覆盖 VCMTiming 的目标延迟上/下限：
+                            //   UseLowLatencyRendering 激活条件是 max_playout_delay<=500ms（kLowLatencyStreamMaxPlayoutDelayThreshold），
+                            //   Java 无 API 设 playout delay 导致低延迟渲染路径一直无法激活（此前 MEMORY 反复记录的瓶颈）。
+                            // 强制 max=180ms 直接满足该条件 → render_time=Zero 立即渲染，播放缓冲被压到最低。
+                            // max=180ms（而非 0）为解码/渲染排队留最小余量，避免瞬时抖动直接丢帧花屏；
+                            // 弱网丢包仍由 nack_limit/RTT 加成 + 弱网自适应降档兜底。
+                            "WebRTC-ForcePlayoutDelay/min_playout_delay_ms:0,max_playout_delay_ms:180/"
                     )
                     .createInitializationOptions()
             )

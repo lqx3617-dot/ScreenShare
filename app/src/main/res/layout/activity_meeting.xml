@@ -124,6 +124,16 @@
                         android:textColor="@color/neon_blue" />
 
                     <TextView
+                        android:id="@+id/btnFavSwap"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="换角色"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/neon_violet"
+                        android:padding="6dp" />
+
+                    <TextView
                         android:id="@+id/btnFavReset"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
