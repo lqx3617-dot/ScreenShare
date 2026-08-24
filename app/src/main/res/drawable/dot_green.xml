@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 在线状态点：绿色（对方在线） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:type="radial"
+        android:startColor="#FF22C55E"
+        android:centerColor="#FF22C55E"
+        android:endColor="#2222C55E" />
+    <size
+        android:width="12dp"
+        android:height="12dp" />
+</shape>

@@ -370,3 +370,27 @@ Entries discovered by the Agent during task execution should follow this format:
   - **代码审查提交（18a3c23 "feat: 代码审查"）把 publish.js 签名口令改为仅从 KEYSTORE_PASS 环境变量注入**，未设置时顶层抛异常终止。download-server.js 启动时 require("./publish") 会连带触发 → 无 KEYSTORE_PASS 时下载服务器崩溃、8090 公网 530。**重启 download-server 必须带 KEYSTORE_PASS=screenshare123**（与签名口令一致）。
   - 审查提交删除 WebRTCPeer.kt pcObserver 的 onAddStream/onRemoveStream，但 SDK PeerConnection.Observer 的 onAddStream 是抽象方法必须实现 → 编译报"Object is not abstract"。修复：在 pcObserver 补回空实现 override fun onAddStream/onRemoveStream（保留"不使用废弃 onAddStream 避免重复通知"的意图），并补 import java.util.concurrent.atomic.AtomicBoolean（新增 negotiating 字段用到）。
   - 审查提交同时新增：album-server express-rate-limit 限流+JPEG魔数校验+CSP/HSTS/Permissions-Policy 安全头、UpdateChecker.kt 安装前 verifyApkSignature 签名校验、WebRTCPeer 协商防重入 AtomicBoolean、CameraCapture onFail 改 return null、MainActivity buildJson 防注入、ScreenSyncService syncedIdSet 性能优化。**注意这些是新增依赖/改动，构建前需确认 album-server 已 npm i 装入 express-rate-limit（在 album-server 目录 npm install），且生产环境相册服务需 ALBUM_KEY 才生效限流与鉴权。**
+
+## 专属房间优化（情侣快捷入口，2026-08-24）
+[User Instruction Summary]
+- Date: 2026-08-24
+- Context: 用户为「专属房间」选 4 方向全优化：一键更快、界面美化、功能增强、防误触
+- Instructions:
+  - 「提醒对方」需求=看在线状态 + 主动呼叫。观看方在设置界面点击「喊TA」即可提醒共享方快点上屏。
+
+[Project Knowledge Summary]
+- Date: 2026-08-24
+- Context: Discovered by Agent while 实现专属房间(情侣快捷入口)优化
+- Category: Operations & Deployment
+- Instructions:
+  - **在线状态机制**：独立于房间流程的无状态 HTTP `GET /room-status?code=XXXX` 查询（读 RoomManager.rooms 是否有 host）。观看方查 host 在线，共享方查 `?s=host`（是否有 viewer 已加入）。纯查询不打扰房间流程。
+  - **主动呼叫信令**：新增 pls-join/come-on。viewer 发 `{type:"pls-join",code}`，服务器查 rooms.getHost(code) 有则给 host 发 `{type:"come-on",code}`。**pls-join 允许 viewer 未 join 也发**（服务器只按 code 查 host，不要求 viewer 已入房）——这样「喊TA」在对方已建房但 viewer 未加入时也能投递。
+  - **「喊TA」App 端实现**：MeetingActivity.sendPlsJoin 用独立 OkHttp WebSocket 短连直接发 pls-join（不进入房间流程），发完 1.2s 后 close，3s 兜底 cancel。收到 error 时 Toast 提示（如"对方不在线"）。**不用 SignalClient 的 join 流程**——SignalClient.connect 会走 create/join，与"喊TA不进房"语义冲突。
+  - **SignalClient.sendPlsJoin 补 code 字段**（原来的不带 code，服务器无法定位房间）。
+  - **防误触**：onFavoriteClicked 已设置时，观看方(ACTION_JOIN)且对方不在线(favOnline==false)→弹确认框「对方不在线，是否先进入等你加入？」；未设置时预填随机 4 位房间号 generateMeetingCode()。
+  - **状态点资源**：dot_green(在线绿)/dot_gray(离线灰)/dot_status(商务蓝)。renderFavoriteCard 在线=dot_green、离线=dot_gray，favOnline==null 不显示点。
+  - **MainActivity 收到 come-on**：Listener 新增 onComeOn()，host 端弹「❤️ 有人喊你 对方想要上屏看你的屏幕」提示框。
+  - **构建敏感点**：SignalClient.Listener 新增 onComeOn() 是抽象方法，所有实现处(MainActivity.kt:2029)必须补 override 否则编译失败；MeetingActivity 不需要 (不用 SignalClient)。
+  - 信令服务器改 server.js 后必须重启（term_1787589710415_48，DIAG=1 PORT=8095 DIAG_TOKEN=s8sc_diag_10d780a80ffc046e_9f2c）。
+  - 版本号已递增至 221/1.218（build.gradle.kts），发布前核对 output-metadata.json。
+

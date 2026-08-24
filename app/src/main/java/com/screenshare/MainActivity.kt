@@ -2162,6 +2162,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     }
                 }
             }
+
+            override fun onComeOn() {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("❤️ 有人喊你")
+                        .setMessage("对方想要上屏看你的屏幕，请开始共享。")
+                        .setPositiveButton("知道了", null)
+                        .show()
+                }
+            }
         })
         signalClient = client
         client.connect(code, asHost)

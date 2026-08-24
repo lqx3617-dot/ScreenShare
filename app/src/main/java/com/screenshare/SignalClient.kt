@@ -40,6 +40,8 @@ class SignalClient(
         fun onViewerLeft(viewerId: Int)
         /** host 离开（所有 viewer 收到） */
         fun onHostLeft()
+        /** host 收到观看方「喊TA」（come-on）：对方在等你上屏 */
+        fun onComeOn()
         /** 连接异常，但将在几秒后自动重试（仅提示，不应清理本地状态） */
         fun onRetrying(message: String)
         /** 服务器返回错误，或多次重连后仍失败 */
@@ -181,6 +183,7 @@ class SignalClient(
             "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0))
             "viewer-left" -> listener.onViewerLeft(json.optInt("viewerId", 0))
             "host-left" -> listener.onHostLeft()
+            "come-on" -> listener.onComeOn()
             "relay" -> listener.onRelay(json.optString("data"), vid)
             "pong" -> { lastPongMs = System.currentTimeMillis() }
             "error" -> listener.onError(json.optString("message", "服务器错误"))
@@ -202,6 +205,21 @@ class SignalClient(
             put("type", "reject")
             put("viewerId", viewerId)
         }.toString())
+    }
+
+    /** 观看方「喊TA」：通知 host 快点来上屏（服务器会把此消息转为 come-on 给 host） */
+    fun sendPlsJoin() {
+        val msg = JSONObject().apply {
+            put("type", "pls-join")
+            if (code.isNotBlank()) put("code", code)
+        }
+        val ws = webSocket
+        if (ws == null || closedByUs) {
+            // WS 未连接：入队等重连成功补发（come-on 意图不丢失）
+            pendingRelays.offer(msg.toString())
+            return
+        }
+        try { ws.send(msg.toString()) } catch (t: Throwable) {}
     }
 
     /** 发送信令数据到对端（SDP/ICE 编码串）。host 发给指定 viewer 需传 viewerId；viewer 发 host 传 0 即可 */

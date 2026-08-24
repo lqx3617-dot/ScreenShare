@@ -8,6 +8,7 @@
  *     { "type": "accept", "viewerId": n }                        // host 同意加入请求
  *     { "type": "reject", "viewerId": n }                        // host 拒绝加入请求
  *     { "type": "relay",  "data": "<payload>", "viewerId": n }   // 中转信令（viewerId: host发往指定viewer）
+ *     { "type": "pls-join" }                                     // 观看方「喊TA」：host 收到 come-on
  *     { "type": "ping" }
  *
  *   server -> client:
@@ -22,6 +23,7 @@
  *     { "type": "relay",     "data": "<payload>", "viewerId": n }
  *     { "type": "viewer-left", "viewerId": n }                   // 某 viewer 离开（仅 host 收到）
  *     { "type": "host-left" }                                    // host 离开（所有 viewer 收到）
+ *     { "type": "come-on" }                                      // 观看方喊TA（host 收到提示）
  *     { "type": "error",     "message": "..." }
  *
  * 行为：
@@ -103,6 +105,24 @@ const server = http.createServer((req, res) => {
       res.end("ok");
     });
     return;
+  }
+  // 房间在线状态查询：客户端 GET /room-status?code=XXXX 判断该会议号是否有 host 在线
+  // 用于专属房间卡片显示「对方在线/不在线」，纯查询不建连，不参与房间流程
+  if (req.method === "GET" && req.url.startsWith("/room-status")) {
+    try {
+      const u = new URL(req.url, "http://localhost");
+      const code = (u.searchParams.get("code") || "").trim().toUpperCase();
+      const ok = /^[0-9]{4}$/.test(code);
+      const room = ok ? rooms.getRoom(code) : null;
+      const online = !!(room && room.host);
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ code, online }));
+      return;
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "internal" }));
+      return;
+    }
   }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("ScreenShare signaling server is running");
@@ -283,6 +303,24 @@ wss.on("connection", (ws) => {
 
       case "ping": {
         send(ws, { type: "pong" });
+        break;
+      }
+
+      case "pls-join": {
+        // 观看方「喊TA」：提醒 host 快点上屏。
+        // 不要求 viewer 已 join——只要该 code 有 host 建了房间即可投递（host 建房后 viewer 随时可喊）。
+        if (role === "host") {
+          send(ws, { type: "error", message: "共享方无需发起提醒" });
+          return;
+        }
+        const code = normalizeCode(msg.code || roomCode);
+        const host = code ? rooms.getHost(code) : null;
+        if (host) {
+          send(host, { type: "come-on", code });
+          console.log(`[room ${code}] viewer#${viewerId} pls-join (喊TA)`);
+        } else {
+          send(ws, { type: "error", message: "对方不在线，无法提醒（可先点这里创建房间等 TA）" });
+        }
         break;
       }
 

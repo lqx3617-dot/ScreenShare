@@ -107,11 +107,18 @@
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
 
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginEnd="6dp"
+                        android:src="@drawable/ic_heart"
+                        android:tint="@color/neon_violet" />
+
                     <TextView
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="❤️ 我们的专属房间"
+                        android:text="我们的专属房间"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="@color/neon_blue" />
@@ -136,25 +143,58 @@
                     android:background="?attr/selectableItemBackground"
                     android:padding="4dp">
 
-                    <TextView
-                        android:id="@+id/tvFavCode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="未设置"
-                        android:textSize="26sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/neon_cyan"
-                        android:letterSpacing="0.2" />
-
-                    <TextView
-                        android:id="@+id/tvFavHint"
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:text="点击设置"
+                        android:orientation="vertical">
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <View
+                                android:id="@+id/favStatusDot"
+                                android:layout_width="8dp"
+                                android:layout_height="8dp"
+                                android:layout_marginEnd="6dp"
+                                android:background="@drawable/dot_status"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvFavCode"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="未设置"
+                                android:textSize="26sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/neon_cyan"
+                                android:letterSpacing="0.2" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvFavHint"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="点击设置"
+                            android:textSize="12sp"
+                            android:textColor="#64748B" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnFavCall"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="喊TA"
                         android:textSize="12sp"
-                        android:textColor="#64748B" />
+                        android:textStyle="bold"
+                        android:textColor="@color/neon_violet"
+                        android:padding="8dp"
+                        android:background="@drawable/bg_glass"
+                        android:visibility="gone" />
                 </LinearLayout>
             </LinearLayout>
 

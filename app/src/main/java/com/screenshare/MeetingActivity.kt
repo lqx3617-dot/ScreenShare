@@ -17,8 +17,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.screenshare.databinding.ActivityMeetingBinding
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 /**
  * 会议连接页（前端入口）：
@@ -118,6 +121,30 @@ class MeetingActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMeetingBinding
 
+    // ==================== 专属房间在线状态 ====================
+    /** 查询「对方是否在线」：GET <信令http>/room-status?code=XXXX */
+    private val roomStatusClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .writeTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
+            .build()
+    }
+    /** 最近一次查询到的在线状态（true=对方在线，false=不在线，null=未知/查询失败）*/
+    @Volatile private var favOnline: Boolean? = null
+    /** 是否正在针对已设置房间轮询在线状态 */
+    private var favPolling = false
+    private val favHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val favPollRunnable = object : Runnable {
+        override fun run() {
+            val fav = getFavoriteRoom(this@MeetingActivity)
+            if (fav != null) {
+                queryFavStatus(fav.first)
+                favHandler.postDelayed(this, 5000)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -158,9 +185,12 @@ class MeetingActivity : AppCompatActivity() {
         binding.llFavBody.setOnClickListener { onFavoriteClicked() }
         binding.btnFavReset.setOnClickListener {
             clearFavoriteRoom(this)
+            stopFavPolling()
             renderFavoriteCard()
             onFavoriteClicked()
         }
+        // 专属房间「喊TA」：通知对方快上屏
+        binding.btnFavCall.setOnClickListener { onCallPeer() }
 
         // 分享链接唤起：冷启动解析 screenshare://join?code=XXXX
         handleShareLink(intent)
@@ -211,36 +241,130 @@ class MeetingActivity : AppCompatActivity() {
         // 从会议室返回连接页时刷新（历史可能已变化）
         renderRecentMeetings()
         renderFavoriteCard()
+        // 重新开始查询专属房间在线状态
+        stopFavPolling()
+        favPolling = true
+        favHandler.post(favPollRunnable)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopFavPolling()
+    }
+
+    /** 停止专属房间在线状态轮询 */
+    private fun stopFavPolling() {
+        favPolling = false
+        favHandler.removeCallbacks(favPollRunnable)
     }
 
     // ==================== 专属房间 ====================
 
-    /** 渲染专属房间卡片：已设置显示房间号+角色，未设置显示提示 */
+    /** 渲染专属房间卡片：已设置显示房间号+角色+对方在线状态，未设置显示提示 */
     private fun renderFavoriteCard() {
         val fav = getFavoriteRoom(this)
         if (fav == null) {
             binding.tvFavCode.text = "未设置"
             binding.tvFavHint.text = "点击设置我们的专属房间号"
-        } else {
-            binding.tvFavCode.text = fav.first
-            binding.tvFavHint.text = if (fav.second == ACTION_CREATE)
-                "你是共享方 · 点击进入"
-            else
-                "你是观看方 · 点击进入"
+            binding.favStatusDot.visibility = View.GONE
+            binding.btnFavCall.visibility = View.GONE
+            return
         }
+        binding.tvFavCode.text = fav.first
+        val isHostRole = fav.second == ACTION_CREATE
+        // 角色提示
+        val roleText = if (isHostRole) "你是共享方（TA看你的屏幕）" else "你是观看方（你看TA的屏幕）"
+        // 在线状态：在线绿色点，不在线灰色点，未知不显示
+        val online = favOnline
+        val statusText = when (online) {
+            true -> " · 对方在线"
+            false -> " · 对方不在线"
+            null -> ""
+        }
+        binding.tvFavHint.text = roleText + statusText
+        binding.favStatusDot.visibility = if (online == null) View.GONE else View.VISIBLE
+        if (online == true) {
+            binding.favStatusDot.setBackgroundResource(R.drawable.dot_green)
+        } else if (online == false) {
+            binding.favStatusDot.setBackgroundResource(R.drawable.dot_gray)
+        }
+        // 观看方角色才显示"喊TA"（host 是常驻共享方，不需要喊）
+        binding.btnFavCall.visibility = if (!isHostRole) View.VISIBLE else View.GONE
+    }
+
+    /** 查询专属房间在线状态并刷新 UI；同时更新「喊TA」按钮可用性 */
+    private fun queryFavStatus(code: String) {
+        val httpBase = signalHttpBase() ?: return
+        val isHostRole = getFavoriteRoom(this)?.second == ACTION_CREATE
+        Thread {
+            try {
+                // 观看方查"对方（host）是否在房间"；共享方查"是否有观看方已加入"（viewerCount>0）
+                val url = if (isHostRole)
+                    "$httpBase/room-status?code=$code&s=host"
+                else
+                    "$httpBase/room-status?code=$code"
+                val req = Request.Builder().url(url).build()
+                roomStatusClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: return@use
+                    val json = try { JSONObject(body) } catch (e: Exception) { return@use }
+                    val onlineHint = json.optBoolean("online", false)
+                    if (onlineHint != favOnline) {
+                        favOnline = onlineHint
+                        runOnUiThread { renderFavoriteCard() }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }.start()
+    }
+
+    /** 从 BuildConfig.SIGNAL_URL（wss://.../ws）推导 HTTP base（https://...） */
+    private fun signalHttpBase(): String? {
+        val s = BuildConfig.SIGNAL_URL
+        if (s.isNullOrBlank()) return null
+        return when {
+            s.startsWith("wss://") -> "https://" + s.removePrefix("wss://").removeSuffix("/ws")
+            s.startsWith("ws://") -> "http://" + s.removePrefix("ws://").removeSuffix("/ws")
+            else -> null
+        }
+    }
+
+    /** 专属房间「喊TA」：通知对方上屏（观看方发起，host 收到 come-on 提示） */
+    private fun onCallPeer() {
+        val fav = getFavoriteRoom(this) ?: return
+        if (fav.second != ACTION_JOIN) {
+            Toast.makeText(this, "你是共享方，无需喊TA，等对方加入即可", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "已提醒对方，等 TA 来上屏...", Toast.LENGTH_LONG).show()
+        sendPlsJoin(fav.first)
     }
 
     /** 专属房间点击：已设置直接进入；未设置弹窗输入房间号+选择角色 */
     private fun onFavoriteClicked() {
         val fav = getFavoriteRoom(this)
         if (fav != null) {
+            // 已设置：确认在线状态后进入（在线直接进；不在线提示 + 可选择改角色或仍进入）
+            val isHostRole = fav.second == ACTION_CREATE
+            val online = favOnline
+            if (online == false && !isHostRole) {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("对方不在线")
+                    .setMessage("TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？")
+                    .setPositiveButton("进入等待") { _, _ -> enterMeeting(fav.second, fav.first) }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return
+            }
             enterMeeting(fav.second, fav.first)
             return
         }
+        // 未设置：预填一个随机 4 位房间号，双方约定即可
         val input = android.widget.EditText(this).apply {
             hint = "输入 4 位数字房间号（如 1314）"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             maxLines = 1
+            setText(generateMeetingCode())
+            setSelection(text.length)
         }
         val roles = arrayOf("我是共享方（TA 看我的屏幕）", "我是观看方（我看 TA 的屏幕）")
         var chosenRole = ACTION_CREATE
@@ -349,6 +473,34 @@ class MeetingActivity : AppCompatActivity() {
             diff < 86400_000 -> "${diff / 3600_000}小时前"
             else -> "${diff / 86400_000}天前"
         }
+    }
+
+    /** 用临时 WebSocket 短连接直接发 pls-join，随即断开（轻量投递"喊TA"给 host，不进入房间） */
+    private fun sendPlsJoin(code: String) {
+        val url = BuildConfig.SIGNAL_URL
+        if (url.isNullOrBlank()) return
+        val client = okhttp3.OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
+        val wsReq = okhttp3.Request.Builder().url(url).build()
+        val ws = client.newWebSocket(wsReq, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                webSocket.send(JSONObject().apply { put("type", "pls-join"); put("code", code) }.toString())
+                // 发完稍等即关闭
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ webSocket.close(1000, "done") }, 1200)
+            }
+            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
+                val j = try { JSONObject(text) } catch (e: Exception) { return }
+                if (j.optString("type") == "error") {
+                    val msg = j.optString("message", "")
+                    runOnUiThread { Toast.makeText(this@MeetingActivity, if (msg.isBlank()) "提醒失败" else msg, Toast.LENGTH_SHORT).show() }
+                    webSocket.close(1000, "err")
+                }
+            }
+            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
+                runOnUiThread { Toast.makeText(this@MeetingActivity, "提醒失败：无法连接服务器", Toast.LENGTH_SHORT).show() }
+            }
+        })
+        // 兜底延时关闭
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ ws.cancel() }, 3000)
     }
 
     private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()

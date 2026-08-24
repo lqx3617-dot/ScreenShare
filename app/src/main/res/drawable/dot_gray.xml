@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 离线状态点：灰色（对方不在线） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:type="radial"
+        android:startColor="#FF94A3B8"
+        android:centerColor="#FF94A3B8"
+        android:endColor="#7E94A3B8" />
+    <size
+        android:width="12dp"
+        android:height="12dp" />
+</shape>
