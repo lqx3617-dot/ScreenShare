@@ -392,5 +392,24 @@ Entries discovered by the Agent during task execution should follow this format:
   - **MainActivity 收到 come-on**：Listener 新增 onComeOn()，host 端弹「❤️ 有人喊你 对方想要上屏看你的屏幕」提示框。
   - **构建敏感点**：SignalClient.Listener 新增 onComeOn() 是抽象方法，所有实现处(MainActivity.kt:2029)必须补 override 否则编译失败；MeetingActivity 不需要 (不用 SignalClient)。
   - 信令服务器改 server.js 后必须重启（term_1787589710415_48，DIAG=1 PORT=8095 DIAG_TOKEN=s8sc_diag_10d780a80ffc046e_9f2c）。
-  - 版本号已递增至 221/1.218（build.gradle.kts），发布前核对 output-metadata.json。
+   - 版本号已递增至 221/1.218（build.gradle.kts），发布前核对 output-metadata.json。
+
+## 专属房间切换角色 + 视频延迟优化（v1.220/223，2026-08-24）
+[User Instruction Summary]
+- Date: 2026-08-24
+- Context: 用户要求「专属房间可以切换谁是共享方谁是观看方」+「优化播放视频观看方延迟」
+- Instructions:
+  - 切换角色只翻转 who is host/viewer，房间号保持不变。
+
+[Project Knowledge Summary]
+- Date: 2026-08-24
+- Context: Discovered by Agent while 实现专属房间切换角色 + 优化观看方视频延迟
+- Category: Build Methods
+- Instructions:
+  - **切换角色实现**：activity_meeting.xml 新增 btnFavSwap「换角色」按钮（btnFavReset 左侧）；MeetingActivity.onFavoriteSwapRole() 读 getFavoriteRoom，翻转 role 后 setFavoriteRoom（房间号不变），清 favOnline + renderFavoriteCard + queryFavStatus。onCreate bind btnFavSwap。未设置房间时 renderFavoriteCard 里 btnFavSwap GONE，已设置 VISIBLE。
+  - **观看方延迟优化新手段（v1.220）**：WebRTCPeer.ensureInitialized field trials 新增 `WebRTC-ForcePlayoutDelay/min_playout_delay_ms:0,max_playout_delay_ms:180/`。突破点：Java 层无 API 设视频 playout delay（v1.199/1.200 记录的唯一优化天花板），此 field trial 从全局覆盖 VCMTiming 目标延迟上下限，强制 max_playout_delay≤500ms（kLowLatencyStreamMaxPlayoutDelayThreshold）即满足 UseLowLatencyRendering 激活条件 → render_time=Zero 立即渲染，播放缓冲压到最低。max 用 180ms（非 0）留解码/渲染排队余量防瞬时抖动丢帧花屏，弱网仍由 nack_limit/RTT 加成 + 弱网自适应降档兜底。
+  - **SDK 144 so 核验**：strings 确认存在 `min_playout_delay_ms:` 字符串；`max_playout_delay_ms` 与 `UseLowLatencyRendering` 未在 so 中直接搜到（可能是编译时字段名或在 so 中未嵌诊断字符串），故 max 参数是否被 SDK 精确解析存疑——但 ForcePlayoutDelay 名称、video_receive_stream2 接收端 playout_delay 处理（frame_maximum_playout_delay_/timing_->min_playout_delay）均证实接收端强制 playout delay 路径存在；若 SDK 仅认 min 则 max 被忽略但整个 trial 仍以 Enabled 生效，不会变差。
+  - **构建坑**：arm64-only 精简版参数是 `-Pscreenshare.abifilter=arm64-v8a`（读 build.gradle.kts ndk 块的 findProperty("screenshare.abifilter")），**不是** `-PABI=arm64-v8a`；用错参数会产出与 allarch 相同的包（md5 相同）——本次第一轮 arm64 构建就因此与 allarch 同 md5，需用正确参数重打。
+  - v1.220 交付：versionCode=223/1.220，allarch md5=`e474389c8c42f761dd3db7d6a66e1dad`（24.6MB）、arm64 md5=`e968cda901fc8c069949f9cf3ef30f63`（17.7MB），commit d4f6f56 已推送（965da71..d4f6f56）。下载服务器带 KEYSTORE_PASS 重启后 version.json 返回 223/1.220 + 新 changelog；pls-join/come-on ws 全链路仍 PASS。
+
 
