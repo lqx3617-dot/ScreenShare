@@ -200,8 +200,11 @@ wss.on("connection", (ws) => {
         }
         roomCode = code;
         role = "host";
-        send(ws, { type: "created", code });
-        console.log(`[room ${code}] created by host`);
+        // 房间 token：签发前先释放该房间旧 token（host 重连/同 code 重建防残留）
+        AuthManager.releaseTokens(code);
+        const token = AuthManager.issueToken(code);
+        send(ws, { type: "created", code, token });
+        console.log(`[room ${code}] created by host${REQUIRE_TOKEN ? ` (token=${token})` : ""}`);
         break;
       }
 
@@ -212,6 +215,12 @@ wss.on("connection", (ws) => {
           return;
         }
         const code = normalizeCode(msg.code);
+        // REQUIRE_TOKEN=1 时强制校验房间 token（防止撞房/未授权观看）；默认关闭保持旧客户端兼容
+        if (REQUIRE_TOKEN && !AuthManager.verify(code, msg.token)) {
+          send(ws, { type: "error", message: "加入口令无效" });
+          console.log(`[room ${code}] join rejected (bad token)`);
+          return;
+        }
         const res = rooms.requestJoin(code, ws);
         if (!res.ok) {
           send(ws, { type: "error", message: res.error });
@@ -337,7 +346,8 @@ wss.on("connection", (ws) => {
     if (!roomCode) return;
     const r = rooms.onDisconnect(roomCode, role, viewerId);
     if (r.removedHost) {
-      // host 离开：通知所有 viewer
+      // host 离开：释放房间 token，通知所有 viewer
+      AuthManager.releaseTokens(roomCode);
       r.remainingViewers.forEach((v) => send(v, { type: "host-left" }));
       console.log(`[room ${roomCode}] closed (host left, ${r.remainingViewers.length} viewer(s) disconnected)`);
     } else if (r.pendingRemoved != null) {
