@@ -1,6 +1,22 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// 从 git 忽略的 local.properties 读取私密配置，支持环境变量覆盖；
+// 公开地址仍放在 gradle.properties，机密只存在本机。
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun secret(key: String): String {
+    val envKey = key.replace(".", "_").uppercase()
+    return localProps.getProperty(key)
+        ?: System.getenv(envKey)
+        ?: (project.findProperty(key) as String?)
+        ?: ""
 }
 
 android {
@@ -38,7 +54,7 @@ android {
         buildConfigField(
             "String",
             "TURN_PASSWORD",
-            "\"${project.findProperty("screenshare.turn.password") as String? ?: ""}\""
+            "\"${secret("screenshare.turn.password")}\""
         )
         buildConfigField(
             "String",
@@ -58,7 +74,7 @@ android {
         buildConfigField(
             "String",
             "ALBUM_KEY",
-            "\"${project.findProperty("screenshare.album.key") as String? ?: ""}\""
+            "\"${secret("screenshare.album.key")}\""
         )
         buildConfigField(
             "String",
@@ -68,7 +84,7 @@ android {
         buildConfigField(
             "String",
             "DIAG_TOKEN",
-            "\"${project.findProperty("screenshare.diag.token") as String? ?: ""}\""
+            "\"${secret("screenshare.diag.token")}\""
         )
     }
 

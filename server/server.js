@@ -40,6 +40,7 @@ const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
 const RoomManager = require("./RoomManager");
+const AuthManager = require("./AuthManager");
 
 const PORT = process.env.PORT || 8080;
 // 诊断模式：DIAG=1 时打印 SDP/候选统计（默认关闭，转发零解析零日志最快）
@@ -47,6 +48,8 @@ const DIAG = process.env.DIAG === "1";
 // /diag 与 /crash 上报鉴权 token：与 App 构建参数 screenshare.diag.token 保持一致；
 // 未配置时拒绝所有上报（防止日志注入），部署需显式设置
 const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
+// 兼容方案：设置 REQUIRE_TOKEN=1 才强制房间 token 认证，默认关闭保持旧客户端可用
+const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
 // 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
 const HEARTBEAT_TIMEOUT = 45 * 1000;
 // 所有 ws 连接（用于心跳扫描）
