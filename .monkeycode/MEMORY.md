@@ -413,3 +413,17 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.220 交付：versionCode=223/1.220，allarch md5=`e474389c8c42f761dd3db7d6a66e1dad`（24.6MB）、arm64 md5=`e968cda901fc8c069949f9cf3ef30f63`（17.7MB），commit d4f6f56 已推送（965da71..d4f6f56）。下载服务器带 KEYSTORE_PASS 重启后 version.json 返回 223/1.220 + 新 changelog；pls-join/come-on ws 全链路仍 PASS。
 
 
+
+## 密钥轮换完成（v1.221/224，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 完成 AuditFix 密钥轮换与双 App 发布
+- Category: Operations & Deployment
+- Instructions:
+  - **三项机密已轮换**（相册密钥/诊断 token/TURN 口令），新值仅存 local.properties（git 忽略）与服务器环境变量；旧值已从 gradle.properties 移除但仍存在于 git 历史对象中（如需彻底清除须 git filter-repo 重写历史 + 强推，暂接受轮换现状即可）。
+  - **服务器端过渡期双密钥**：album-server/src/app.js auth 接受 ALBUM_KEY + ALBUM_KEY_OLD（header 与 query 双通道均支持）；server.js diagAuthorized 接受 DIAG_TOKEN + DIAG_TOKEN_OLD（仅 POST /diag /crash 受保护，GET /diag 是无鉴权只读探针属正常）。**双端 App 全部更新到 224/1.221 与 15/1.193 后，应移除 ALBUM_KEY_OLD / DIAG_TOKEN_OLD 环境变量并重启相册与信令服务器**。
+  - **Kotlin DSL 坑**：.gradle.kts 中 `java.util.Properties` 会报 Unresolved reference: util——`java` 被 Gradle 解析为 java {} 扩展；必须顶部 `import java.util.Properties` 后直接用 `Properties()`（主 App 与 albumviewer 均此写法）。
+  - **albumviewer/build.gradle.kts 已补 secret() 注入**（与主 App 相同实现）：Coomi 审计提交删了 gradle.properties 三行密钥后，albumviewer 原有的 findProperty 读法会构建出空 ALBUM_KEY。
+  - v1.221(224) 产物：allarch md5=80d6a991a68911a1e411ef22609660f9（24.6MB）、arm64 md5=192396a0f997674470a40d0d8dbe08f9（17.8MB）；AlbumViewer v1.193(15) md5=c30487a7582fe86d1f8816705647a6a1（2.4MB）。commit e5882c6 已推送。
+  - 构建失败时签名链继续执行会拿旧 unsigned APK 签出新 md5——**构建失败后必须核对 output-metadata.json 的 versionCode 与预期一致再签名**；本次已在构建链中加入 grep versionCode 检查步骤。
+  - 下载服务器 DOWNLOAD_BASE 已去掉冗余 `:443`（version.json url 更干净，反代 443 默认端口等价）。
