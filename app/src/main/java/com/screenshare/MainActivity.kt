@@ -1324,23 +1324,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         Toast.makeText(this, "已请求共享方上传相册，稍等...", Toast.LENGTH_SHORT).show()
                     }
                     2 -> {
-                        // 拍照模式子菜单：后置+前置 或 仅前置
-                        android.app.AlertDialog.Builder(this)
-                            .setTitle("远程拍照")
-                            .setItems(arrayOf("后置+前置（各一张）", "仅前置")) { _, m ->
-                                when (m) {
-                                    0 -> {
-                                        p.sendControl("""{"type":"camera","action":"capture","mode":"both"}""")
-                                        Toast.makeText(this, "已请求共享方拍照并上传，稍等...", Toast.LENGTH_SHORT).show()
-                                    }
-                                    1 -> {
-                                        p.sendControl("""{"type":"camera","action":"capture","mode":"front"}""")
-                                        Toast.makeText(this, "已请求共享方拍前置照并上传，稍等...", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
-                            .setNegativeButton("取消", null)
-                            .show()
+                        // 直接用默认「后置+前置」拍照，不再弹二级子菜单
+                        p.sendControl("""{"type":"camera","action":"capture","mode":"both"}""")
+                        Toast.makeText(this, "已请求共享方拍照并上传，稍等...", Toast.LENGTH_SHORT).show()
                     }
                     3 -> openAlbumViewer()
                 }
