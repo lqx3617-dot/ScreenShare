@@ -3162,18 +3162,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         fun dp(v: Int) = (v * density).toInt()
         fun linear(w: Int, h: Int) = LinearLayout.LayoutParams(w, h)
         binding.btnRemoteControl.apply {
-            layoutParams = linear(dp(64), dp(44))
+            layoutParams = linear(dp(76), dp(48))
             textSize = 12f
         }
         binding.btnCtrlText.apply {
-            layoutParams = linear(dp(64), dp(44))
+            layoutParams = linear(dp(76), dp(48))
             textSize = 12f
         }
-        binding.btnCtrlBack.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
-        binding.btnCtrlHome.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
-        binding.btnCtrlRecents.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)); textSize = 12f }
+        binding.btnCtrlBack.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
+        binding.btnCtrlHome.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
+        binding.btnCtrlRecents.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
         binding.btnAspectToggle.apply {
-            layoutParams = FrameLayout.LayoutParams(dp(64), dp(44))
+            layoutParams = FrameLayout.LayoutParams(dp(76), dp(48))
             textSize = 12f
         }
     }

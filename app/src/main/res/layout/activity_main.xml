@@ -125,7 +125,7 @@
         android:paddingEnd="12dp"
         android:background="@drawable/bg_fullscreen_btn" />
 
-    <!-- 底部悬浮工具条：3 核心 + 更多（match_parent + weight 均分，适配窄屏不超宽） -->
+    <!-- 底部悬浮工具条：图标在上文字在下的瓦片式按钮（现代通话 UI），weight 均分适配窄屏 -->
     <LinearLayout
         android:id="@+id/llToolbar"
         android:layout_width="match_parent"
@@ -135,11 +135,11 @@
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:layout_marginBottom="28dp"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="8dp"
+        android:layout_marginBottom="24dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
         android:background="@drawable/bg_glass"
         android:elevation="20dp"
         android:visibility="gone">
@@ -148,68 +148,68 @@
             android:id="@+id/btnMic"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="52dp"
+            android:layout_height="68dp"
             android:gravity="center"
             android:text="麦克风"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:drawableStart="@drawable/ic_mic"
-            android:drawablePadding="6dp"
+            android:drawableTop="@drawable/ic_mic"
+            android:drawablePadding="4dp"
             android:paddingStart="4dp"
             android:paddingEnd="4dp"
             android:foreground="?attr/selectableItemBackground"
-            android:background="@drawable/bg_fullscreen_btn" />
+            android:background="@drawable/bg_room_tile" />
 
         <TextView
             android:id="@+id/btnCamera"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="52dp"
+            android:layout_height="68dp"
             android:layout_marginStart="10dp"
             android:gravity="center"
             android:text="摄像头"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:drawableStart="@drawable/ic_videocam"
-            android:drawablePadding="6dp"
+            android:drawableTop="@drawable/ic_videocam"
+            android:drawablePadding="4dp"
             android:paddingStart="4dp"
             android:paddingEnd="4dp"
             android:foreground="?attr/selectableItemBackground"
-            android:background="@drawable/bg_fullscreen_btn" />
+            android:background="@drawable/bg_room_tile" />
 
         <TextView
             android:id="@+id/btnToolbarMore"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="52dp"
+            android:layout_height="68dp"
             android:layout_marginStart="10dp"
             android:gravity="center"
             android:text="更多"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:drawableStart="@drawable/ic_more_horiz"
-            android:drawablePadding="6dp"
+            android:drawableTop="@drawable/ic_more_horiz"
+            android:drawablePadding="4dp"
             android:paddingStart="4dp"
             android:paddingEnd="4dp"
             android:foreground="?attr/selectableItemBackground"
-            android:background="@drawable/bg_fullscreen_btn" />
+            android:background="@drawable/bg_room_tile" />
 
         <TextView
             android:id="@+id/btnStop"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="52dp"
+            android:layout_height="68dp"
             android:layout_marginStart="10dp"
             android:gravity="center"
             android:text="结束会议"
-            android:textSize="12sp"
+            android:textSize="11sp"
             android:textStyle="bold"
-            android:textColor="#FFFFE4E4"
-            android:drawableStart="@drawable/ic_call_end"
-            android:drawablePadding="6dp"
+            android:textColor="#FFFFFFFF"
+            android:drawableTop="@drawable/ic_call_end"
+            android:drawablePadding="4dp"
             android:paddingStart="4dp"
             android:paddingEnd="4dp"
             android:foreground="?attr/selectableItemBackground"
@@ -220,6 +220,7 @@
     <LinearLayout
         android:id="@+id/llMorePanel"
         android:layout_width="wrap_content"
+                android:minWidth="76dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="top"
@@ -234,13 +235,15 @@
         <LinearLayout
             android:id="@+id/llVideoBtns"
             android:layout_width="wrap_content"
+                android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
             <TextView
                 android:id="@+id/btnRemoteControl"
-                android:layout_width="64dp"
-                android:layout_height="44dp"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="远程控制"
                 android:textSize="12sp"
@@ -252,6 +255,7 @@
             <LinearLayout
                 android:id="@+id/llCtrlKeys"
                 android:layout_width="wrap_content"
+                android:minWidth="76dp"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:background="@drawable/bg_fullscreen_btn"
@@ -260,7 +264,8 @@
                 <TextView
                     android:id="@+id/btnCtrlBack"
                     android:layout_width="wrap_content"
-                    android:layout_height="44dp"
+                android:minWidth="76dp"
+                    android:layout_height="48dp"
                     android:gravity="center"
                     android:text="← 返回"
                     android:textSize="12sp"
@@ -271,7 +276,8 @@
                 <TextView
                     android:id="@+id/btnCtrlHome"
                     android:layout_width="wrap_content"
-                    android:layout_height="44dp"
+                android:minWidth="76dp"
+                    android:layout_height="48dp"
                     android:gravity="center"
                     android:text="⌂ 主页"
                     android:textSize="12sp"
@@ -282,7 +288,8 @@
                 <TextView
                     android:id="@+id/btnCtrlRecents"
                     android:layout_width="wrap_content"
-                    android:layout_height="44dp"
+                android:minWidth="76dp"
+                    android:layout_height="48dp"
                     android:gravity="center"
                     android:text="▤ 最近"
                     android:textSize="12sp"
@@ -293,8 +300,9 @@
 
             <TextView
                 android:id="@+id/btnCtrlText"
-                android:layout_width="64dp"
-                android:layout_height="44dp"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="文本"
                 android:textSize="12sp"
@@ -305,8 +313,9 @@
 
             <TextView
                 android:id="@+id/btnAlbum"
-                android:layout_width="64dp"
-                android:layout_height="44dp"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="相册"
                 android:textSize="12sp"
@@ -320,14 +329,16 @@
         <LinearLayout
             android:id="@+id/llRemoteRight"
             android:layout_width="wrap_content"
+                android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnAspectToggle"
-                android:layout_width="64dp"
-                android:layout_height="44dp"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="完整"
                 android:textSize="12sp"
@@ -339,7 +350,8 @@
             <TextView
                 android:id="@+id/btnFullscreen"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="⛶ 全屏"
@@ -352,7 +364,8 @@
             <TextView
                 android:id="@+id/btnFpsToggle"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="60帧"
@@ -369,14 +382,16 @@
         <!-- 右列：拍照/检查更新/品牌 -->
         <LinearLayout
             android:layout_width="wrap_content"
+                android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnCameraCapture"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="拍照"
                 android:textSize="12sp"
@@ -391,7 +406,8 @@
             <TextView
                 android:id="@+id/btnPip"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="小窗"
@@ -406,7 +422,8 @@
             <TextView
                 android:id="@+id/tvCheckUpdate"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="检查更新"
@@ -421,7 +438,8 @@
             <TextView
                 android:id="@+id/tvTitleBrand"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="@string/app_name"
@@ -435,14 +453,16 @@
         <LinearLayout
             android:id="@+id/llCallExtras"
             android:layout_width="wrap_content"
+                android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginStart="8dp">
+            android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnFlipCamera"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:gravity="center"
                 android:text="切换前后摄"
                 android:textSize="12sp"
@@ -457,7 +477,8 @@
             <TextView
                 android:id="@+id/btnHidePip"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="隐藏对方画面"
@@ -474,7 +495,8 @@
             <TextView
                 android:id="@+id/tvTalkIndicator"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="对讲待机"
@@ -489,7 +511,8 @@
             <TextView
                 android:id="@+id/btnCamQuality"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="画质 480P"
@@ -505,7 +528,8 @@
             <TextView
                 android:id="@+id/btnLocalPreview"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="本端预览 开"
@@ -521,7 +545,8 @@
             <TextView
                 android:id="@+id/btnBrightness"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="亮度"
@@ -537,7 +562,8 @@
             <TextView
                 android:id="@+id/btnMirror"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:text="镜面 关"

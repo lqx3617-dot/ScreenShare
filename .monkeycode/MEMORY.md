@@ -452,3 +452,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - **观看端→共享方控制通道已存在**（sendControl/setControlListener，DataChannel 承载，已有 fps/key/touch/album 等消息类型），新增能力优先搭这条通道。
   - 自适应节奏：降档快（2 次采样约 3s）回升慢（4 次采样约 6s）防震荡；观看端 stall 反馈期间抑制 host 端自动回升。
   - 采集固定 1080p 上限 30fps（60fps 实测编码排队延迟更高）；弱网帧率阶梯 30→24→20→15。
+
+## 会议室 UI 精修注意点（v1.224/227，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 精修会议室内部 UI
+- Category: Workflow & Collaboration
+- Instructions:
+  - 会议室太多面板（llMorePanel）按钮尺寸被全屏模式代码动态覆盖：applyFullscreenButtons 设 96x56，restoreFullscreenButtons 恢复到 XML 基线——**改 XML 按钮宽高必须同步 restoreFullscreenButtons**（当前基线 76x48），applyFullscreenButtons 是更大尺寸独立保持。
+  - 工具条 4 按钮为「图标在上文字在下」瓦片：drawableTop + height 68dp + bg_room_tile（白玻璃圆角18dp）。结束会议用 bg_btn_neon_red + 白字。工具条图标（ic_mic/ic_videocam/ic_more_horiz）填色需从 #FF1E293B 改为 #FF4A3B44（暖梅灰）匹配白底。
+  - 更多面板按钮宽高统一用 android:minWidth="76dp" + wrap_content（而非固定 64dp），长文字（如「隐藏对方画面」）不截断。
