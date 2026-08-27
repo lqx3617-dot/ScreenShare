@@ -468,6 +468,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 视频通话中：把对方摄像头小窗放大铺满，作为小窗主画面（远程画面容器无需改动，默认铺满）
         if (cameraPipTrack != null && binding.flCameraPip.visibility == View.VISIBLE) {
             pipLayoutApplied = true
+            // 系统 PiP 接管放大显示，手动放大态先收起，避免退出后两套布局状态互相覆盖
+            cameraPipMaximized = false
             binding.flCameraPip.layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -503,11 +505,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun restorePipLayout() {
         if (!pipLayoutApplied) return
         pipLayoutApplied = false
-        // 用户手动放大的小窗，退出 PiP 后保持放大态
-        if (cameraPipMaximized) {
-            applyCameraPipMaximized(restore = false)
-            return
-        }
         val density = resources.displayMetrics.density
         val lp = FrameLayout.LayoutParams((120 * density).toInt(), (160 * density).toInt())
         lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
@@ -2965,6 +2962,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 进入全屏观看（切换到 flFullscreen 叠加层，跟随屏幕方向） */
     private fun enterFullscreen() {        if (isFullscreen) return
+        // 摄像头小窗若处于手动放大态，先收起，避免两个 MATCH_PARENT 层叠导致画面互相覆盖/触摸串层
+        if (cameraPipMaximized) {
+            applyCameraPipMaximized(restore = true)
+        }
         // 常驻 renderer 未就绪时现场补建
         if (fullscreenRenderer == null) prepareFullscreenRenderer()
         if (fullscreenRenderer == null) return
