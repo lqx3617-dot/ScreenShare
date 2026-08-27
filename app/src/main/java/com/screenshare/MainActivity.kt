@@ -2876,55 +2876,55 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flCameraPip.requestLayout()
     }
 
-    /** 摄像头小窗点击：放大全屏 / 恢复小窗（未隐藏时） */
-      /**
-       * 安装视频通话 PIP 小窗拖拽：未放大时可按住在小窗容器内任意移动。
-       * 放大态不拖拽；短按仍走 onCameraPipClicked 放大/恢复。
-       */
-      private fun installCameraPipTouch() {
-          binding.flCameraPip.setOnTouchListener { v, event ->
-              if (cameraPipMaximized) return@setOnTouchListener false
-              when (event.actionMasked) {
-                  MotionEvent.ACTION_DOWN -> {
-                      pipDragStartX = event.rawX
-                      pipDragStartY = event.rawY
-                      val lp = binding.flCameraPip.layoutParams as? FrameLayout.LayoutParams
-                      pipDragStartLeft = lp?.leftMargin ?: 0
-                      pipDragStartTop = lp?.topMargin ?: 0
-                      pipDragMoved = false
-                      val parent = binding.flCameraPip.parent as? View
-                      pipContainerW = parent?.width ?: 0
-                      pipContainerH = parent?.height ?: 0
-                      true
-                  }
-                  MotionEvent.ACTION_MOVE -> {
-                      val dx = event.rawX - pipDragStartX
-                      val dy = event.rawY - pipDragStartY
-                      if (!pipDragMoved && (kotlin.math.abs(dx) > 8f || kotlin.math.abs(dy) > 8f)) {
-                          pipDragMoved = true
-                      }
-                      if (pipDragMoved) {
-                          val lp = binding.flCameraPip.layoutParams as FrameLayout.LayoutParams
-                          val maxX = (pipContainerW - binding.flCameraPip.width).coerceAtLeast(0)
-                          val maxY = (pipContainerH - binding.flCameraPip.height).coerceAtLeast(0)
-                          lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
-                          lp.leftMargin = (pipDragStartLeft + dx.toInt()).coerceIn(0, maxX)
-                          lp.topMargin = (pipDragStartTop + dy.toInt()).coerceIn(0, maxY)
-                          lp.rightMargin = 0
-                          binding.flCameraPip.layoutParams = lp
-                      }
-                      true
-                  }
-                  MotionEvent.ACTION_UP -> {
-                      val moved = pipDragMoved
-                      pipDragMoved = false
-                      moved
-                  }
-                  else -> false
-              }
-          }
-      }
+    /**
+     * 安装视频通话 PIP 小窗拖拽：未放大时可按住在小窗容器内任意移动。
+     * 放大态不拖拽；短按仍走 onCameraPipClicked 放大/恢复。
+     */
+    private fun installCameraPipTouch() {
+        binding.flCameraPip.setOnTouchListener { v, event ->
+            if (cameraPipMaximized) return@setOnTouchListener false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pipDragStartX = event.rawX
+                    pipDragStartY = event.rawY
+                    val lp = binding.flCameraPip.layoutParams as? FrameLayout.LayoutParams
+                    pipDragStartLeft = lp?.leftMargin ?: 0
+                    pipDragStartTop = lp?.topMargin ?: 0
+                    pipDragMoved = false
+                    val parent = binding.flCameraPip.parent as? View
+                    pipContainerW = parent?.width ?: 0
+                    pipContainerH = parent?.height ?: 0
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - pipDragStartX
+                    val dy = event.rawY - pipDragStartY
+                    if (!pipDragMoved && (kotlin.math.abs(dx) > 8f || kotlin.math.abs(dy) > 8f)) {
+                        pipDragMoved = true
+                    }
+                    if (pipDragMoved) {
+                        val lp = binding.flCameraPip.layoutParams as FrameLayout.LayoutParams
+                        val maxX = (pipContainerW - binding.flCameraPip.width).coerceAtLeast(0)
+                        val maxY = (pipContainerH - binding.flCameraPip.height).coerceAtLeast(0)
+                        lp.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                        lp.leftMargin = (pipDragStartLeft + dx.toInt()).coerceIn(0, maxX)
+                        lp.topMargin = (pipDragStartTop + dy.toInt()).coerceIn(0, maxY)
+                        lp.rightMargin = 0
+                        binding.flCameraPip.layoutParams = lp
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val moved = pipDragMoved
+                    pipDragMoved = false
+                    moved
+                }
+                else -> false
+            }
+        }
+    }
 
+    /** 摄像头小窗点击：放大全屏 / 恢复小窗（未隐藏时） */
     private fun onCameraPipClicked() {
         if (cameraPipHidden) return
         if (cameraPipMaximized) {
