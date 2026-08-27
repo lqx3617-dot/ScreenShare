@@ -2709,6 +2709,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var cameraPipTrack: VideoTrack? = null
     private var cameraPipSink: VideoSink? = null
     private var cameraPipRenderer: SurfaceViewRenderer? = null
+    private var cameraPipLastFrameAt = 0L
+    private var cameraPipFrameCheck: Runnable? = null
 
     // 视频通话 PIP 小窗拖拽状态（未放大时可在屏幕内任意移动）
     private var pipDragStartX = 0f
@@ -2766,8 +2768,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 applyCameraPipMaximized(restore = false)
             }
 
-            cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
+            cameraPipSink = VideoSink { frame ->
+                cameraPipLastFrameAt = SystemClock.elapsedRealtime()
+                binding.tvCameraPipHint.visibility = View.GONE
+                renderer.onFrame(frame)
+            }
             track.addSink(cameraPipSink!!)
+            scheduleCameraPipFrameCheck()
         } catch (t: Throwable) {
             Log.e(TAG, "setupCameraPip 异常: ${t.message}")
         }
@@ -2775,6 +2782,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 清理视频通话 PIP 小窗（断开/重置时调用） */
     private fun releaseCameraPip() {
+        cancelCameraPipFrameCheck()
+        cameraPipLastFrameAt = 0L
         cameraPipSink?.let { cameraPipTrack?.removeSink(it) }
         cameraPipSink = null
         cameraPipTrack = null
@@ -2790,7 +2799,45 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         cameraPipHidden = false
         pipDragMoved = false
         binding.flCameraPip.visibility = View.GONE
+        binding.tvCameraPipHint.text = "对方摄像头"
         binding.tvCameraPipHint.visibility = View.VISIBLE
+    }
+
+    /**
+     * 摄像头 PIP 无帧/冻帧检测：挂上轨道后 4s 仍无帧显示「等待画面」，
+     * 8s 无帧升级为「网络不佳」；帧一到立即清除提示。
+     */
+    private fun scheduleCameraPipFrameCheck() {
+        cancelCameraPipFrameCheck()
+        cameraPipLastFrameAt = SystemClock.elapsedRealtime()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (cameraPipTrack == null) return
+                val since = SystemClock.elapsedRealtime() - cameraPipLastFrameAt
+                when {
+                    since < 4000 -> {
+                        binding.tvCameraPipHint.text = "对方摄像头"
+                        binding.tvCameraPipHint.visibility = View.GONE
+                    }
+                    since < 8000 -> {
+                        binding.tvCameraPipHint.text = "正在等待对方画面…"
+                        binding.tvCameraPipHint.visibility = View.VISIBLE
+                    }
+                    else -> {
+                        binding.tvCameraPipHint.text = "网络不佳，画面可能中断"
+                        binding.tvCameraPipHint.visibility = View.VISIBLE
+                    }
+                }
+                cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(this, 1000)
+            }
+        }
+        cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(runnable, 4000)
+    }
+
+    /** 取消摄像头 PIP 冻帧检测，避免 Activity 销毁后残留回调 */
+    private fun cancelCameraPipFrameCheck() {
+        cameraPipFrameCheck?.let { binding.tvCameraPipHint.removeCallbacks(it) }
+        cameraPipFrameCheck = null
     }
 
     // ======================== 视频通话本端预览 ========================
