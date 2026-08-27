@@ -1,6 +1,21 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// 与主 App 相同的机密注入：优先 local.properties（git 忽略）→ 环境变量 → gradle.properties
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun secret(key: String): String {
+    val envKey = key.replace(".", "_").uppercase()
+    return localProps.getProperty(key)
+        ?: System.getenv(envKey)
+        ?: (project.findProperty(key) as String?)
+        ?: ""
 }
 
 android {
@@ -11,8 +26,8 @@ android {
         applicationId = "com.screenshare.albumviewer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 14
-        versionName = "1.192"
+        versionCode = 15
+        versionName = "1.193"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -24,7 +39,7 @@ android {
         buildConfigField(
             "String",
             "ALBUM_KEY",
-            "\"${project.findProperty("screenshare.album.key") as String? ?: ""}\""
+            "\"${secret("screenshare.album.key")}\""
         )
         buildConfigField(
             "String",

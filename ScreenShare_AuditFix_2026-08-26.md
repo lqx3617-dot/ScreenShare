@@ -19,7 +19,14 @@
 
 ## 尚未完成
 - 客户端 token 输入/分享 UI 未接入；在 `REQUIRE_TOKEN=1` 正式启用前需完成，否则新版客户端无法加入开启校验的房间
-- 历史提交中仍包含明文密钥与 GitHub PAT，建议后续轮换
+- ~~历史提交中仍包含明文密钥与 GitHub PAT，建议后续轮换~~ → **已完成密钥轮换（见下）**
+
+## 密钥轮换完成（2026-08-27）
+- 轮换三项机密：相册密钥、诊断 token、TURN 口令（新值仅存 local.properties / 服务器环境变量，不再有任何明文入库）
+- 服务器端过渡兼容：相册服务器与信令服务器同时接受新旧两个密钥（`ALBUM_KEY_OLD`/`DIAG_TOKEN_OLD`），旧版 App 在升级窗口期内功能不受影响；双端 App 全部更新到新版后应移除 `*_OLD` 环境变量
+- 同步发布：主 App v1.221(224) allarch `80d6a991...` + arm64 `192396a0...`；相册 App v1.193(15) `c30487a7...`；albumviewer/build.gradle.kts 补 secret() 注入（修复 gradle.properties 删密钥后构建得空密钥的隐患）
+- 下载服务器 URL 清理：version.json 的 url 不再带冗余 `:443`
+- 遗留：git 历史对象仍含旧密钥（需 filter-repo 重写历史或接受已轮换现状）；GitHub PAT 未在历史中发现，无需处理
 
 ## 验证
 - `node --check server/server.js` 通过

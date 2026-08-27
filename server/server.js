@@ -48,6 +48,8 @@ const DIAG = process.env.DIAG === "1";
 // /diag 与 /crash 上报鉴权 token：与 App 构建参数 screenshare.diag.token 保持一致；
 // 未配置时拒绝所有上报（防止日志注入），部署需显式设置
 const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
+// 密钥轮换过渡期旧 token（2026-08-26 轮换）：旧版 App 崩溃上报仍接受，双端更新后应移除
+const DIAG_TOKEN_OLD = process.env.DIAG_TOKEN_OLD || "";
 // 兼容方案：设置 REQUIRE_TOKEN=1 才强制房间 token 认证，默认关闭保持旧客户端可用
 const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
 // 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
@@ -57,7 +59,9 @@ const allClients = new Set();
 
 /** 校验诊断上报 token（x-diag-token header） */
 function diagAuthorized(req) {
-  return DIAG_TOKEN !== "" && req.headers["x-diag-token"] === DIAG_TOKEN;
+  if (DIAG_TOKEN === "") return false;
+  const t = req.headers["x-diag-token"];
+  return t === DIAG_TOKEN || (DIAG_TOKEN_OLD !== "" && t === DIAG_TOKEN_OLD);
 }
 
 const server = http.createServer((req, res) => {

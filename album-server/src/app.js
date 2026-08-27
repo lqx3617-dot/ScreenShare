@@ -28,6 +28,9 @@ const ALBUM_KEY = process.env.ALBUM_KEY || "";
 if (!ALBUM_KEY) {
   console.warn("[album] ⚠️ 未配置 ALBUM_KEY 环境变量！当前为全开放模式（任何人可上传/查看/删除相册），生产环境必须设置。");
 }
+// 密钥轮换过渡期旧密钥（2026-08-26 轮换）：旧版 App 内置旧密钥，双密钥并存避免升级窗口期相册失效；
+// 双端 App 全部更新到新版后应移除 ALBUM_KEY_OLD 环境变量
+const ALBUM_KEY_OLD = process.env.ALBUM_KEY_OLD || "";
 const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
@@ -85,8 +88,11 @@ function auth(req, res, next) {
   if (!ALBUM_KEY) return next();
   const fromHeader = String(req.headers["x-album-key"] || "");
   if (fromHeader === ALBUM_KEY) return next();
+  // 过渡期：旧版 App 携带的轮换前密钥仍放行（ALBUM_KEY_OLD 未设置时立即失效）
+  if (ALBUM_KEY_OLD && fromHeader === ALBUM_KEY_OLD) return next();
   const isApi = req.path.startsWith("/api/");
   if (!isApi && String(req.query.key || "") === ALBUM_KEY) return next();
+  if (!isApi && ALBUM_KEY_OLD && String(req.query.key || "") === ALBUM_KEY_OLD) return next();
   return res.status(401).type("text/plain").send("unauthorized");
 }
 app.use(auth);
