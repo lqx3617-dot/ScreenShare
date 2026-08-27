@@ -1,29 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 主背景色（浅色毛玻璃：白底微蓝） -->
-    <color name="bg_dark">#FFF4F7FB</color>
-    <color name="bg_card">#F2FFFFFF</color>
-    <color name="bg_input">#F0FFFFFF</color>
+    <!-- 主背景色（温柔浪漫：奶油粉白） -->
+    <color name="bg_dark">#FFFDF3F7</color>
+    <color name="bg_card">#F7FFFFFF</color>
+    <color name="bg_input">#F2FFFFFF</color>
 
-    <!-- 主色（商务蓝强调，彩色底按钮用） -->
-    <color name="neon_cyan">#FF3B82F6</color>
-    <color name="neon_blue">#FF2563EB</color>
-    <color name="neon_violet">#FF4F46E5</color>
-    <color name="primary_green">#FF16A34A</color>
-    <color name="primary_blue">#FF3B82F6</color>
-    <color name="primary_orange">#FFEA580C</color>
-    <color name="primary_red">#FFDC2626</color>
-    <color name="accent">#FF3B82F6</color>
+    <!-- 主色（玫瑰珊瑚强调，彩色底按钮用） -->
+    <color name="neon_cyan">#FFE85D8D</color>
+    <color name="neon_blue">#FFB04C6E</color>
+    <color name="neon_violet">#FFFA7268</color>
+    <color name="primary_green">#FF2F9E77</color>
+    <color name="primary_blue">#FFE85D8D</color>
+    <color name="primary_orange">#FFF29B50</color>
+    <color name="primary_red">#FFE05566</color>
+    <color name="accent">#FFE85D8D</color>
 
-    <!-- 文字（浅色底用深色文字） -->
-    <color name="text_primary">#FF0F172A</color>
-    <color name="text_secondary">#FF475569</color>
-    <color name="text_hint">#FF64748B</color>
+    <!-- 文字（暖梅灰系） -->
+    <color name="text_primary">#FF4A3B44</color>
+    <color name="text_secondary">#FF7C6A75</color>
+    <color name="text_hint">#FFA7969F</color>
 
-    <!-- 分割线/边框 -->
-    <color name="divider">#FFE2E8F0</color>
-    <color name="divider_neon">#663B82F6</color>
+    <!-- 分割线/边框（粉调） -->
+    <color name="divider">#FFF6E1E9</color>
+    <color name="divider_neon">#33E85D8D</color>
 
     <!-- 应用图标背景 -->
-    <color name="ic_launcher_background">#4F46E5</color>
+    <color name="ic_launcher_background">#FFEF6E93</color>
 </resources>

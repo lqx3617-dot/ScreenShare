@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 浅色毛玻璃背景：白底微蓝渐变 + 左上淡青光晕 + 右下淡蓝光晕 -->
+<!-- 温柔浪漫背景：奶油粉白渐变 + 玫瑰/蜜桃光晕 + 底部若隐若现的爱心水印 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 基础浅蓝白渐变 -->
+    <!-- 基础奶油粉白渐变 -->
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="135"
-                android:startColor="#FFF8FAFD"
-                android:centerColor="#FFF1F5FB"
-                android:endColor="#FFEAF1FA" />
+                android:startColor="#FFFDF3F7"
+                android:centerColor="#FFFFF8F4"
+                android:endColor="#FFFBE7EE" />
         </shape>
     </item>
 
-    <!-- 左上淡青光晕 -->
+    <!-- 左上玫瑰光晕 -->
     <item
         android:width="420dp"
         android:height="420dp"
@@ -23,13 +23,13 @@
             <gradient
                 android:type="radial"
                 android:gradientRadius="210dp"
-                android:startColor="#1F3B82F6"
-                android:centerColor="#123B82F6"
-                android:endColor="#003B82F6" />
+                android:startColor="#26E85D8D"
+                android:centerColor="#19E85D8D"
+                android:endColor="#00E85D8D" />
         </shape>
     </item>
 
-    <!-- 右下淡蓝光晕 -->
+    <!-- 右下蜜桃光晕 -->
     <item
         android:width="380dp"
         android:height="380dp"
@@ -40,9 +40,19 @@
             <gradient
                 android:type="radial"
                 android:gradientRadius="190dp"
-                android:startColor="#1A4B8DF9"
-                android:centerColor="#0E4B8DF9"
-                android:endColor="#004B8DF9" />
+                android:startColor="#2AFAB49B"
+                android:centerColor="#19FAB49B"
+                android:endColor="#00FAB49B" />
         </shape>
     </item>
+
+    <!-- 底部爱心水印（极淡，若有似无的浪漫点缀） -->
+    <item
+        android:width="300dp"
+        android:height="300dp"
+        android:gravity="bottom|start"
+        android:left="-80dp"
+        android:bottom="-90dp"
+        android:alpha="0.08"
+        android:drawable="@drawable/ic_heart_fill" />
 </layer-list>

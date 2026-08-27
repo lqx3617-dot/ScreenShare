@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 商务蓝渐变主按钮：蓝色渐变 + 柔和高光，按下提亮（去霓虹外发光） -->
+<!-- 玫瑰渐变主按钮：玫瑰渐变 + 柔和高光，按下提亮 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <gradient
                 android:angle="0"
-                android:startColor="#FF5B9BFF"
-                android:endColor="#FF3B82F6" />
+                android:startColor="#FFF794B4"
+                android:endColor="#FFEE7BA2" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <gradient
                 android:angle="0"
-                android:startColor="#FF3B82F6"
-                android:endColor="#FF2E6FD8" />
+                android:startColor="#FFEE7BA2"
+                android:endColor="#FFE45C8C" />
         </shape>
     </item>
 </selector>

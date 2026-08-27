@@ -1,43 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 品牌 Logo：商务蓝圆底 + 显示器 + 无线信号弧 -->
+<!-- 品牌 Logo：玫瑰光感圆底 + 居中爱心（情侣共享主题） -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="56dp"
     android:height="56dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
-    <!-- 圆底（半透明蓝） -->
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 圆底（半透明玫瑰） -->
     <path
-        android:fillColor="#1A3B82F6"
-        android:pathData="M24,2a22,22 0 1,0 0,44a22,22 0 1,0 0,-44" />
+        android:fillColor="#29E85D8D"
+        android:pathData="M12,1.5a10.5,10.5 0 1,0 0,21a10.5,10.5 0 1,0 0,-21z" />
     <path
-        android:strokeColor="#FF3B82F6"
-        android:strokeWidth="1.6"
-        android:pathData="M24,2a22,22 0 1,0 0,44a22,22 0 1,0 0,-44" />
-    <!-- 显示器边框 -->
+        android:strokeColor="#59E85D8D"
+        android:strokeWidth="0.8"
+        android:pathData="M12,1.5a10.5,10.5 0 1,0 0,21a10.5,10.5 0 1,0 0,-21z" />
+    <!-- 居中爱心（缩放至圆内） -->
+    <group
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:pivotX="12"
+        android:pivotY="12">
+        <path
+            android:fillColor="#FFE85D8D"
+            android:pathData="M12,21.35l-1.45,-1.32C5.4,15.36 2,12.28 2,8.5 2,5.42 4.42,3 7.5,3c1.74,0 3.41,0.81 4.5,2.09C13.09,3.81 14.76,3 16.5,3 19.58,3 22,5.42 22,8.5c0,3.78 -3.4,6.86 -8.55,11.54L12,21.35z" />
+    </group>
+    <!-- 左上高光点 -->
     <path
-        android:strokeColor="#FF4B8DF9"
-        android:strokeWidth="2"
-        android:strokeLineJoin="round"
-        android:pathData="M13,15 L35,15 A2,2 0 0 1 37,17 L37,29 A2,2 0 0 1 35,31 L13,31 A2,2 0 0 1 11,29 L11,17 A2,2 0 0 1 13,15 Z" />
-    <!-- 屏幕内容：蓝色渐变感的两条线 -->
-    <path
-        android:strokeColor="#FFA8C7FF"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M15,21 L33,21" />
-    <path
-        android:strokeColor="#FF6B8FDD"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M15,26 L27,26" />
-    <!-- 底座 -->
-    <path
-        android:fillColor="#FF3B82F6"
-        android:pathData="M20,31 L28,31 L27,35 L21,35 Z" />
-    <!-- 无线信号弧 -->
-    <path
-        android:strokeColor="#FFA8C7FF"
-        android:strokeWidth="2.2"
-        android:strokeLineCap="round"
-        android:pathData="M15,10 A11,11 0 0 1 33,10" />
+        android:fillColor="#66FFFFFF"
+        android:pathData="M8.2,5.2a1.4,1.4 0 1,0 0,2.8a1.4,1.4 0 1,0 0,-2.8z" />
 </vector>

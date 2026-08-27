@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 远程视频外框：深色底 + 柔和蓝描边 -->
+<!-- 远程视频外框：深色底 + 玫瑰描边 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <corners android:radius="20dp" />
     <solid android:color="#FF05070D" />
     <stroke
         android:width="1dp"
-        android:color="#1F4B8DF9" />
+        android:color="#29E85D8D" />
 </shape>

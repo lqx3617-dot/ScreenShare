@@ -427,3 +427,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.221(224) 产物：allarch md5=80d6a991a68911a1e411ef22609660f9（24.6MB）、arm64 md5=192396a0f997674470a40d0d8dbe08f9（17.8MB）；AlbumViewer v1.193(15) md5=c30487a7582fe86d1f8816705647a6a1（2.4MB）。commit e5882c6 已推送。
   - 构建失败时签名链继续执行会拿旧 unsigned APK 签出新 md5——**构建失败后必须核对 output-metadata.json 的 versionCode 与预期一致再签名**；本次已在构建链中加入 grep versionCode 检查步骤。
   - 下载服务器 DOWNLOAD_BASE 已去掉冗余 `:443`（version.json url 更干净，反代 443 默认端口等价）。
+
+## UI 风格换肤方法（v1.222/225，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 全局换新温柔浪漫风 UI
+- Category: Workflow & Collaboration
+- Instructions:
+  - **配色集中在 colors.xml 且资源名不变只换色值**（neon_cyan=玫瑰 #E85D8D、neon_blue=豆沙 #B04C6E、neon_violet=珊瑚 #FA7268、bg_dark=奶油粉 #FDF3F7 等），全 App 引用处自动换肤；换风格时保持该策略可极大减少改动面。
+  - 布局与 Kotlin 中仍有少量硬编码色值需手动同步：布局搜 `#FF1E293B`（工具条文字→text_primary）、Kotlin 在 MainActivity/MeetingActivity 用 Color.parseColor 与 0xFF 字面量（已全部换成浪漫风色值）。
+  - 主按钮在 bg_btn_neon_cyan（玫瑰渐变）与 bg_btn_neon_violet（珊瑚渐变）两个 selector；品牌 Logo 是 ic_brand_logo.xml（玫瑰圆底+居中爱心 group 缩放 0.62）。
+  - 爱心迸发动效：activity_main.xml 尾部 flHeartBurst 覆盖层（空 FrameLayout 不拦截触摸）+ MainActivity.runHeartBurst()（onConnected 触发，ic_heart_fill 上色飘起淡出）。
+  - layer-list 引用 vector 水印用 `android:drawable` 属性 + `android:alpha`（item 内嵌 drawable class 写法无效）。
+  - 改 release-config.json 的 changelog 后需重启下载服务器（启动时缓存）。

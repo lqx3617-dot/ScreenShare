@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 毛玻璃卡片：柔和投影 + 半透明白玻璃 + 顶部高光 + 浅灰描边（立体浮起） -->
+<!-- 毛玻璃卡片：柔和暖粉投影 + 半透明白玻璃 + 顶部高光 + 粉调描边（立体浮起） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 柔和投影 -->
     <item
@@ -8,8 +8,8 @@
         android:right="2dp"
         android:bottom="0dp">
         <shape android:shape="rectangle">
-            <corners android:radius="20dp" />
-            <solid android:color="#264B5563" />
+            <corners android:radius="22dp" />
+            <solid android:color="#2EDF9BB0" />
         </shape>
     </item>
     <!-- 顶部高光 -->
@@ -18,25 +18,25 @@
         android:right="8dp"
         android:top="0dp">
         <shape android:shape="rectangle">
-            <corners android:radius="20dp" />
+            <corners android:radius="22dp" />
             <gradient
                 android:angle="270"
-                android:startColor="#33FFFFFF"
-                android:centerColor="#0DFFFFFF"
+                android:startColor="#40FFFFFF"
+                android:centerColor="#12FFFFFF"
                 android:endColor="#00FFFFFF" />
         </shape>
     </item>
     <!-- 玻璃主体 -->
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="20dp" />
+            <corners android:radius="22dp" />
             <gradient
                 android:angle="90"
-                android:startColor="#F8FFFFFF"
-                android:endColor="#EFFBFFFF" />
+                android:startColor="#FBFFFFFF"
+                android:endColor="#F4FFF6F8" />
             <stroke
                 android:width="1dp"
-                android:color="#1F64748B" />
+                android:color="#29D98AA6" />
         </shape>
     </item>
 </layer-list>

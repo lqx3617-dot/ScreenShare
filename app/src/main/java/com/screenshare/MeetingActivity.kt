@@ -424,7 +424,7 @@ class MeetingActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, 1
                 ).apply { topMargin = 2.dp(); bottomMargin = 2.dp() }
-                setBackgroundColor(Color.parseColor("#1A64748B"))
+                setBackgroundColor(Color.parseColor("#1AE05566"))
             }
             container.addView(divider)
         }
@@ -448,13 +448,13 @@ class MeetingActivity : AppCompatActivity() {
             textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
             letterSpacing = 0.15f
-            setTextColor(Color.parseColor("#4B8DF9"))
+            setTextColor(Color.parseColor("#E85D8D"))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         val tvMeta = TextView(this).apply {
             text = (if (isCreate) "创建" else "加入") + " · " + relativeTime(entry.ts)
             textSize = 12f
-            setTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#A7969F"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginStart = 10.dp()
             }
@@ -462,7 +462,7 @@ class MeetingActivity : AppCompatActivity() {
         val tvDelete = TextView(this).apply {
             text = "✕"
             textSize = 16f
-            setTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#A7969F"))
             gravity = Gravity.CENTER
             setPadding(8.dp(), 4.dp(), 0, 4.dp())
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)

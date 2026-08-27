@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 红色圆底：结束会议警示图标容器（浅色柔和） -->
+<!-- 珊瑚红圆底：结束会议警示图标容器（浅色柔和） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="oval">
-            <solid android:color="#FFDC2626" />
+            <solid android:color="#FFE05566" />
         </shape>
     </item>
     <item
@@ -23,8 +23,8 @@
         <shape android:shape="oval">
             <gradient
                 android:angle="0"
-                android:startColor="#FFFF5C5C"
-                android:endColor="#FFDC2626" />
+                android:startColor="#FFF0707C"
+                android:endColor="#FFE05566" />
         </shape>
     </item>
 </layer-list>

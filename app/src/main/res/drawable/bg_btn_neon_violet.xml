@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 深蓝渐变次按钮：深蓝渐变，按下提亮（去霓虹外发光） -->
+<!-- 珊瑚渐变次按钮：珊瑚渐变，按下提亮 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <gradient
                 android:angle="0"
-                android:startColor="#FF4B72E8"
-                android:endColor="#FF3358C9" />
+                android:startColor="#FFFB9C86"
+                android:endColor="#FFF97C6A" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <gradient
                 android:angle="0"
-                android:startColor="#FF3358C9"
-                android:endColor="#FF2A46A8" />
+                android:startColor="#FFFA8E75"
+                android:endColor="#FFF9705F" />
         </shape>
     </item>
 </selector>

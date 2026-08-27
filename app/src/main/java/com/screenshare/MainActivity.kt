@@ -1,6 +1,7 @@
 package com.screenshare
 
 import android.Manifest
+import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.Dialog
 import android.app.PendingIntent
@@ -16,6 +17,7 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
+import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -38,8 +40,10 @@ import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import java.util.Random
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.annotation.RequiresApi
@@ -719,7 +723,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         isControlMode = !isControlMode
         binding.btnRemoteControl.text = if (isControlMode) "控制中" else "远程控制"
-        binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF16A34A.toInt() else 0xFF1E293B.toInt())
+        binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF2F9E77.toInt() else 0xFF4A3B44.toInt())
         binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
         binding.btnCtrlText.visibility = if (isControlMode) View.VISIBLE else View.GONE
         if (!isControlMode) ctrlDownSent = false
@@ -905,7 +909,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateRemoteControlStatus() {
         val on = RemoteControlService.isAccessibilityOn()
         binding.tvCtrlStatus.text = if (on) "远程控制已就绪" else "未开启无障碍服务，观看方无法控制"
-        binding.tvCtrlStatus.setTextColor(if (on) 0xFF15803D.toInt() else 0xFFB45309.toInt())
+        binding.tvCtrlStatus.setTextColor(if (on) 0xFF2F9E77.toInt() else 0xFFB45309.toInt())
         binding.btnCtrlSetup.visibility = if (on) View.GONE else View.VISIBLE
     }
 
@@ -914,7 +918,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         RemoteControlService.controlEnabled = !RemoteControlService.controlEnabled
         binding.btnCtrlLock.text = if (RemoteControlService.controlEnabled) "停止控制" else "已锁定"
         binding.btnCtrlLock.setTextColor(
-            if (RemoteControlService.controlEnabled) 0xFFB45309.toInt() else 0xFFDC2626.toInt()
+            if (RemoteControlService.controlEnabled) 0xFFB45309.toInt() else 0xFFE05566.toInt()
         )
         Toast.makeText(
             this,
@@ -1065,7 +1069,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateVideoCallButton() {
         binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
         binding.btnCamera.setTextColor(
-            if (videoCallOn) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
+            if (videoCallOn) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
         )
         // 视频通话增强控件仅通话中显示
         binding.llCallExtras.visibility = if (videoCallOn) View.VISIBLE else View.GONE
@@ -1111,7 +1115,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val now720 = p.toggleCameraQuality()
         binding.btnCamQuality.text = if (now720) "画质 720P" else "画质 480P"
         binding.btnCamQuality.setTextColor(
-            if (now720) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
+            if (now720) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
         )
         Toast.makeText(this, if (now720) "画质已切换 720P" else "画质已切换 480P", Toast.LENGTH_SHORT).show()
     }
@@ -1220,7 +1224,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         else -> "对讲待机"
                     }
                     binding.tvTalkIndicator.setTextColor(
-                        if (speaking) Color.parseColor("#FF15803D") else Color.parseColor("#FF1E293B")
+                        if (speaking) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
                     )
                     h.postDelayed(this, 250)
                 }
@@ -1236,7 +1240,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             talkStatsThread?.join(500)
             talkStatsThread = null
             binding.tvTalkIndicator.text = "对讲待机"
-            binding.tvTalkIndicator.setTextColor(Color.parseColor("#FF1E293B"))
+            binding.tvTalkIndicator.setTextColor(Color.parseColor("#FF4A3B44"))
         }
     }
 
@@ -1609,9 +1613,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnMic.setTextColor(
             when {
-                !on -> Color.parseColor("#FF1E293B")
-                micMuted -> Color.parseColor("#FFD13232")
-                else -> Color.parseColor("#FF15803D")
+                !on -> Color.parseColor("#FF4A3B44")
+                micMuted -> Color.parseColor("#FFE05566")
+                else -> Color.parseColor("#FF2F9E77")
             }
         )
     }
@@ -2440,13 +2444,65 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
-    override fun onConnected() {
-        runOnUiThread {
+    /** 连接成功爱心迸发：一串玫瑰爱心从屏幕下方飘起、随机漂移后淡出（纯展示，不拦截触摸） */
+    private fun runHeartBurst() {
+        val container = binding.flHeartBurst
+        if (container.width == 0 || container.height == 0) return
+        val colors = intArrayOf(
+            0xFFE85D8D.toInt(), // 玫瑰
+            0xFFF794B4.toInt(), // 樱粉
+            0xFFF9705F.toInt(), // 珊瑚
+            0xFFD05580.toInt()  // 豆沙
+        )
+        val rand = Random()
+        val density = resources.displayMetrics.density
+        val cx = container.width / 2f
+        val cy = container.height * 0.66f
+        for (i in 0 until 14) {
+            val heart = ImageView(this)
+            heart.setImageResource(R.drawable.ic_heart_fill)
+            heart.imageTintList = ColorStateList.valueOf(colors[i % colors.size])
+            val size = (18 + rand.nextInt(16)) * density.toInt()
+            container.addView(
+                heart,
+                FrameLayout.LayoutParams(size, size)
+            )
+            heart.post {
+                heart.x = cx - size / 2f + (rand.nextInt(200) - 100) * density
+                heart.y = cy + rand.nextInt(60) * density
+                heart.scaleX = 0.1f
+                heart.scaleY = 0.1f
+                heart.alpha = 0f
+                val rise = container.height * (0.40f + rand.nextInt(12) / 100f)
+                ObjectAnimator.ofFloat(heart, "translationY", 0f, -rise).apply {
+                    duration = 1400L + rand.nextInt(500)
+                    interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                    start()
+                }
+                ObjectAnimator.ofFloat(heart, "translationX", 0f, (rand.nextInt(120) - 60) * density).apply {
+                    duration = 1900L
+                    start()
+                }
+                heart.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(280L)
+                    .setStartDelay((i % 7) * 60L).start()
+                // 上飘后淡出并回收
+                heart.postDelayed({
+                    heart.animate().alpha(0f).setDuration(450L).withEndAction {
+                        container.removeView(heart)
+                    }.start()
+                }, 1450L + rand.nextInt(300))
+            }
+        }
+    }
+
+    override fun onConnected() {        runOnUiThread {
             // 连接建立即启动独立弱网/编码自适应（与全屏状态无关），保证非全屏观看动态画面不卡
             startAdaptiveLoop()
             updateUI("✅ 已连接！屏幕共享进行中...")
             // 兜底关闭会议号弹窗（P2P 建立后不应残留遮挡画面）
             dismissMeetingCodeDialog()
+            // 连接成功：爱心迸发，给两个人的时刻一点仪式感
+            runHeartBurst()
             // 状态点呼吸发光，增强已连接的科技感反馈
             startStatusBreathing()
             enterMeetingUI()
@@ -3255,7 +3311,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // UI 更新回主线程
                         binding.root.post {
                             if (!isFullscreen) return@post
-                            binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFF4B8DF9.toInt())
+                            binding.tvFullscreenStats.setTextColor(if (warn) 0xFFFF5252.toInt() else 0xFFE85D8D.toInt())
                             binding.tvFullscreenStats.text = fullTextWithPath
                         }
                     }

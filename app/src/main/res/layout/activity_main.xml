@@ -83,7 +83,7 @@
             android:layout_height="wrap_content"
             android:text="远程控制状态"
             android:textSize="12sp"
-            android:textColor="#FF1E293B" />
+            android:textColor="@color/text_primary" />
 
         <TextView
             android:id="@+id/btnCtrlSetup"
@@ -92,7 +92,7 @@
             android:text="去开启"
             android:textSize="12sp"
             android:textStyle="bold"
-            android:textColor="#FF7CFC9C"
+            android:textColor="#FF43B892"
             android:paddingStart="10dp"
             android:paddingEnd="6dp"
             android:visibility="gone" />
@@ -153,7 +153,7 @@
             android:text="麦克风"
             android:textSize="12sp"
             android:textStyle="bold"
-            android:textColor="#FF1E293B"
+            android:textColor="@color/text_primary"
             android:drawableStart="@drawable/ic_mic"
             android:drawablePadding="6dp"
             android:paddingStart="4dp"
@@ -171,7 +171,7 @@
             android:text="摄像头"
             android:textSize="12sp"
             android:textStyle="bold"
-            android:textColor="#FF1E293B"
+            android:textColor="@color/text_primary"
             android:drawableStart="@drawable/ic_videocam"
             android:drawablePadding="6dp"
             android:paddingStart="4dp"
@@ -189,7 +189,7 @@
             android:text="更多"
             android:textSize="12sp"
             android:textStyle="bold"
-            android:textColor="#FF1E293B"
+            android:textColor="@color/text_primary"
             android:drawableStart="@drawable/ic_more_horiz"
             android:drawablePadding="6dp"
             android:paddingStart="4dp"
@@ -244,7 +244,7 @@
                 android:gravity="center"
                 android:text="远程控制"
                 android:textSize="12sp"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
@@ -264,7 +264,7 @@
                     android:gravity="center"
                     android:text="← 返回"
                     android:textSize="12sp"
-                    android:textColor="#FF1E293B"
+                    android:textColor="@color/text_primary"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp" />
 
@@ -275,7 +275,7 @@
                     android:gravity="center"
                     android:text="⌂ 主页"
                     android:textSize="12sp"
-                    android:textColor="#FF1E293B"
+                    android:textColor="@color/text_primary"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp" />
 
@@ -286,7 +286,7 @@
                     android:gravity="center"
                     android:text="▤ 最近"
                     android:textSize="12sp"
-                    android:textColor="#FF1E293B"
+                    android:textColor="@color/text_primary"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp" />
             </LinearLayout>
@@ -298,7 +298,7 @@
                 android:gravity="center"
                 android:text="文本"
                 android:textSize="12sp"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
@@ -310,7 +310,7 @@
                 android:gravity="center"
                 android:text="相册"
                 android:textSize="12sp"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
@@ -331,7 +331,7 @@
                 android:gravity="center"
                 android:text="完整"
                 android:textSize="12sp"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
@@ -344,7 +344,7 @@
                 android:gravity="center"
                 android:text="⛶ 全屏"
                 android:textSize="12sp"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:foreground="?attr/selectableItemBackground"
                 android:background="@drawable/bg_fullscreen_btn"
                 android:visibility="gone" />
@@ -358,7 +358,7 @@
                 android:text="60帧"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -381,7 +381,7 @@
                 android:text="拍照"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -397,7 +397,7 @@
                 android:text="小窗"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -412,7 +412,7 @@
                 android:text="检查更新"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -447,7 +447,7 @@
                 android:text="切换前后摄"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -463,7 +463,7 @@
                 android:text="隐藏对方画面"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -480,7 +480,7 @@
                 android:text="对讲待机"
                 android:textSize="11sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:background="@drawable/bg_fullscreen_btn"
@@ -495,7 +495,7 @@
                 android:text="画质 480P"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -511,7 +511,7 @@
                 android:text="本端预览 开"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -527,7 +527,7 @@
                 android:text="亮度"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -543,7 +543,7 @@
                 android:text="镜面 关"
                 android:textSize="12sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B"
+                android:textColor="@color/text_primary"
                 android:paddingStart="12dp"
                 android:paddingEnd="12dp"
                 android:foreground="?attr/selectableItemBackground"
@@ -634,7 +634,7 @@
             android:gravity="center"
             android:text="退出全屏"
             android:textSize="14sp"
-            android:textColor="#FF1E293B"
+            android:textColor="@color/text_primary"
             android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_fullscreen_btn" />
 
@@ -651,7 +651,7 @@
             android:gravity="center"
             android:text=""
             android:textSize="12sp"
-            android:textColor="#FF4B8DF9"
+            android:textColor="@color/neon_cyan"
             android:typeface="monospace"
             android:background="@drawable/bg_fullscreen_btn" />
     </FrameLayout>
@@ -684,7 +684,7 @@
                 android:text="相册 · 全部照片"
                 android:textSize="15sp"
                 android:textStyle="bold"
-                android:textColor="#FF1E293B" />
+                android:textColor="@color/text_primary" />
 
             <TextView
                 android:id="@+id/btnCloseAlbumViewer"
@@ -697,7 +697,7 @@
                 android:gravity="center"
                 android:text="关闭"
                 android:textSize="14sp"
-                android:textColor="#FF7CFC9C" />
+                android:textColor="#FF43B892" />
         </LinearLayout>
 
         <!-- WebView 动态添加到此容器（代码创建，避免 XML 强依赖 WebView 尺寸） -->
@@ -707,5 +707,12 @@
             android:layout_height="match_parent"
             android:layout_marginTop="46dp" />
     </FrameLayout>
+
+    <!-- 爱心迸发层：连接成功时从屏幕下方飘起一串玫瑰爱心（纯展示，不拦截触摸） -->
+    <FrameLayout
+        android:id="@+id/flHeartBurst"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false" />
 
 </FrameLayout>
