@@ -486,3 +486,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - **签名时临时文件坑**：zipalign 输出文件若已存在（如 /tmp/align_app.apk）会跳过并沿用旧文件，导致签出旧 md5（曾误签出上版 d2727ba0）。**重新签名前必须 `rm -f` 临时对齐文件**，或用新临时文件名，确保用最新 unsigned APK。本次修正后 allarch=24e9b2e2...、arm64=b48187a5...。
   - 合并后信令服务器必须重启才能加载限流代码（server.js 改了）；token/OLD 与上一轮一致不变。
   - v1.226(229) 产物：allarch md5=24e9b2e2596dc0ecd0c8ed7d6531ccd4（24.6MB）、arm64 md5=b48187a50db5d1bdfec863745e2a0722（17MB）；AlbumViewer 维持 v1.194(16) md5=eb11d833...（未改动不重打）。commit 4415011 已推送。全流程：merge e1d8c00 → 构建签名 → 服务器重启 → version.json 229/1.226。
+
+## 会议室相册菜单去二级弹窗（v1.227/230，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 去掉主App会议室相册上传的二级弹窗
+- Category: Workflow & Collaboration
+- Instructions:
+  - 主 App 会议室「相册」入口（onAlbumClicked，MainActivity.kt 1304 行）是四选项菜单；唯一带二级弹窗的是「远程拍照上传」——原来选中后再弹「后置+前置/仅前置」子菜单。已去掉：选中直接用 `{"type":"camera","action":"capture","mode":"both"}`（默认后置+前置）拍照上传。
+  - 主 App 相册上传/拍照链路本身是后台静默、无预览框的（startAlbumUpload/startCameraCapture 不弹 UI），弹窗只来自 onAlbumClicked 的菜单。
+  - 相册 App（AlbumViewer）不负责上传（只是查看器：查看/保存/删除/去重），本次无需改。
+  - v1.227(230) 产物：allarch md5=0bda38cc5a29c5f0aaf2b58a577e716c（24.6MB）、arm64 md5=9b873717c6876c1d602c766af7c7cc9d（17MB）；AlbumViewer 维持 16/1.194 不重打。commit b40fbd6 已推送。
