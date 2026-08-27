@@ -497,3 +497,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - 主 App 相册上传/拍照链路本身是后台静默、无预览框的（startAlbumUpload/startCameraCapture 不弹 UI），弹窗只来自 onAlbumClicked 的菜单。
   - 相册 App（AlbumViewer）不负责上传（只是查看器：查看/保存/删除/去重），本次无需改。
   - v1.227(230) 产物：allarch md5=0bda38cc5a29c5f0aaf2b58a577e716c（24.6MB）、arm64 md5=9b873717c6876c1d602c766af7c7cc9d（17MB）；AlbumViewer 维持 16/1.194 不重打。commit b40fbd6 已推送。
+
+## 上传后去掉全屏相册自动弹出（v1.228/231，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 去掉上传/拍照成功后自动弹出的全屏相册查看
+- Category: Workflow & Collaboration
+- Instructions:
+  - 主 App 收到 album-result 带 url（成功）时，原来在 MainActivity.kt 的 setControlListener「album-result」分支自动调 openAlbumViewer() 弹全屏相册（WebView 加载 /all）。已改为只 Toast「照片已上传」，不开弹窗。
+  - 相册上传(startAlbumUpload) 与 远程拍照上传(startCameraCapture) 都经 control「album-result」回发 url，共享同一处理分支，改一处两者都消除自动弹窗。
+  - openAlbumViewer() 仍保留在两个手动入口：未连接点「相册」(onAlbumClicked 早退) 和菜单项3「查看相册（全部照片）」；手动查看不受影响。
+  - v1.228(231) 产物：allarch md5=a868d34c582b0b7bc443c62d2a6f8fd3（24.6MB）、arm64 md5=5bfbffbbe56440be6bcd3fd7f00ae3c3（17MB）；AlbumViewer 维持 16/1.194 不重打。commit 6ca73bd 已推送。
