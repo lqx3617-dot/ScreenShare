@@ -440,3 +440,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 爱心迸发动效：activity_main.xml 尾部 flHeartBurst 覆盖层（空 FrameLayout 不拦截触摸）+ MainActivity.runHeartBurst()（onConnected 触发，ic_heart_fill 上色飘起淡出）。
   - layer-list 引用 vector 水印用 `android:drawable` 属性 + `android:alpha`（item 内嵌 drawable class 写法无效）。
   - 改 release-config.json 的 changelog 后需重启下载服务器（启动时缓存）。
+
+## 视频掉帧优化架构（v1.223/226，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 掉帧专项优化
+- Category: Workflow & Collaboration
+- Instructions:
+  - **画质/帧率取舍是用户既定决策**：初始 degradationPreference=MAINTAIN_RESOLUTION（保分辨率不降画质，用户明确要求），弱网档位>0 或编码瓶颈时才切 MAINTAIN_FRAMERATE+降分辨率；改这块前先确认用户是否改主意。
+  - **掉帧有三类来源**：①共享方编码跟不上（host 出向 outFps<目标*0.78 或 qualityLimitationReason=cpu）；②网络拥塞（loss/RTT 档位）；③观看端接收管线掉帧（解码/渲染瓶颈、帧到得过晚）——③只有观看端能看到，v1.223 起由观看端 framesDropped/framesDecoded 差分检测，经控制通道发 `{"type":"stream-stall","value":1/0}` 给共享方（WebRTCPeer.setViewerStall），与编码瓶颈共用降档路径。
+  - **观看端→共享方控制通道已存在**（sendControl/setControlListener，DataChannel 承载，已有 fps/key/touch/album 等消息类型），新增能力优先搭这条通道。
+  - 自适应节奏：降档快（2 次采样约 3s）回升慢（4 次采样约 6s）防震荡；观看端 stall 反馈期间抑制 host 端自动回升。
+  - 采集固定 1080p 上限 30fps（60fps 实测编码排队延迟更高）；弱网帧率阶梯 30→24→20→15。

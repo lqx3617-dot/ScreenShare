@@ -184,6 +184,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var viewerStatsThread: android.os.HandlerThread? = null
     private var viewerStatsHandler: android.os.Handler? = null
     private var viewerStatsRunnable: Runnable? = null
+    // 观看端掉帧检测（v1.223）：inbound framesDropped/framesDecoded 差分算掉帧率，
+    // 持续掉帧经控制通道上报共享方（stream-stall）触发降档，恢复后解除，双向各带防抖
+    private var lastInDropped = 0L
+    private var lastInDecoded = 0L
+    private var stallStrikes = 0            // 连续掉帧命中次数（达到 2 次上报）
+    private var stallRecoverStrikes = 0     // 连续正常次数（达到 3 次解除上报）
+    private var stallReported = false       // 当前是否处于"已上报掉帧"状态
+    private var lastDropPct = 0.0           // 最近一次采样窗口掉帧率（UI 显示用）
 
     // 画中画（小窗）模式：true=处于系统 PiP，仅在 Android 8.0+ 有效
     private var inPipMode = false
@@ -1868,6 +1876,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 val obj = org.json.JSONObject(msg)
                 when (obj.optString("type")) {
                     "fps" -> p.setFramerate(obj.optInt("value", 60))
+                    "stream-stall" -> {
+                        // 观看端掉帧反馈：持续掉帧→立即降档（保帧率+降分辨率），恢复→允许回升评估
+                        val active = obj.optInt("value", 0) == 1
+                        p.setViewerStall(active)
+                    }
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
                     "video-call-off" -> {
@@ -3396,9 +3409,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         adaptiveThread = null
     }
 
-    /** 观看端：周期显示网络延迟与接收帧率（量化画面延迟，弱网时给出提示） */
+    /** 观看端：周期显示网络延迟与接收帧率（量化画面延迟，弱网时给出提示）；同步做掉帧率检测与上报 */
     private fun startViewerStatsLoop() {
         stopViewerStatsLoop()
+        // 掉帧检测基线与状态复位
+        lastInDropped = 0L
+        lastInDecoded = 0L
+        stallStrikes = 0
+        stallRecoverStrikes = 0
+        stallReported = false
+        lastDropPct = 0.0
         val thread = android.os.HandlerThread("viewer-stats")
         thread.start()
         viewerStatsThread = thread
@@ -3415,15 +3435,58 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val w = json.optInt("inW", 0)
                         val h = json.optInt("inH", 0)
                         val selPath = json.optString("path", "")
+                        // ---- 掉帧率检测（v1.223）：窗口内 dropped/(dropped+decoded) ----
+                        val dropped = json.optLong("inDropped", 0L)
+                        val decoded = json.optLong("inDecoded", 0L)
+                        val dDropped = (dropped - lastInDropped).coerceAtLeast(0L)
+                        val dDecoded = (decoded - lastInDecoded).coerceAtLeast(0L)
+                        lastInDropped = dropped
+                        lastInDecoded = decoded
+                        val denom = dDropped + dDecoded
+                        val dropRatio = if (denom > 0) dDropped.toDouble() / denom else 0.0
+                        lastDropPct = dropRatio * 100.0
+                        val stalling = denom > 0 && dropRatio >= 0.2
+                        if (!stallReported) {
+                            if (stalling) {
+                                stallStrikes++
+                                stallRecoverStrikes = 0
+                                if (stallStrikes >= 2) {
+                                    // 连续 2 个窗口（约 4s）掉帧率 >=20%：上报共享方立即降档
+                                    stallStrikes = 0
+                                    stallReported = true
+                                    peer?.sendControl("""{"type":"stream-stall","value":1}""")
+                                    AppLogger.capture("观看端持续掉帧 ${"%.0f".format(lastDropPct)}%: 已通知共享方降档")
+                                }
+                            } else {
+                                stallStrikes = 0
+                            }
+                        } else {
+                            if (stalling) {
+                                stallRecoverStrikes = 0
+                            } else if (dropRatio < 0.05) {
+                                stallRecoverStrikes++
+                                if (stallRecoverStrikes >= 3) {
+                                    // 连续 3 个窗口（约 6s）掉帧率 <5%：解除上报，共享方恢复评估
+                                    stallRecoverStrikes = 0
+                                    stallReported = false
+                                    peer?.sendControl("""{"type":"stream-stall","value":0}""")
+                                    AppLogger.capture("观看端掉帧恢复: 解除降档反馈")
+                                }
+                            } else {
+                                stallRecoverStrikes = 0
+                            }
+                        }
                         val rttText = if (rtt > 0) "${rtt}ms" else "--"
                         val hint = when {
                             rtt > 300 -> " ⚠️延迟高"
                             rtt > 150 -> " ⚠️延迟偏高"
                             else -> ""
                         }
+                        // 掉帧率明显时展示，便于用户理解卡顿来源
+                        val dropText = if (lastDropPct >= 5.0) " · 掉帧${"%.0f".format(lastDropPct)}%" else ""
                         val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
                         val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
-                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$pathText$hint"
+                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$dropText$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text

@@ -167,6 +167,10 @@ class WebRTCPeer(
     // 与弱网档位(curAdaptLevel)独立，最终采集档位取两者的较大值
     private var encLoadDown = false
     private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
+    // 观看端掉帧反馈（stream-stall）：观看端检测到接收管线持续掉帧时经控制通道通知共享方，
+    // 共享方按编码瓶颈同路径立即降档（MAINTAIN_FRAMERATE + 降分辨率），反馈恢复后才允许回升。
+    // 解决共享方出向统计看不到的"接收端解码/渲染瓶颈"与"帧到达过晚被丢"两类掉帧。
+    @Volatile private var viewerStallActive = false
     private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
 
     // 系统音频 DataChannel（观看方接收）
@@ -1439,6 +1443,10 @@ class WebRTCPeer(
                         var lost = 0L
                         var lostTotal = 0L
                         var nackCount = 0L
+                        // 观看端接收管线掉帧诊断：framesDropped 为接收/解码/渲染队列丢弃的累计帧数，
+                        // framesDecoded 为成功解码的累计帧数；两者做差分可算出采样窗口内的掉帧率
+                        var inDropped = 0L
+                        var inDecoded = 0L
                         // 共享方视角的发送丢包：SDK144 中 outbound-rtp 无 packetsLost 字段，
                         // 必须从 remote-inbound-rtp（RTCP receiver report 回传）读取
                         var outSent = 0L
@@ -1471,6 +1479,8 @@ class WebRTCPeer(
                                     lost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
                                     lostTotal += (s.members["packetsReceived"] as? Number)?.toLong() ?: 0L
                                     nackCount += (s.members["nackCount"] as? Number)?.toLong() ?: 0L
+                                    inDropped += (s.members["framesDropped"] as? Number)?.toLong() ?: 0L
+                                    inDecoded += (s.members["framesDecoded"] as? Number)?.toLong() ?: 0L
                                     // 对端音频电平（inbound audio，0~32768 反映对方说话音量）
                                     if ((s.members["mediaType"] as? String) == "audio") {
                                         val lv = (s.members["audioLevel"] as? Number)?.toDouble()
@@ -1526,6 +1536,8 @@ class WebRTCPeer(
                             put("lost", lost)
                             put("lostTotal", lostTotal)
                             put("nack", nackCount)
+                            put("inDropped", inDropped)
+                            put("inDecoded", inDecoded)
                             put("outLost", outLost)
                             put("outSent", outSent)
                             put("outLossPct", outLossPct)
@@ -1620,9 +1632,11 @@ class WebRTCPeer(
      * 编码负载自适应（v1.120）：处理"开视频软件/动态画面时硬编跟不上"的卡顿。
      * 共享方打开视频播放类应用时，画面每帧都在变，硬件编码器负载升高（低端机发热降频），
      * 实际编码帧率(outbound-rtp.framesPerSecond)持续低于目标帧率，即使网络不丢包观看方也卡。
-     * - 编码帧率持续 < 目标*0.7（约30fps目标时<21fps）或编码器报 cpu 瓶颈：切 MAINTAIN_FRAMERATE
-     *   保帧率，采集降一档分辨率（1080→720），减轻编码负载
-     * - 编码帧率恢复 >= 目标*0.85 持续若干次：回 MAINTAIN_RESOLUTION + 回升 1080p
+     * - 编码帧率持续 < 目标*0.78（约30fps目标时<23.4fps）或编码器报 cpu 瓶颈或观看端反馈掉帧：
+     *   切 MAINTAIN_FRAMERATE 保帧率，采集降一档分辨率（1080→720），减轻编码负载
+     * - 编码帧率恢复 >= 目标*0.85 持续若干次且观看端未反馈掉帧：回 MAINTAIN_RESOLUTION + 回升 1080p
+     * v1.223 提速：触发采样 3→2 次（4.5s→3s）、阈值 0.70→0.78，动态画面更早介入少掉帧；
+     * 恢复采样 3→4 次，降得快回得慢防来回震荡。
      * 由 MainActivity 统计线程周期调用（约 1.5s 一次）。
      *
      * @param encodedFps 实际编码帧率（outFps），0 表示暂无统计
@@ -1635,14 +1649,15 @@ class WebRTCPeer(
         val target = captureFps
         if (target <= 0) return
         val cpuBottleneck = qualityLimit == "cpu"
-        val isEncLag = cpuBottleneck || encodedFps < target * 0.7
-        val isEncOk = !cpuBottleneck && encodedFps >= target * 0.85
+        // 观看端反馈掉帧期间视为持续卡顿（抑制恢复），由观看端解除反馈后走常规回升采样
+        val isEncLag = viewerStallActive || cpuBottleneck || encodedFps < target * 0.78
+        val isEncOk = !viewerStallActive && !cpuBottleneck && encodedFps >= target * 0.85
         if (!encLoadDown) {
-            // 未降质：持续卡帧/CPU瓶颈触发降质
+            // 未降质：持续卡帧/CPU瓶颈触发降质（2 次采样约 3s）
             if (isEncLag) {
                 encLoadSamples++
                 encRecoverSamples = 0
-                if (encLoadSamples >= 3) {
+                if (encLoadSamples >= 2) {
                     encLoadDown = true
                     encLoadSamples = 0
                     applyEncoderLoadProfile(true)
@@ -1651,11 +1666,11 @@ class WebRTCPeer(
                 encLoadSamples = 0
             }
         } else {
-            // 已降质：编码帧率回升才恢复
+            // 已降质：编码帧率回升且观看端无掉帧反馈才恢复（4 次采样约 6s，防震荡）
             if (isEncOk) {
                 encRecoverSamples++
                 encLoadSamples = 0
-                if (encRecoverSamples >= 3) {
+                if (encRecoverSamples >= 4) {
                     encLoadDown = false
                     encRecoverSamples = 0
                     applyEncoderLoadProfile(false)
@@ -1663,6 +1678,21 @@ class WebRTCPeer(
             } else {
                 encRecoverSamples = 0
             }
+        }
+    }
+
+    /**
+     * 观看端掉帧反馈（v1.223）：观看端检测到接收管线持续掉帧时调用。
+     * active=true 立即降档（等价编码瓶颈路径），恢复由观看端解除反馈 + 常规回升采样完成。
+     */
+    fun setViewerStall(active: Boolean) {
+        if (viewerStallActive == active) return
+        viewerStallActive = active
+        AppLogger.capture(if (active) "观看端反馈掉帧: 立即降档(保帧率+降分辨率)" else "观看端反馈恢复: 允许回升评估")
+        if (active && !encLoadDown) {
+            encLoadDown = true
+            encLoadSamples = 0
+            applyEncoderLoadProfile(true)
         }
     }
 
@@ -1903,6 +1933,7 @@ class WebRTCPeer(
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0
+        viewerStallActive = false
         lastCaptureFps = 30
         lastCameraBitrateCap = 0
         lastCameraFpsCap = 0
