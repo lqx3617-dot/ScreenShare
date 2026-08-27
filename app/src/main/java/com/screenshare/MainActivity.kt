@@ -2788,6 +2788,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             r.release()
         }
         cameraPipRenderer = null
+        // 复位放大/隐藏状态：否则关闭视频后残留 true，重连自动全屏放大、PIP 视图卡最后一帧
+        cameraPipMaximized = false
+        cameraPipHidden = false
+        pipDragMoved = false
         binding.flCameraPip.visibility = View.GONE
         binding.tvCameraPipHint.visibility = View.VISIBLE
     }
