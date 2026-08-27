@@ -893,8 +893,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     val url = obj.optString("url")
                     if (url.isNotBlank()) {
                         runOnUiThread {
-                            Toast.makeText(this, "相册已上传，正在打开查看", Toast.LENGTH_SHORT).show()
-                            openAlbumViewer()
+                            Toast.makeText(this, "照片已上传", Toast.LENGTH_SHORT).show()
                         }
                     } else {
                         runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
