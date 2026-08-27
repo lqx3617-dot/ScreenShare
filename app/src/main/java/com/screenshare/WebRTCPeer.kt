@@ -1582,7 +1582,7 @@ class WebRTCPeer(
     private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
     private var lastCaptureSwitchMs = 0L
-    private val captureSwitchCooldownMs = 4000L
+    private val captureSwitchCooldownMs = 8000L
 
     /**
      * V3.1: 按弱网档位选择采集分辨率档位。
@@ -1616,14 +1616,14 @@ class WebRTCPeer(
     /**
      * 按弱网档位选择采集帧率（v1.187）：异地/TURN 中继场景 RTT 高、带宽有限，
      * 30fps 下每帧数据量大且拥塞控制收敛慢，积压易导致接收端掉帧卡顿。
-     * 弱网加重时同步降帧率（30→24→20→15），配合降码率/降分辨率进一步减轻链路负载，
+     * 弱网加重时同步降帧率（30→28→24→20），配合降码率/降分辨率进一步减轻链路负载，
      * 播放端观感反而更连续；档位恢复后回到 30fps。
      */
     private fun captureFpsForLevel(level: Int): Int {
         return when {
-            level >= 4 -> 15
-            level >= 3 -> 20
-            level >= 2 -> 24
+            level >= 4 -> 20
+            level >= 3 -> 24
+            level >= 2 -> 28
             else -> 30
         }
     }
@@ -1817,9 +1817,9 @@ class WebRTCPeer(
             curAdaptLevel = level
             recoverTimer = 0
         } else if (level < curAdaptLevel) {
-            // 网络好转：计数满 3 次（约 4.5s）才回升一档，避免抖动
+            // 网络好转：计数满 8 次（约 12s）才回升一档，避免抖动
             recoverTimer++
-            if (recoverTimer >= 3) {
+            if (recoverTimer >= 8) {
                 curAdaptLevel--
                 recoverTimer = 0
             }
@@ -1831,7 +1831,7 @@ class WebRTCPeer(
         if (lastAdaptBitrateCap != cap) {
             lastAdaptBitrateCap = cap
             try {
-                pc.setBitrate(1_500_000, cap, cap)
+                pc.setBitrate(1_000_000, (cap * 0.7).toInt(), cap)
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
             }
@@ -1855,7 +1855,7 @@ class WebRTCPeer(
             // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
             val weakProfile = captureProfileForLevel(curAdaptLevel)
             val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
-            // V1.187: 采集侧同步降帧率——档位>=2 时 30→24→20→15，异地/中继高 RTT 下
+            // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
             // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
             val targetFps = captureFpsForLevel(curAdaptLevel)
             if (targetProfile != lastCaptureProfile || targetFps != captureFps) {
@@ -1898,9 +1898,9 @@ class WebRTCPeer(
             cameraViewerSenders.values.forEach { add(it) }
         }
         if (cameraSenders.isEmpty()) return
-        // 档位 0(网络好)~4(最差)：码率上限 1200→800→500→300→200kbps，帧率 30→24→20→15→15
+        // 档位 0(网络好)~4(最差)：码率上限 1200→800→500→300→200kbps，帧率 30→28→24→20→15
         val bitrateCaps = intArrayOf(1_200_000, 800_000, 500_000, 300_000, 200_000)
-        val fpsCaps = intArrayOf(30, 24, 20, 15, 15)
+        val fpsCaps = intArrayOf(30, 28, 24, 20, 15)
         val level = curAdaptLevel.coerceIn(0, bitrateCaps.size - 1)
         val capBps = bitrateCaps[level]
         val capFps = fpsCaps[level]

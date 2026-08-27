@@ -57,6 +57,37 @@ const HEARTBEAT_TIMEOUT = 45 * 1000;
 // 所有 ws 连接（用于心跳扫描）
 const allClients = new Set();
 
+  // 轻量限流：同一 IP 每分钟最多 create/join/room-status 30 次，防 4 位会议号枚举爆破。
+  // 不引入额外口令，不改变客户端使用流程。
+  const AUTH_WINDOW_MS = 60 * 1000;
+  const AUTH_MAX_ATTEMPTS = 30;
+  const authAttempts = new Map();
+
+  function remoteIp(obj) {
+    if (!obj) return "unknown";
+    return String(obj.remoteAddress || "").replace(/^::ffff:/, "") || "unknown";
+  }
+
+  function allowAuthAttempt(ip) {
+    const now = Date.now();
+    const entry = authAttempts.get(ip);
+    if (!entry || now >= entry.resetAt) {
+      authAttempts.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= AUTH_MAX_ATTEMPTS;
+  }
+
+  // 每分钟清理过期限流记录，避免长期运行内存堆积
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, entry] of authAttempts) {
+      if (now >= entry.resetAt) authAttempts.delete(ip);
+    }
+  }, 60 * 1000).unref();
+
+
 /** 校验诊断上报 token（x-diag-token header） */
 function diagAuthorized(req) {
   if (DIAG_TOKEN === "") return false;
@@ -116,6 +147,11 @@ const server = http.createServer((req, res) => {
   // 房间在线状态查询：客户端 GET /room-status?code=XXXX 判断该会议号是否有 host 在线
   // 用于专属房间卡片显示「对方在线/不在线」，纯查询不建连，不参与房间流程
   if (req.method === "GET" && req.url.startsWith("/room-status")) {
+      if (!allowAuthAttempt(remoteIp(req.socket))) {
+        res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("too many requests");
+        return;
+      }
     try {
       const u = new URL(req.url, "http://localhost");
       const code = (u.searchParams.get("code") || "").trim().toUpperCase();
@@ -187,6 +223,10 @@ wss.on("connection", (ws) => {
 
     switch (msg.type) {
       case "create": {
+          if (!allowAuthAttempt(remoteIp(ws._socket))) {
+            send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
+            return;
+          }
         // 状态机互斥：已有角色的连接不允许再 create（防同一连接制造僵尸房间）
         if (role) {
           send(ws, { type: "error", message: "已在房间中，请先离开当前会议" });
@@ -213,6 +253,10 @@ wss.on("connection", (ws) => {
       }
 
       case "join": {
+          if (!allowAuthAttempt(remoteIp(ws._socket))) {
+            send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
+            return;
+          }
         // 状态机互斥
         if (role) {
           send(ws, { type: "error", message: "已在房间中，请先离开当前会议" });

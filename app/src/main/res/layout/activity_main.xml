@@ -220,7 +220,7 @@
     <LinearLayout
         android:id="@+id/llMorePanel"
         android:layout_width="wrap_content"
-                android:minWidth="76dp"
+        android:minWidth="76dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="top"
@@ -235,7 +235,7 @@
         <LinearLayout
             android:id="@+id/llVideoBtns"
             android:layout_width="wrap_content"
-                android:minWidth="76dp"
+            android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
@@ -264,7 +264,7 @@
                 <TextView
                     android:id="@+id/btnCtrlBack"
                     android:layout_width="wrap_content"
-                android:minWidth="76dp"
+                    android:minWidth="76dp"
                     android:layout_height="48dp"
                     android:gravity="center"
                     android:text="← 返回"
@@ -276,7 +276,7 @@
                 <TextView
                     android:id="@+id/btnCtrlHome"
                     android:layout_width="wrap_content"
-                android:minWidth="76dp"
+                    android:minWidth="76dp"
                     android:layout_height="48dp"
                     android:gravity="center"
                     android:text="⌂ 主页"
@@ -288,7 +288,7 @@
                 <TextView
                     android:id="@+id/btnCtrlRecents"
                     android:layout_width="wrap_content"
-                android:minWidth="76dp"
+                    android:minWidth="76dp"
                     android:layout_height="48dp"
                     android:gravity="center"
                     android:text="▤ 最近"
@@ -329,7 +329,7 @@
         <LinearLayout
             android:id="@+id/llRemoteRight"
             android:layout_width="wrap_content"
-                android:minWidth="76dp"
+            android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginStart="10dp">
@@ -382,7 +382,7 @@
         <!-- 右列：拍照/检查更新/品牌 -->
         <LinearLayout
             android:layout_width="wrap_content"
-                android:minWidth="76dp"
+            android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginStart="10dp">
@@ -453,7 +453,7 @@
         <LinearLayout
             android:id="@+id/llCallExtras"
             android:layout_width="wrap_content"
-                android:minWidth="76dp"
+            android:minWidth="76dp"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:layout_marginStart="10dp">
