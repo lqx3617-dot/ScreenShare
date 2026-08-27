@@ -23,6 +23,7 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
@@ -524,7 +525,7 @@ class MainActivity : AppCompatActivity() {
 
         // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
         pb.visibility = View.VISIBLE
-        ivFull.load(api.thumbUrl(token, index)) {
+        val thumbDisposable = ivFull.load(api.thumbUrl(token, index)) {
             listener(
                 onSuccess = { _, _ -> pb.visibility = View.GONE },
                 onError = { _, _ -> pb.visibility = View.GONE }
@@ -561,6 +562,8 @@ class MainActivity : AppCompatActivity() {
                     BitmapFactory.decodeByteArray(orig, 0, orig.size, BitmapFactory.Options().apply { inSampleSize = sample })
                 }
                 if (bmp != null) {
+                    // 原图已就绪，释放缩略图请求，避免旧请求继续占用 Coil 缓存
+                    thumbDisposable.dispose()
                     ivFull.setImageBitmap(bmp)
                     tvTip.visibility = View.GONE
                 } else {
@@ -570,13 +573,18 @@ class MainActivity : AppCompatActivity() {
                 tvTip.text = "共享方不在线，显示预览图"
             }
         }
-        dialog.setOnDismissListener { origJob.cancel() }
+        dialog.setOnDismissListener {
+            origJob.cancel()
+            thumbDisposable.dispose()
+        }
     }
 
-    /** 计算采样率：长边目标不超过 2048px（全屏展示足够清晰，避免 12MP+ 照片 OOM） */
+    /** 计算采样率：按屏幕短边为目标，长边不超过短边的 2 倍，避免 1080P 和 2K 屏都压到 2048 */
     private fun sampleSizeFor(w: Int, h: Int): Int {
         if (w <= 0 || h <= 0) return 1
-        val maxDim = 2048
+        val metrics = resources.displayMetrics
+        val shortSide = minOf(metrics.widthPixels, metrics.heightPixels)
+        val maxDim = if (shortSide <= 0) 2048 else maxOf(shortSide, 2048)
         var sample = 1
         while (maxOf(w, h) / (sample * 2) >= maxDim) sample *= 2
         return sample
@@ -702,13 +710,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun setCount(count: Int, token: String) {
-            this.photos = (1..count).map { AlbumPhoto(token, it) }
+            // 大相册一次建几百上千个对象会卡首帧；这里只建占位列表，index 按需即 1..count
+            this.photos = List(count) { i -> AlbumPhoto(token, i + 1) }
             notifyDataSetChanged()
         }
 
         fun setAll(list: List<AlbumPhoto>) {
+            val old = this.photos
             this.photos = list
-            notifyDataSetChanged()
+            // DiffUtil 只更新新增/变化的项，避免几千张照片整屏闪烁、滑动位置被重置
+            DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                override fun getOldListSize() = old.size
+                override fun getNewListSize() = list.size
+                override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                    val a = old[oldItemPosition]
+                    val b = list[newItemPosition]
+                    return a.token == b.token && a.index == b.index
+                }
+                override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                    return old[oldItemPosition].isVideo == list[newItemPosition].isVideo
+                }
+            }).dispatchUpdatesTo(this)
         }
         fun photoAt(position: Int): AlbumPhoto? = photos.getOrNull(position)
 
@@ -727,7 +749,9 @@ class MainActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: VH, position: Int) {
             val photo = photos[position]
             holder.retryCount = 0
-            loadThumbWithRetry(holder, thumbUrl(photo))
+            holder.boundToken = photo.token
+            holder.boundIndex = photo.index
+            loadThumbWithRetry(holder, thumbUrl(photo), photo.token, photo.index)
             holder.vb.visibility = if (photo.isVideo) View.VISIBLE else View.GONE
             holder.itemView.setOnClickListener { onThumbClick?.invoke(position) }
             holder.itemView.setOnLongClickListener {
@@ -736,17 +760,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        /** 缩略图加载：公网偶发超时/断流导致灰块，失败自动重试最多 2 次 */
-        private fun loadThumbWithRetry(holder: VH, url: String) {
+        /** 缩略图加载：公网偶发超时/断流导致灰块，失败自动重试最多 2 次，指数退避避免立刻重发 */
+        private fun loadThumbWithRetry(holder: VH, url: String, token: String, index: Int) {
             holder.iv.load(url) {
                 crossfade(true)
                 placeholder(android.R.color.darker_gray)
                 error(android.R.color.darker_gray)
                 listener(
                     onError = { _, _ ->
+                        // RecyclerView 复用校验：确认当前 item 仍是同一张照片再重试，避免错图
+                        if (holder.boundToken != token || holder.boundIndex != index) return@listener
                         if (holder.retryCount < 2) {
                             holder.retryCount++
-                            loadThumbWithRetry(holder, url)
+                            val backoff = when (holder.retryCount) {
+                                1 -> 500L
+                                else -> 1500L
+                            }
+                            holder.iv.postDelayed({
+                                if (holder.boundToken == token && holder.boundIndex == index) {
+                                    loadThumbWithRetry(holder, url, token, index)
+                                }
+                            }, backoff)
                         }
                     },
                     onSuccess = { _, _ -> }
@@ -760,6 +794,8 @@ class MainActivity : AppCompatActivity() {
             val iv: ImageView = itemView.findViewById(R.id.iv_thumb)
             val vb: View = itemView.findViewById(R.id.vb_play)
             var retryCount: Int = 0
+            var boundToken: String = ""
+            var boundIndex: Int = -1
         }
     }
 }
