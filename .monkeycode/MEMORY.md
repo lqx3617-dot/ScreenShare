@@ -462,3 +462,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 会议室太多面板（llMorePanel）按钮尺寸被全屏模式代码动态覆盖：applyFullscreenButtons 设 96x56，restoreFullscreenButtons 恢复到 XML 基线——**改 XML 按钮宽高必须同步 restoreFullscreenButtons**（当前基线 76x48），applyFullscreenButtons 是更大尺寸独立保持。
   - 工具条 4 按钮为「图标在上文字在下」瓦片：drawableTop + height 68dp + bg_room_tile（白玻璃圆角18dp）。结束会议用 bg_btn_neon_red + 白字。工具条图标（ic_mic/ic_videocam/ic_more_horiz）填色需从 #FF1E293B 改为 #FF4A3B44（暖梅灰）匹配白底。
   - 更多面板按钮宽高统一用 android:minWidth="76dp" + wrap_content（而非固定 64dp），长文字（如「隐藏对方画面」）不截断。
+
+## 第二轮密钥轮换完成（v1.225/228 + 相册 v1.194/16，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 完成第二轮三组机密轮换与双 App 发布
+- Category: Operations & Deployment
+- Instructions:
+  - **三组机密封三连换**：相册密钥/诊断 token/TURN 口令在本轮再次全部换新。新值仅存 local.properties（git 忽略）+ 服务器环境变量。服务器重启时 OLD 应设为**上一轮的新值**（相册 cd318f...、诊断 40346dc2），而非更陈旧的历史值——否则当前已装机的旧版 App 在升级前无法上报/访问。
+  - **TURN 口令轮换无可操作实体**：本环境 coturn 未部署（`pgrep turnserver` 为空），gradle.properties 注释明确「裸 3478 公网不通、443 反代不支持 TURN，中继暂不可用，依赖 host/srflx 直连」。TURN 密码仅作为 App 备用凭据烘焙，服务器端无需改配置。
+  - **下载服务器必须带 KEYSTORE_PASS**：download-server.js 会 require('/workspace/server/publish.js')，publish.js 第18行强制要求 KEYSTORE_PASS 环境变量否则抛错退出——重启下载服务器必须带 `KEYSTORE_PASS=screenshare123`。
+  - **信令服务器 WS 握手不鉴权**：diagAuthorized 只保护 POST /crash 与 /diag（HTTP 崩溃上报），WS 连接本身不校验 x-diag-token。验证诊断 token 须 curl POST /crash（新/旧→200，错误→403）。
+  - v1.225(228) 产物：allarch md5=d2727ba0a211ba0cd83d3c82264310d5（24.6MB）、arm64 md5=c069415ff12980df0661aac35f7234b7（17MB）；AlbumViewer v1.194(16) md5=eb11d8335271e89034550d9ce5110fdd（2.4MB）。commit 2a89c1a 已推送。
