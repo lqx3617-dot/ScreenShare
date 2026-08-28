@@ -34,6 +34,9 @@ object SystemAudioBridge {
     // ==================== 共享方：采集系统 PCM ====================
     @Volatile private var recordThread: Thread? = null
     @Volatile private var recording = false
+    // 会话 ID：每次 startCapture 递增，旧采集线程 read 返回后若 ID 不匹配则丢弃数据，
+    // 防止 stopCapture 后阻塞在 record.read 的旧线程把上一场 PCM 灌进新会话造成串音。
+    @Volatile private var captureSession = 0
 
     /**
      * 开始内录系统音频（视频/音乐等 Media 声音）。必须在 MediaProjection 授权后调用。
@@ -82,15 +85,17 @@ object SystemAudioBridge {
         }
 
         stopCapture()
+        captureSession++
+        val mySession = captureSession
         recording = true
         val thread = Thread {
             val buf = ByteArray(CHUNK_BYTES)
             try {
                 record.startRecording()
                 Log.d(TAG, "系统音频内录开始 (48kHz mono)")
-                while (recording) {
+                while (recording && mySession == captureSession) {
                     val n = record.read(buf, 0, CHUNK_BYTES)
-                    if (n > 0 && recording) {
+                    if (n > 0 && recording && mySession == captureSession) {
                         // v1.133：原始 PCM 直传，不做编码也不做静音丢弃（保证播放连续，无帧间隙）
                         onPcm(buf.copyOf(n))
                     }
