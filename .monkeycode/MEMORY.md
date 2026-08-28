@@ -508,3 +508,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 相册上传(startAlbumUpload) 与 远程拍照上传(startCameraCapture) 都经 control「album-result」回发 url，共享同一处理分支，改一处两者都消除自动弹窗。
   - openAlbumViewer() 仍保留在两个手动入口：未连接点「相册」(onAlbumClicked 早退) 和菜单项3「查看相册（全部照片）」；手动查看不受影响。
   - v1.228(231) 产物：allarch md5=a868d34c582b0b7bc443c62d2a6f8fd3（24.6MB）、arm64 md5=5bfbffbbe56440be6bcd3fd7f00ae3c3（17MB）；AlbumViewer 维持 16/1.194 不重打。commit 6ca73bd 已推送。
+
+## 二次合并 fix/rate-limit 更新（v1.229/232 + 相册 v1.195/17，2026-08-28）
+[Project Knowledge Summary]
+- Date: 2026-08-28
+- Context: Discovered by Agent while 二次合并 fix/rate-limit 分支更新并发布
+- Category: Workflow & Collaboration
+- Instructions:
+  - **分支被 rebase 重写**：fix/rate-limit 原 5 个提交被 rebase 为中文提交信息（hash 全变），其上新增 13 个提交（视频通话补强/音频竞态/相册App优化）。fetch 会显示 forced update；merge-base 与旧头相同是因为 rebase 保留了内容历史。
+  - **合并编译错误两类**（分支与 main 各自演进同一区域所致）：①`pipDragMoved` 等拖拽状态变量重复声明（main 上次合并已引入一份、分支 rebase 后又一份，git 自动合并双双保留）——修复靠删重复块，且应 grep 全文件确认无其他重复；②冻帧检测 `cameraPipFrameCheck` 类型错误：`View.postDelayed` 返回 Boolean 不能赋给 `Runnable?`，正确写法是变量持 runnable 本身、postDelayed 只负责调度（cancel 用 removeCallbacks(runnable)）。
+  - 分支改动同时涉及相册 App（MainActivity/RelayClient/UpdateChecker），相册 App 需同步递增重打（16→17/1.195）。
+  - v1.229(232) 产物：allarch md5=3c2ec23de79ae1c868500d34bf51600d（24.6MB）、arm64 md5=7a48772bec2c5cf63e043f4fa3683e0b（17MB）；AlbumViewer v1.195(17) md5=aa08b0dea34a465cbeff413e9997580f（2.4MB）。commit d97e0d7(merge)+04267e6(fix) 已推送。
+  - CHANGELOG 冲突解决模式：HEAD 保留已有版本条目，分支的「未发布」条目改写为本次新版本号后合并进主 App 区块顶部。
