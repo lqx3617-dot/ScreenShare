@@ -21,9 +21,12 @@ import org.webrtc.VideoCapturer
 object ScreenCapturerFactory {
     private const val TAG = "ScreenCapturer"
     const val REQUEST_MEDIA_PROJECTION = 1001
-    // 暂存 MediaProjection 权限结果
-    @Volatile private var pendingProjectionData: Intent? = null
-    @Volatile private var pendingResultCode: Int = Activity.RESULT_CANCELED
+    // 暂存 MediaProjection 权限结果。使用原子引用把 data 与 resultCode 合并为一份状态，
+    // 避免两个 @Volatile 分别写入时出现 data 已更新、resultCode 仍旧的半写窗口。
+    private data class ProjectionPermission(val data: Intent?, val resultCode: Int)
+    private val pendingPermission = java.util.concurrent.atomic.AtomicReference(
+        ProjectionPermission(null, Activity.RESULT_CANCELED)
+    )
 
     /**
      * 启用 WebRTC native 日志（默认不打进 logcat，必须显式打开才能诊断）
@@ -31,8 +34,10 @@ object ScreenCapturerFactory {
      */
     fun enableDiagnosticLogging() {
         try {
-            Logging.enableLogToDebugOutput(Logging.Severity.LS_INFO)
-            Log.d(TAG, "WebRTC 日志已启用 (LS_INFO 诊断模式)")
+            // 正式包降级为 LS_WARNING：INFO 会在采集/ICE 高频路径刷屏并拖慢 logcat。
+            // 需要深入诊断时再临时改回 LS_INFO。
+            Logging.enableLogToDebugOutput(Logging.Severity.LS_WARNING)
+            Log.d(TAG, "WebRTC 日志已启用 (LS_WARNING 正式模式)")
         } catch (t: Throwable) {
             Log.w(TAG, "启用 WebRTC 日志失败: ${t.message}")
         }
@@ -55,13 +60,11 @@ object ScreenCapturerFactory {
     fun handleActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == Activity.RESULT_OK && data != null) {
-                pendingProjectionData = data
-                pendingResultCode = resultCode
+                pendingPermission.set(ProjectionPermission(data, resultCode))
                 Log.d(TAG, "MediaProjection 权限已获取 (resultCode=$resultCode)")
                 return true
             } else {
-                pendingProjectionData = null
-                pendingResultCode = resultCode
+                pendingPermission.set(ProjectionPermission(null, resultCode))
                 Log.w(TAG, "MediaProjection 权限被拒绝 (resultCode=$resultCode, data=${data})")
                 return false
             }
@@ -79,12 +82,13 @@ object ScreenCapturerFactory {
      * 避免同一投影 token 二次 getMediaProjection 导致部分设备 createVirtualDisplay 卡死。
      */
     fun createScreenCapturer(@Suppress("UNUSED_PARAMETER") context: Context): VideoCapturer? {
-        val data = pendingProjectionData ?: run {
+        val permission = pendingPermission.get()
+        val data = permission.data ?: run {
             Log.e(TAG, "没有 MediaProjection 权限数据，先调用 requestPermission")
             return null
         }
-        if (pendingResultCode != Activity.RESULT_OK) {
-            Log.e(TAG, "MediaProjection 结果码不是 RESULT_OK: $pendingResultCode")
+        if (permission.resultCode != Activity.RESULT_OK) {
+            Log.e(TAG, "MediaProjection 结果码不是 RESULT_OK: ${permission.resultCode}")
             return null
         }
         // 新版 WebRTC 的 ScreenCapturerAndroid
@@ -106,13 +110,15 @@ object ScreenCapturerFactory {
     /**
      * 检查是否已获得权限（用 resultCode 判定，比 data 缓存更可靠）
      */
-    fun hasPermission(): Boolean = pendingProjectionData != null && pendingResultCode == Activity.RESULT_OK
+    fun hasPermission(): Boolean {
+        val permission = pendingPermission.get()
+        return permission.data != null && permission.resultCode == Activity.RESULT_OK
+    }
 
     /**
      * 清除权限缓存（断开后调用）
      */
     fun clearPermission() {
-        pendingProjectionData = null
-        pendingResultCode = Activity.RESULT_CANCELED
+        pendingPermission.set(ProjectionPermission(null, Activity.RESULT_CANCELED))
     }
 }

@@ -468,6 +468,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 视频通话中：把对方摄像头小窗放大铺满，作为小窗主画面（远程画面容器无需改动，默认铺满）
         if (cameraPipTrack != null && binding.flCameraPip.visibility == View.VISIBLE) {
             pipLayoutApplied = true
+            // 系统 PiP 接管放大显示，手动放大态先收起，避免退出后两套布局状态互相覆盖
+            cameraPipMaximized = false
             binding.flCameraPip.layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -503,11 +505,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun restorePipLayout() {
         if (!pipLayoutApplied) return
         pipLayoutApplied = false
-        // 用户手动放大的小窗，退出 PiP 后保持放大态
-        if (cameraPipMaximized) {
-            applyCameraPipMaximized(restore = false)
-            return
-        }
         val density = resources.displayMetrics.density
         val lp = FrameLayout.LayoutParams((120 * density).toInt(), (160 * density).toInt())
         lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
@@ -1078,6 +1075,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnCamera.setTextColor(
             if (videoCallOn) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
         )
+        // 视频通话增强按钮随通话状态显示/隐藏；切换前后摄入口默认跟随父容器可见
+        binding.btnFlipCamera.visibility = if (videoCallOn) View.VISIBLE else View.GONE
         // 视频通话增强控件仅通话中显示
         binding.llCallExtras.visibility = if (videoCallOn) View.VISIBLE else View.GONE
     }
@@ -2697,6 +2696,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var cameraPipTrack: VideoTrack? = null
     private var cameraPipSink: VideoSink? = null
     private var cameraPipRenderer: SurfaceViewRenderer? = null
+    private var cameraPipLastFrameAt = 0L
+    private var cameraPipFrameCheck: Runnable? = null
+
+    // 视频通话 PIP 小窗拖拽状态（未放大时可在屏幕内任意移动）
+    private var pipDragStartX = 0f
+    private var pipDragStartY = 0f
+    private var pipDragStartLeft = 0
+    private var pipDragStartTop = 0
+    private var pipDragMoved = false
+    private var pipContainerW = 0
+    private var pipContainerH = 0
 
     // 视频通话 PIP 小窗拖拽状态（未放大时可在屏幕内任意移动）
     private var pipDragStartX = 0f
@@ -2754,8 +2764,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 applyCameraPipMaximized(restore = false)
             }
 
-            cameraPipSink = VideoSink { frame -> renderer.onFrame(frame) }
+            cameraPipSink = VideoSink { frame ->
+                cameraPipLastFrameAt = SystemClock.elapsedRealtime()
+                binding.tvCameraPipHint.visibility = View.GONE
+                renderer.onFrame(frame)
+            }
             track.addSink(cameraPipSink!!)
+            scheduleCameraPipFrameCheck()
         } catch (t: Throwable) {
             Log.e(TAG, "setupCameraPip 异常: ${t.message}")
         }
@@ -2763,6 +2778,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 清理视频通话 PIP 小窗（断开/重置时调用） */
     private fun releaseCameraPip() {
+        cancelCameraPipFrameCheck()
+        cameraPipLastFrameAt = 0L
         cameraPipSink?.let { cameraPipTrack?.removeSink(it) }
         cameraPipSink = null
         cameraPipTrack = null
@@ -2773,8 +2790,51 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             r.release()
         }
         cameraPipRenderer = null
+        // 复位放大/隐藏状态：否则关闭视频后残留 true，重连自动全屏放大、PIP 视图卡最后一帧
+        cameraPipMaximized = false
+        cameraPipHidden = false
+        pipDragMoved = false
         binding.flCameraPip.visibility = View.GONE
+        binding.tvCameraPipHint.text = "对方摄像头"
         binding.tvCameraPipHint.visibility = View.VISIBLE
+        binding.vNetDot.visibility = View.GONE
+    }
+
+    /**
+     * 摄像头 PIP 无帧/冻帧检测：挂上轨道后 4s 仍无帧显示「等待画面」，
+     * 8s 无帧升级为「网络不佳」；帧一到立即清除提示。
+     */
+    private fun scheduleCameraPipFrameCheck() {
+        cancelCameraPipFrameCheck()
+        cameraPipLastFrameAt = SystemClock.elapsedRealtime()
+        val runnable = object : Runnable {
+            override fun run() {
+                if (cameraPipTrack == null) return
+                val since = SystemClock.elapsedRealtime() - cameraPipLastFrameAt
+                when {
+                    since < 4000 -> {
+                        binding.tvCameraPipHint.text = "对方摄像头"
+                        binding.tvCameraPipHint.visibility = View.GONE
+                    }
+                    since < 8000 -> {
+                        binding.tvCameraPipHint.text = "正在等待对方画面…"
+                        binding.tvCameraPipHint.visibility = View.VISIBLE
+                    }
+                    else -> {
+                        binding.tvCameraPipHint.text = "网络不佳，画面可能中断"
+                        binding.tvCameraPipHint.visibility = View.VISIBLE
+                    }
+                }
+                cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(this, 1000)
+            }
+        }
+        cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(runnable, 4000)
+    }
+
+    /** 取消摄像头 PIP 冻帧检测，避免 Activity 销毁后残留回调 */
+    private fun cancelCameraPipFrameCheck() {
+        cameraPipFrameCheck?.let { binding.tvCameraPipHint.removeCallbacks(it) }
+        cameraPipFrameCheck = null
     }
 
     // ======================== 视频通话本端预览 ========================
@@ -2946,6 +3006,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 进入全屏观看（切换到 flFullscreen 叠加层，跟随屏幕方向） */
     private fun enterFullscreen() {        if (isFullscreen) return
+        // 摄像头小窗若处于手动放大态，先收起，避免两个 MATCH_PARENT 层叠导致画面互相覆盖/触摸串层
+        if (cameraPipMaximized) {
+            applyCameraPipMaximized(restore = true)
+        }
         // 常驻 renderer 未就绪时现场补建
         if (fullscreenRenderer == null) prepareFullscreenRenderer()
         if (fullscreenRenderer == null) return
@@ -3535,6 +3599,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text
                                 binding.tvScanResult.visibility = View.VISIBLE
+                                updateNetDot(rtt, lastDropPct)
                             }
                         }
                     }
@@ -3544,6 +3609,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         viewerStatsRunnable = runnable
         handler.post(runnable)
+    }
+
+    /** 更新视频通话网络状态灯：正常绿，弱网（高延迟或掉帧）琥珀 */
+    private fun updateNetDot(rtt: Int, dropPct: Double) {
+        if (cameraPipTrack == null || !videoCallOn) {
+            binding.vNetDot.visibility = View.GONE
+            return
+        }
+        binding.vNetDot.visibility = View.VISIBLE
+        val weak = rtt > 300 || dropPct >= 5.0
+        binding.vNetDot.setBackgroundColor(if (weak) 0xFFD97706.toInt() else 0xFF2F9E77.toInt())
     }
 
     private fun stopViewerStatsLoop() {

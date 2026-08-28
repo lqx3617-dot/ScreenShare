@@ -43,6 +43,17 @@ object UpdateChecker {
     private const val AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
     private const val CANCEL_ACTION = "com.screenshare.albumviewer.CANCEL_UPDATE"
     private const val NOTIFICATION_ID = 1001
+    // 正在下载的分段连接：用户点取消时立即断开，避免阻塞在 read() 上导致取消失效
+    private val activeConnections = java.util.Collections.synchronizedSet(mutableSetOf<HttpURLConnection>())
+
+    /** 立即中断所有正在下载的分段连接（取消/失败时调用，防止 read 阻塞导致取消失效） */
+    private fun abortActiveDownloads() {
+        val snapshot = activeConnections.toList()
+        for (conn in snapshot) {
+            try { conn.disconnect() } catch (_: Throwable) {}
+        }
+        activeConnections.clear()
+    }
 
     fun check(context: Context) = check(context, manual = false)
 
@@ -167,7 +178,10 @@ object UpdateChecker {
 
         val cancelled = AtomicBoolean(false)
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, intent: Intent) { cancelled.set(true) }
+            override fun onReceive(c: Context, intent: Intent) {
+                cancelled.set(true)
+                abortActiveDownloads()
+            }
         }
         ContextCompat.registerReceiver(appCtx, receiver, IntentFilter(CANCEL_ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
         val cancelPi = PendingIntent.getBroadcast(appCtx, 0, Intent(CANCEL_ACTION), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -251,6 +265,7 @@ object UpdateChecker {
         val cancelled = AtomicBoolean(false)
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
             cancelled.set(true)
+            abortActiveDownloads()
             dialog.dismiss()
         }
 
@@ -361,10 +376,13 @@ object UpdateChecker {
         totalBytes: Long,
         onProgress: (Long, Long) -> Unit
     ): Boolean {
+        var connRef: HttpURLConnection? = null
         return try {
             val c = URL(apkUrl).openConnection() as HttpURLConnection
+            connRef = c
             c.connectTimeout = 30000
-            c.readTimeout = 60000
+            // 读超时降低：单次阻塞最长 15s，取消后连接也会被立即断开，不再卡一分钟
+            c.readTimeout = 15000
             c.setRequestProperty("Range", "bytes=$start-$end")
             c.connect()
 
@@ -372,6 +390,7 @@ object UpdateChecker {
             if (code != 206 && code != 200) {
                 throw java.io.IOException("服务器返回 $code，不支持分段下载")
             }
+            activeConnections.add(c)
 
             val input = c.inputStream
             val buf = ByteArray(32768)
@@ -404,6 +423,8 @@ object UpdateChecker {
         } catch (e: Exception) {
             Log.w(TAG, "分段下载失败 [$start-$end]: ${e.message}")
             false
+        } finally {
+            connRef?.let { activeConnections.remove(it) }
         }
     }
 

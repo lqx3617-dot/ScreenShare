@@ -419,7 +419,7 @@ object VideoTranscoder {
                     encoder.releaseOutputBuffer(idx, false)
                 }
                 idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
-                else -> Thread.sleep(5)
+                else -> Unit // dequeueOutputBuffer 已按 TIMEOUT_US 阻塞，无需 busy-sleep
             }
         }
     }
@@ -436,7 +436,7 @@ object VideoTranscoder {
                     encoder.releaseOutputBuffer(idx, false)
                 }
                 idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
-                else -> Thread.sleep(5)
+                else -> Unit // dequeueOutputBuffer 已按 TIMEOUT_US 阻塞，无需 busy-sleep
             }
         }
     }

@@ -37,12 +37,24 @@ class RelayClient(
     private var ws: WebSocket? = null
     private val started = AtomicBoolean(false)
     private val replied = AtomicBoolean(false)
+    private var timeoutRunnable: Runnable? = null
+
+    /** 终态自动复位：任何终态（成功/失败/超时/关闭）后允许下次再次发送 */
+    private fun finishAndReset() {
+        timeoutRunnable?.let { android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(it) }
+        timeoutRunnable = null
+        started.set(false)
+        replied.set(false)
+        try { ws?.cancel() } catch (t: Throwable) {}
+        ws = null
+    }
 
     /** 发送开启同步指令；回调 onAck(offset) —— 共享方在线时 error=null，离线时 error=提示 */
     fun sendSyncStart(deviceCode: String) {
         if (started.getAndSet(true)) return
         val url = BuildConfig.RELAY_URL
         if (url.isBlank()) {
+            started.set(false)
             onAck("中继服务器未配置")
             return
         }
@@ -68,7 +80,7 @@ class RelayClient(
                         if (replied.compareAndSet(false, true)) {
                             onAck(err)
                         }
-                        ws?.close(1000, "done")
+                        finishAndReset()
                     }
                     else -> Log.d(TAG, "中继消息: ${json.optString("type")}")
                 }
@@ -79,26 +91,26 @@ class RelayClient(
                 if (replied.compareAndSet(false, true)) {
                     onAck("无法连接中继服务器，请检查网络")
                 }
-                ws?.cancel()
+                finishAndReset()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                ws?.cancel()
+                finishAndReset()
             }
         })
         // 兜底超时：中继 15s 无回执时通知 UI（共享方可能已收到但 ack 丢失，视为已触发）
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        val runnable = Runnable {
             if (replied.compareAndSet(false, true)) {
                 onAck(null)
             }
-        }, TIMEOUT_MS)
+            finishAndReset()
+        }
+        timeoutRunnable = runnable
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(runnable, TIMEOUT_MS)
     }
 
     /** 清除上次状态，允许再次发送 */
     fun reset() {
-        started.set(false)
-        replied.set(false)
-        try { ws?.cancel() } catch (t: Throwable) {}
-        ws = null
+        finishAndReset()
     }
 }
