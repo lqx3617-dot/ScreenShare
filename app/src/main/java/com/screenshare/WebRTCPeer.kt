@@ -145,6 +145,9 @@ class WebRTCPeer(
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    // 关键帧请求短时防抖：多 viewer 同时恢复时 requestKeyFrame 可能连续触发，
+    // changeCaptureFormat 会重启采集器造成画面闪断，因此 500ms 内只允许触发一次。
+    private var lastKeyFrameAt = 0L
     private var disposed = false
 
     // V4: 多客户端——共享方(host)为每个 viewer 维护一条独立 PeerConnection。
@@ -1325,6 +1328,9 @@ class WebRTCPeer(
      */
     fun requestKeyFrame() {
         val capturer = videoCapturer ?: return
+        val now = System.currentTimeMillis()
+        if (now - lastKeyFrameAt < 500L) return
+        lastKeyFrameAt = now
         try {
             val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
             capturer.changeCaptureFormat(capW, capH, captureFps)
