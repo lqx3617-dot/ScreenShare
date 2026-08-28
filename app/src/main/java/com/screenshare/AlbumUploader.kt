@@ -572,7 +572,9 @@ object AlbumUploader {
         cancel: () -> Boolean
     ) {
         val t = Thread({
+            var consecutiveFailures = 0
             while (!cancel()) {
+                var roundOk = false
                 try {
                     val pending = fetchPending(baseUrl, token)
                     if (pending != null) {
@@ -585,7 +587,9 @@ object AlbumUploader {
                                 Log.w(TAG, "原图压缩第 $index 张失败: ${t.message}")
                                 continue
                             }
-                            if (!uploadOriginal(baseUrl, token, index, b64)) {
+                            if (uploadOriginal(baseUrl, token, index, b64)) {
+                                roundOk = true
+                            } else {
                                 Log.w(TAG, "原图第 $index 张上传失败，下轮重试")
                             }
                         }
@@ -593,7 +597,9 @@ object AlbumUploader {
                 } catch (t: Throwable) {
                     Log.w(TAG, "原图轮询异常: ${t.message}")
                 }
-                Thread.sleep(2000)
+                // 本轮有成功就恢复 2s 快节奏；连续失败按 2s*1..8 退避，弱网下避免空转刷请求
+                consecutiveFailures = if (roundOk) 0 else consecutiveFailures + 1
+                Thread.sleep(2_000L * (consecutiveFailures.coerceAtMost(8)))
             }
         }, "album-original-service")
         t.isDaemon = true
