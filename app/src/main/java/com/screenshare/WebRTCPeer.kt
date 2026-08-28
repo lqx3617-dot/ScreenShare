@@ -613,6 +613,8 @@ class WebRTCPeer(
                 pendingViewerCandidates[viewerId]?.forEach { pc.addIceCandidate(it) }
                 pendingViewerCandidates.remove(viewerId)
                 AppLogger.webrtc("viewer#$viewerId answer applied")
+                // 新 viewer 完成 Answer 后立即触发关键帧，让观看端尽快拿到 I 帧出画面
+                requestKeyFrame()
             }
             override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId setRemoteDescription 失败: $error") }
             override fun onCreateSuccess(p0: SessionDescription?) {}
@@ -1312,6 +1314,22 @@ class WebRTCPeer(
      */
     fun mediaProjection(): MediaProjection? {
         return (videoCapturer as? org.webrtc.ScreenCapturerAndroid)?.getMediaProjection()
+    }
+
+    /**
+     * 主动触发一次关键帧：新 viewer 连接建立后，共享编码器不会立刻吐 I 帧，
+     * 导致观看端首帧延迟 2~5 秒。这里用 changeCaptureFormat 强制采集器重启，
+     * 编码器会立即产出一个关键帧，所有连接（含刚建立的 viewer）马上出画面。
+     */
+    fun requestKeyFrame() {
+        val capturer = videoCapturer ?: return
+        try {
+            val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
+            capturer.changeCaptureFormat(capW, capH, captureFps)
+            AppLogger.capture("已请求关键帧 ${capW}x${capH}@${captureFps}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "请求关键帧失败: ${t.message}")
+        }
     }
 
     fun createOffer() {
