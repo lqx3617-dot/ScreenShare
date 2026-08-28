@@ -1076,6 +1076,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnCamera.setTextColor(
             if (videoCallOn) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
         )
+        // 视频通话增强按钮随通话状态显示/隐藏；切换前后摄入口默认跟随父容器可见
+        binding.btnFlipCamera.visibility = if (videoCallOn) View.VISIBLE else View.GONE
         // 视频通话增强控件仅通话中显示
         binding.llCallExtras.visibility = if (videoCallOn) View.VISIBLE else View.GONE
     }
