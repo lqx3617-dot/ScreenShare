@@ -2708,15 +2708,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var pipContainerW = 0
     private var pipContainerH = 0
 
-    // 视频通话 PIP 小窗拖拽状态（未放大时可在屏幕内任意移动）
-    private var pipDragStartX = 0f
-    private var pipDragStartY = 0f
-    private var pipDragStartLeft = 0
-    private var pipDragStartTop = 0
-    private var pipDragMoved = false
-    private var pipContainerW = 0
-    private var pipContainerH = 0
-
     /**
      * 视频通话 PIP：把对方的摄像头人脸画面渲染到右上角小窗。
      * host 与 viewer 通用（onRemoteCameraTrack / onViewerCameraTrack 都走这里）。
@@ -2825,10 +2816,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         binding.tvCameraPipHint.visibility = View.VISIBLE
                     }
                 }
-                cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(this, 1000)
+                binding.tvCameraPipHint.postDelayed(this, 1000)
             }
         }
-        cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(runnable, 4000)
+        cameraPipFrameCheck = runnable
+        binding.tvCameraPipHint.postDelayed(runnable, 4000)
     }
 
     /** 取消摄像头 PIP 冻帧检测，避免 Activity 销毁后残留回调 */
