@@ -607,6 +607,17 @@
             android:background="#00000000"
             android:clickable="false"
             android:visibility="invisible" />
+          <!-- 视频通话网络状态灯：右下角 8dp 圆点，正常绿/弱网琥珀，无视频轨隐藏 -->
+          <View
+              android:id="@+id/vNetDot"
+              android:layout_width="8dp"
+              android:layout_height="8dp"
+              android:layout_gravity="bottom|end"
+              android:layout_marginEnd="6dp"
+              android:layout_marginBottom="6dp"
+              android:background="@drawable/bg_net_dot"
+              android:clickable="false"
+              android:visibility="gone" />
     </FrameLayout>
 
     <!-- 视频通话本端预览小窗：显示自己摄像头画面（确认对方看到的内容），浮在左下角 -->

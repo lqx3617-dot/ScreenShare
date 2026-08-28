@@ -2803,6 +2803,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flCameraPip.visibility = View.GONE
         binding.tvCameraPipHint.text = "对方摄像头"
         binding.tvCameraPipHint.visibility = View.VISIBLE
+        binding.vNetDot.visibility = View.GONE
     }
 
     /**
@@ -3604,6 +3605,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text
                                 binding.tvScanResult.visibility = View.VISIBLE
+                                updateNetDot(rtt, lastDropPct)
                             }
                         }
                     }
@@ -3613,6 +3615,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         viewerStatsRunnable = runnable
         handler.post(runnable)
+    }
+
+    /** 更新视频通话网络状态灯：正常绿，弱网（高延迟或掉帧）琥珀 */
+    private fun updateNetDot(rtt: Int, dropPct: Double) {
+        if (cameraPipTrack == null || !videoCallOn) {
+            binding.vNetDot.visibility = View.GONE
+            return
+        }
+        binding.vNetDot.visibility = View.VISIBLE
+        val weak = rtt > 300 || dropPct >= 5.0
+        binding.vNetDot.setBackgroundColor(if (weak) 0xFFD97706.toInt() else 0xFF2F9E77.toInt())
     }
 
     private fun stopViewerStatsLoop() {
