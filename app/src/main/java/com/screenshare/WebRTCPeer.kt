@@ -428,6 +428,8 @@ class WebRTCPeer(
                     PeerConnection.IceConnectionState.CONNECTED,
                     PeerConnection.IceConnectionState.COMPLETED -> {
                         AppLogger.webrtc("viewer#$viewerId connected")
+                        // 断线重连/ICE 恢复后主动请求关键帧，避免观看端恢复后长时间黑屏等待
+                        requestKeyFrame()
                     }
                     PeerConnection.IceConnectionState.FAILED -> {
                         AppLogger.network("viewer#$viewerId FAILED, restarting")
