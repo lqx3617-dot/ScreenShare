@@ -1,0 +1,22 @@
+name: screen_share_flutter
+description: ScreenShare iOS Flutter 观看端
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # WebRTC：与安卓端 org.webrtc 互通，负责 Offer/Answer 协商与远端画面渲染
+  flutter_webrtc: ^0.9.0
+  # WebSocket：对接现有 server.js 的 /ws 信令协议
+  web_socket_channel: ^2.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
