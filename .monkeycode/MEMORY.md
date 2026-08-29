@@ -48,6 +48,7 @@ Entries discovered by the Agent during task execution should follow this format:
   - 每次签名后需 apksigner verify 验证 v2/v3 通过
   - **发版铁律：必须先改 build.gradle.kts 版本号，再跑 assembleRelease**（v1.212 曾因先构建后改版本号、改完未重建直接签名，导致发布的 APK 实际还是旧版 214/1.211，用户下载后安装仍是 211）。签名前必须核对 output-metadata.json 的 versionCode/versionName 与目标一致
   - 全架构版（含全部 ABI）约 54MB；仅 arm64 约 19MB
+  - **allarch 与 arm64 构建覆盖同一产物**：两种参数构建都输出到 app/build/outputs/apk/release/app-release-unsigned.apk，后一次构建会覆盖前一次。必须按「allarch 构建 → 立即签名/拷走 → 再 arm64 构建 → 签名」顺序执行，不能在两个构建都完成后才签名（allarch 已被 arm64 覆盖）
 
 [Project Knowledge Summary]
 - Date: 2026-08-03
