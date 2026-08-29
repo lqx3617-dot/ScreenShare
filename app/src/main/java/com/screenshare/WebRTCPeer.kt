@@ -176,6 +176,13 @@ class WebRTCPeer(
     // 解决共享方出向统计看不到的"接收端解码/渲染瓶颈"与"帧到达过晚被丢"两类掉帧。
     @Volatile private var viewerStallActive = false
     private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
+    // 编码极限帧率匹配（v1.231）：降分辨率档后编码器仍远跟不上目标帧率（低端机录屏播视频/游戏），
+    // 逐级降低采集帧率与编码器实际能力对齐（20→15→12→8），避免"采集 20fps 实编 6fps"的跳跃式卡顿。
+    // 0=未激活；>0 时实际采集帧率取 min(档位帧率, encFpsLimit)
+    @Volatile private var encFpsLimit = 0
+    private val encFpsLadder = intArrayOf(15, 12, 8)
+    private var encFpsDownSamples = 0    // 极限降帧持续采样计数
+    private var encFpsRecoverSamples = 0 // 极限帧率恢复持续采样计数
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -1244,6 +1251,9 @@ class WebRTCPeer(
         // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
         captureFps = 30
         lastCaptureProfile = 0
+        encFpsLimit = 0
+        encFpsDownSamples = 0
+        encFpsRecoverSamples = 0
         reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}...")
         capturer.startCapture(capW, capH, captureFps)
 
@@ -1334,8 +1344,9 @@ class WebRTCPeer(
         lastKeyFrameAt = now
         try {
             val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
-            capturer.changeCaptureFormat(capW, capH, captureFps)
-            AppLogger.capture("已请求关键帧 ${capW}x${capH}@${captureFps}")
+            val fps = effectiveCaptureFps()
+            capturer.changeCaptureFormat(capW, capH, fps)
+            AppLogger.capture("已请求关键帧 ${capW}x${capH}@${fps}")
         } catch (t: Throwable) {
             Log.w(TAG, "请求关键帧失败: ${t.message}")
         }
@@ -1431,8 +1442,9 @@ class WebRTCPeer(
         val scale = minOf(1f, maxDim.toFloat() / maxOf(width, height))
         val capW = (width * scale).toInt()
         val capH = (height * scale).toInt()
-        videoCapturer?.changeCaptureFormat(capW, capH, captureFps)
-        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@$captureFps")
+        val fps = effectiveCaptureFps()
+        videoCapturer?.changeCaptureFormat(capW, capH, fps)
+        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@$fps")
     }
 
     /**
@@ -1655,6 +1667,80 @@ class WebRTCPeer(
         }
     }
 
+    /** 实际采集帧率：极限帧率匹配激活时取档位帧率与极限值的较小者 */
+    private fun effectiveCaptureFps(): Int = if (encFpsLimit > 0) minOf(captureFps, encFpsLimit) else captureFps
+
+    /**
+     * 编码极限帧率匹配（v1.231）：仅当已降分辨率档（encLoadDown）后编码帧率仍严重不足时介入。
+     * - 编码帧率 < 当前实际帧率*0.5 持续 2 次（约 3s）：沿 15→12→8 阶梯降一档采集帧率
+     * - 编码帧率 >= 当前实际帧率*0.8 持续 4 次（约 6s）：回升一档，退出阶梯后交常规回升采样
+     * 降/升档立即 changeCaptureFormat 生效；与弱网降帧共用 captureFps 存储档位值，经
+     * effectiveCaptureFps() 在所有采集调整处取 min 避免互相覆盖。
+     */
+    private fun adjustEncoderFpsLimit(encodedFps: Int) {
+        val effective = effectiveCaptureFps()
+        if (encFpsLimit == 0) {
+            if (encodedFps < effective * 0.55) {
+                encFpsDownSamples++
+                encFpsRecoverSamples = 0
+                if (encFpsDownSamples >= 2) {
+                    encFpsDownSamples = 0
+                    encFpsLimit = encFpsLadder[0]
+                    applyCaptureFps(effectiveCaptureFps())
+                    AppLogger.capture("编码极限帧率: 编码${encodedFps}fps 远低于目标${effective}fps，采集降帧 ${encFpsLimit}fps")
+                }
+            } else {
+                encFpsDownSamples = 0
+            }
+        } else {
+            val idx = encFpsLadder.indexOf(encFpsLimit)
+            if (encodedFps >= effective * 0.8) {
+                encFpsRecoverSamples++
+                encFpsDownSamples = 0
+                if (encFpsRecoverSamples >= 4) {
+                    encFpsRecoverSamples = 0
+                    if (idx > 0) {
+                        // 阶梯内回升一档（帧率升高）
+                        encFpsLimit = encFpsLadder[idx - 1]
+                        applyCaptureFps(effectiveCaptureFps())
+                        AppLogger.capture("编码极限帧率回升: ${encFpsLimit}fps")
+                    } else {
+                        // 已在阶梯顶端（15fps）或状态异常：退出极限匹配，交常规逻辑
+                        encFpsLimit = 0
+                        applyCaptureFps(effectiveCaptureFps())
+                        AppLogger.capture("编码极限帧率退出: 恢复常规帧率控制")
+                    }
+                }
+            } else {
+                encFpsRecoverSamples = 0
+                // 阶梯内仍严重不足则继续降档（帧率更低）
+                if (encodedFps < effective * 0.55 && idx in 0 until encFpsLadder.size - 1) {
+                    encFpsDownSamples++
+                    if (encFpsDownSamples >= 2) {
+                        encFpsDownSamples = 0
+                        encFpsLimit = encFpsLadder[idx + 1]
+                        applyCaptureFps(effectiveCaptureFps())
+                        AppLogger.capture("编码极限帧率继续降档: ${encFpsLimit}fps")
+                    }
+                } else {
+                    encFpsDownSamples = 0
+                }
+            }
+        }
+    }
+
+    /** 立即按指定帧率调整采集器（编码极限帧率降/升档用，绕过弱网档位冷却） */
+    private fun applyCaptureFps(fps: Int) {
+        try {
+            val capturer = videoCapturer ?: return
+            if (fps <= 0) return
+            val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
+            capturer.changeCaptureFormat(capW, capH, fps)
+        } catch (t: Throwable) {
+            Log.w(TAG, "极限帧率调整采集失败: ${t.message}")
+        }
+    }
+
     /**
      * 编码负载自适应（v1.120）：处理"开视频软件/动态画面时硬编跟不上"的卡顿。
      * 共享方打开视频播放类应用时，画面每帧都在变，硬件编码器负载升高（低端机发热降频），
@@ -1705,6 +1791,8 @@ class WebRTCPeer(
             } else {
                 encRecoverSamples = 0
             }
+            // 极限帧率匹配：已降分辨率档后编码器仍远跟不上目标帧率时，逐级降采集帧率对齐
+            adjustEncoderFpsLimit(encodedFps)
         }
     }
 
@@ -1766,8 +1854,9 @@ class WebRTCPeer(
                     val capturer = videoCapturer
                     if (capturer != null) {
                         val (capW, capH) = captureSizeForLevel(effective)
-                        capturer.changeCaptureFormat(capW, capH, captureFps)
-                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${captureFps} 档位$effective")
+                        val fps = effectiveCaptureFps()
+                        capturer.changeCaptureFormat(capW, capH, fps)
+                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${fps} 档位$effective")
                     }
                 } catch (t: Throwable) {
                     Log.w(TAG, "编码负载降分辨率失败: ${t.message}")
@@ -1884,7 +1973,8 @@ class WebRTCPeer(
             val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
             // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
             // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
-            val targetFps = captureFpsForLevel(curAdaptLevel)
+            // V1.231: 编码极限帧率激活时取两者较小值，避免弱网档位恢复覆盖极限降帧
+            val targetFps = if (encFpsLimit > 0) minOf(captureFpsForLevel(curAdaptLevel), encFpsLimit) else captureFpsForLevel(curAdaptLevel)
             if (targetProfile != lastCaptureProfile || targetFps != captureFps) {
                 val now = System.currentTimeMillis()
                 val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
@@ -1960,6 +2050,9 @@ class WebRTCPeer(
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0
+        encFpsLimit = 0
+        encFpsDownSamples = 0
+        encFpsRecoverSamples = 0
         viewerStallActive = false
         lastCaptureFps = 30
         lastCameraBitrateCap = 0
