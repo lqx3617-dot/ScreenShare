@@ -206,7 +206,9 @@ async function handleRelay(raw) {
       await pc.setRemoteDescription({ type: "offer", sdp: sdp.sdp });
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      // 协议对齐 SignalManager.encodeAnswer：必须带 role 字段，Android 端 decode 依赖它
       relay(JSON.stringify({
+        role: "join",
         sdp: { type: "answer", sdp: answer.sdp },
         ice: [],
       }));
