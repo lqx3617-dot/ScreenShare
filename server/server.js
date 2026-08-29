@@ -176,6 +176,22 @@ const server = http.createServer((req, res) => {
       return;
     }
   }
+  // 网页观看端：GET / 与 /viewer 返回静态页面（浏览器 WebRTC 观看）
+  if (req.method === "GET" && (req.url === "/" || req.url === "/viewer" || req.url === "/index.html")) {
+    fs.readFile(path.join(__dirname, "public", "index.html"), (err, buf) => {
+      if (err) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("not found");
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(buf);
+    });
+    return;
+  }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("ScreenShare signaling server is running");
 });

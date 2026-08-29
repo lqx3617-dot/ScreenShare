@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>共享屏界 - 网页观看</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #141418; color: #f0f0f2;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .wrap { width: min(420px, 92vw); }
+  h1 { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 4px; letter-spacing: 2px; color: #E6396B; }
+  .sub { font-size: 13px; color: #999; text-align: center; margin-bottom: 28px; }
+  input {
+    width: 100%; padding: 14px; font-size: 22px; letter-spacing: 8px; text-align: center;
+    background: #222; color: #fff; border: 1px solid #333; border-radius: 10px; outline: none;
+  }
+  input:focus { border-color: #E6396B; }
+  button {
+    width: 100%; margin-top: 14px; padding: 14px; font-size: 17px; font-weight: 600;
+    background: #E6396B; color: #fff; border: 0; border-radius: 10px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 14px; color: #bbb; text-align: center; min-height: 20px; }
+  .status.error { color: #ff6b6b; }
+  .stage { width: 100vw; height: 100vh; display: none; background: #000; position: relative; }
+  .stage video { width: 100%; height: 100%; object-fit: contain; }
+  .bar {
+    position: absolute; top: 0; left: 0; right: 0; padding: 10px 14px;
+    background: linear-gradient(rgba(0,0,0,.7), transparent);
+    font-size: 14px; display: flex; align-items: center; gap: 10px; z-index: 10;
+  }
+  .bar .leave { margin-left: auto; padding: 6px 14px; font-size: 13px; background: rgba(230,57,107,.85); width: auto; }
+  .hint { font-size: 12px; color: #888; text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="joinView">
+  <h1>共享屏界</h1>
+  <p class="sub">浏览器直接观看，无需安装 App</p>
+  <input id="codeInput" type="text" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
+  <button id="joinBtn">加入会议</button>
+  <div class="status" id="status"></div>
+  <p class="hint">输入共享方手机上的 4 位会议号</p>
+</div>
+
+<div class="stage" id="stage">
+  <div class="bar">
+    <span id="roomLabel">会议</span>
+    <span id="connState"></span>
+    <button class="leave" id="leaveBtn">退出</button>
+  </div>
+  <video id="video" autoplay playsinline></video>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const joinView = $("joinView"), stage = $("stage");
+const statusEl = $("status"), videoEl = $("video");
+const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+const SIGNAL_URL = wsScheme + "://" + location.host + "/ws";
+
+let ws = null;
+let pc = null;
+let viewerId = 0;
+let heartbeatTimer = null;
+let inRoom = false;
+
+function setStatus(text, isError) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (isError ? " error" : "");
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function relay(data) {
+  send({ type: "relay", data });
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => send({ type: "ping" }), 10000);
+}
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+function connect(code) {
+  setStatus("正在连接信令服务器...");
+  ws = new WebSocket(SIGNAL_URL);
+
+  ws.onopen = () => {
+    startHeartbeat();
+    send({ type: "join", code });
+    setStatus("已提交，等待共享方确认...");
+  };
+
+  ws.onmessage = async (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+    switch (msg.type) {
+      case "joined":
+        viewerId = msg.viewerId;
+        inRoom = true;
+        setStatus("已连接，正在建立画面...");
+        initPeer();
+        break;
+
+      case "join-rejected":
+        setStatus("共享方拒绝了加入请求", true);
+        break;
+
+      case "host-left":
+        setStatus("共享方已离开会议", true);
+        teardown();
+        break;
+
+      case "error":
+        setStatus(msg.message || "发生错误", true);
+        break;
+
+      case "relay":
+        if (pc) handleRelay(msg.data);
+        break;
+
+      case "pong":
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    stopHeartbeat();
+    if (inRoom) {
+      setStatus("连接已断开，请退出重试", true);
+      teardown();
+    } else {
+      setStatus("连接失败或已断开", true);
+    }
+  };
+
+  ws.onerror = () => {
+    setStatus("信令服务器连接异常", true);
+  };
+}
+
+function initPeer() {
+  const cfg = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+    ],
+  };
+  pc = new RTCPeerConnection(cfg);
+
+  pc.onicecandidate = (ev) => {
+    if (ev.candidate) {
+      relay(JSON.stringify({
+        type: "candidate",
+        id: ev.candidate.sdpMid,
+        label: ev.candidate.sdpMLineIndex,
+        candidate: ev.candidate.candidate,
+      }));
+    }
+  };
+
+  pc.ontrack = (ev) => {
+    videoEl.srcObject = ev.streams[0] || null;
+    if (ev.streams[0]) {
+      joinView.style.display = "none";
+      stage.style.display = "block";
+      setStatus("");
+    }
+  };
+
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    $("connState").textContent = stateText(s);
+    if (s === "failed") setStatus("连接失败（可能网络不通）", true);
+  };
+}
+
+function stateText(s) {
+  const map = {
+    "new": "新建连接", "connecting": "连接中...", "connected": "已连接",
+    "disconnected": "连接中断", "failed": "连接失败", "closed": "已关闭",
+  };
+  return map[s] || s;
+}
+
+async function handleRelay(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch (e) { return; }
+
+  const sdp = data.sdp;
+  if (sdp && sdp.type === "offer") {
+    try {
+      await pc.setRemoteDescription({ type: "offer", sdp: sdp.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      relay(JSON.stringify({
+        sdp: { type: "answer", sdp: answer.sdp },
+        ice: [],
+      }));
+    } catch (e) {
+      setStatus("协商失败：" + e.message, true);
+    }
+    return;
+  }
+
+  if (data.type === "candidate" && data.candidate) {
+    try {
+      await pc.addIceCandidate({
+        candidate: data.candidate,
+        sdpMid: data.id,
+        sdpMLineIndex: data.label,
+      });
+    } catch (e) { /* 忽略迟到候选 */ }
+    return;
+  }
+
+  const ice = data.ice;
+  if (Array.isArray(ice)) {
+    for (const c of ice) {
+      if (!c.candidate) continue;
+      try {
+        await pc.addIceCandidate({
+          candidate: c.candidate,
+          sdpMid: c.id,
+          sdpMLineIndex: c.label,
+        });
+      } catch (e) { /* 忽略 */ }
+    }
+  }
+}
+
+function teardown() {
+  inRoom = false;
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  stopHeartbeat();
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  videoEl.srcObject = null;
+  stage.style.display = "none";
+  joinView.style.display = "";
+  $("joinBtn").disabled = false;
+  $("codeInput").disabled = false;
+}
+
+$("joinBtn").addEventListener("click", () => {
+  const code = $("codeInput").value.trim();
+  if (!/^[0-9]{4}$/.test(code)) {
+    setStatus("会议号需为 4 位数字", true);
+    return;
+  }
+  if (pc) teardown();
+  $("joinBtn").disabled = true;
+  $("codeInput").disabled = true;
+  connect(code);
+});
+
+$("codeInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("joinBtn").click();
+});
+
+$("leaveBtn").addEventListener("click", teardown);
+</script>
+</body>
+</html>
