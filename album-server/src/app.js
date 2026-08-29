@@ -35,12 +35,18 @@ const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
 const app = express();
+// 反代信任：客户端经平台反代访问时注入 X-Forwarded-For，trust proxy=1 让 req.ip 取 XFF 首段
+// 真实客户端 IP，否则所有设备共享同一限流桶（无法区分用户），且 express-rate-limit 会报
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR 校验错误。取 1（只信任最近一跳反代，XFF 首段不被伪造掩盖）。
+app.set("trust proxy", 1);
 app.use(express.json({ limit: BODY_LIMIT }));
 
-// 速率限制：写操作（上传/去重/删除）30 次/分钟，读操作 60 次/分钟，防暴力破解与 DoS
+// 速率限制：写操作（上传/去重/删除）200 次/分钟，读操作 60 次/分钟，防暴力破解与 DoS。
+// 30/分钟过严：批量上传相册 create + 逐张 upload + finish 会在同 60s 窗口累积 >30 次（27+ 张即触发 429 中断整批）。
+// 200/分钟足以防滥用又不会阻断合法批量上传（几千张相册 >1 分钟窗口，上限覆盖单设备密度）。
 const writeLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "too many requests" },
