@@ -162,7 +162,10 @@ class WebRTCPeer(
         var systemAudioChannel: DataChannel? = null,
         var controlChannel: DataChannel? = null,
         // 防重入：该连接上是否有未完成的 Offer 协商（避免并发 createOffer 竞态导致协商失败）
-        val negotiating: AtomicBoolean = AtomicBoolean(false)
+        val negotiating: AtomicBoolean = AtomicBoolean(false),
+        // 该连接是否已请求过关键帧。首次 CONNECTED 后置位；后续 ICE 抖动/COMPLETED 不再触发，
+        // 避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态场景尤其致命）。
+        var keyFrameRequested: Boolean = false
     )
     private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
     // viewer 断线重建计数（防持续弱网下无限重建）与上限
@@ -433,8 +436,13 @@ class WebRTCPeer(
                     PeerConnection.IceConnectionState.CONNECTED,
                     PeerConnection.IceConnectionState.COMPLETED -> {
                         AppLogger.webrtc("viewer#$viewerId connected")
-                        // 断线重连/ICE 恢复后主动请求关键帧，避免观看端恢复后长时间黑屏等待
-                        requestKeyFrame()
+                        // 每条连接只在首次连接建立后请求一次关键帧。后续 ICE 状态抖动/COMPLETED
+                        // 不再触发，避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态画面尤其致命）。
+                        val conn = viewerConnections[viewerId]
+                        if (conn != null && !conn.keyFrameRequested) {
+                            conn.keyFrameRequested = true
+                            requestKeyFrame()
+                        }
                     }
                     PeerConnection.IceConnectionState.FAILED -> {
                         AppLogger.network("viewer#$viewerId FAILED, restarting")
