@@ -171,9 +171,6 @@ class WebRTCPeer(
     // 与弱网档位(curAdaptLevel)独立，最终采集档位取两者的较大值
     private var encLoadDown = false
     private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
-    // 编码瓶颈采集档位（v1.232）：记录编码降档到 0/1/2（1080p/720p/480p）。
-    // 低端机硬编视频跟不上时逐级降到 480p（每帧像素降到约 1/4、编码时间大减、帧率提升）。
-    private var encProfileLevel = 0      // 0=1080p 1=720p 2=480p
     // 观看端掉帧反馈（stream-stall）：观看端检测到接收管线持续掉帧时经控制通道通知共享方，
     // 共享方按编码瓶颈同路径立即降档（MAINTAIN_FRAMERATE + 降分辨率），反馈恢复后才允许回升。
     // 解决共享方出向统计看不到的"接收端解码/渲染瓶颈"与"帧到达过晚被丢"两类掉帧。
@@ -1690,9 +1687,7 @@ class WebRTCPeer(
                 if (encLoadSamples >= 2) {
                     encLoadDown = true
                     encLoadSamples = 0
-                    // 首次降到 720p
-                    encProfileLevel = maxOf(1, encProfileLevel)
-                    applyEncoderLoadProfile()
+                    applyEncoderLoadProfile(true)
                 }
             } else {
                 encLoadSamples = 0
@@ -1703,25 +1698,12 @@ class WebRTCPeer(
                 encRecoverSamples++
                 encLoadSamples = 0
                 if (encRecoverSamples >= 4) {
+                    encLoadDown = false
                     encRecoverSamples = 0
-                    // 逐步回升：480p→720p→1080p
-                    if (encProfileLevel > 0) {
-                        encProfileLevel--
-                        applyEncoderLoadProfile()
-                        AppLogger.capture("编码负载回升: 档位 $encProfileLevel")
-                    } else {
-                        encLoadDown = false
-                        applyEncoderLoadProfile()
-                    }
+                    applyEncoderLoadProfile(false)
                 }
             } else {
                 encRecoverSamples = 0
-                // 仍卡且已降档未到底：继续降到 480p（v1.232），减轻编码负载提升帧率
-                if (isEncLag && encProfileLevel < 2) {
-                    encProfileLevel++
-                    applyEncoderLoadProfile()
-                    AppLogger.capture("编码负载继续降档: ${encProfileLevel} (480p)")
-                }
             }
         }
     }
@@ -1737,18 +1719,17 @@ class WebRTCPeer(
         if (active && !encLoadDown) {
             encLoadDown = true
             encLoadSamples = 0
-            encProfileLevel = maxOf(1, encProfileLevel)
-            applyEncoderLoadProfile()
+            applyEncoderLoadProfile(true)
         }
     }
 
     /**
      * 应用编码负载档位：切换 degradationPreference + 采集分辨率。
-     * 采集档位取编码负载档位(encProfileLevel)与弱网档位(captureProfileForLevel)的较大值（更严格者生效），
+     * 采集档位取编码负载档位与弱网档位(captureProfileForLevel)的较大值（更严格者生效），
      * 与弱网自适应共用 lastCaptureProfile/lastCaptureSwitchMs 防抖。
      */
-    private fun applyEncoderLoadProfile() {
-        val targetProfile = encProfileLevel
+    private fun applyEncoderLoadProfile(down: Boolean) {
+        val targetProfile = if (down) 1 else 0
         val effective = maxOf(captureProfileForLevel(curAdaptLevel), targetProfile)
         // degradationPreference：编码瓶颈时保帧率降分辨率（动态画面流畅优先）
         val degradation = if (effective > 0) {
@@ -1761,7 +1742,7 @@ class WebRTCPeer(
                 val params = rtp.parameters
                 params.degradationPreference = degradation
                 rtp.parameters = params
-                Log.d(TAG, "编码负载自适应: 档位${encProfileLevel}(${if (encProfileLevel >= 2) "480p" else if (encProfileLevel == 1) "720p" else "1080p"}) 策略=$degradation")
+                Log.d(TAG, "编码负载自适应: ${if (down) "降720p" else "回升1080p"} 策略=$degradation")
             }
             // V4：1 对 1 模式视频实际承载在 viewer 连接，同步设置其 sender 的降级策略
             viewerConnections.values.forEach { conn ->
@@ -1900,7 +1881,7 @@ class WebRTCPeer(
             // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
             // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
             val weakProfile = captureProfileForLevel(curAdaptLevel)
-            val targetProfile = if (encLoadDown) maxOf(weakProfile, encProfileLevel) else weakProfile
+            val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
             // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
             // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
             val targetFps = captureFpsForLevel(curAdaptLevel)
@@ -1979,7 +1960,6 @@ class WebRTCPeer(
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0
-        encProfileLevel = 0
         viewerStallActive = false
         lastCaptureFps = 30
         lastCameraBitrateCap = 0
