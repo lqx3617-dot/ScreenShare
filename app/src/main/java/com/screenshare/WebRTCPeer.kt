@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.content.Context
 import android.media.projection.MediaProjection
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import org.webrtc.AudioSource
@@ -1328,7 +1329,7 @@ class WebRTCPeer(
      */
     fun requestKeyFrame() {
         val capturer = videoCapturer ?: return
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         if (now - lastKeyFrameAt < 500L) return
         lastKeyFrameAt = now
         try {
