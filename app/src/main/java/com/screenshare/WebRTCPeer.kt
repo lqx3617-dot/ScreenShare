@@ -1,5 +1,6 @@
 package com.screenshare
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.projection.MediaProjection
 import android.os.SystemClock
@@ -161,7 +162,10 @@ class WebRTCPeer(
         var systemAudioChannel: DataChannel? = null,
         var controlChannel: DataChannel? = null,
         // 防重入：该连接上是否有未完成的 Offer 协商（避免并发 createOffer 竞态导致协商失败）
-        val negotiating: AtomicBoolean = AtomicBoolean(false)
+        val negotiating: AtomicBoolean = AtomicBoolean(false),
+        // 该连接是否已请求过关键帧。首次 CONNECTED 后置位；后续 ICE 抖动/COMPLETED 不再触发，
+        // 避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态场景尤其致命）。
+        var keyFrameRequested: Boolean = false
     )
     private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
     // viewer 断线重建计数（防持续弱网下无限重建）与上限
@@ -432,8 +436,13 @@ class WebRTCPeer(
                     PeerConnection.IceConnectionState.CONNECTED,
                     PeerConnection.IceConnectionState.COMPLETED -> {
                         AppLogger.webrtc("viewer#$viewerId connected")
-                        // 断线重连/ICE 恢复后主动请求关键帧，避免观看端恢复后长时间黑屏等待
-                        requestKeyFrame()
+                        // 每条连接只在首次连接建立后请求一次关键帧。后续 ICE 状态抖动/COMPLETED
+                        // 不再触发，避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态画面尤其致命）。
+                        val conn = viewerConnections[viewerId]
+                        if (conn != null && !conn.keyFrameRequested) {
+                            conn.keyFrameRequested = true
+                            requestKeyFrame()
+                        }
                     }
                     PeerConnection.IceConnectionState.FAILED -> {
                         AppLogger.network("viewer#$viewerId FAILED, restarting")
@@ -1198,6 +1207,21 @@ class WebRTCPeer(
         return cw to ch
     }
 
+    /**
+     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
+     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
+     * 依据 ActivityManager.isLowRamDevice 与 largeMemoryClass 双重判断。
+     */
+    private fun initialCaptureProfile(): Int {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            if (am.isLowRamDevice || am.largeMemoryClass <= 256) 1 else 0
+        } catch (t: Throwable) {
+            Log.w(TAG, "设备能力探测失败，默认1080p: ${t.message}")
+            0
+        }
+    }
+
     /** 共享方：切换采集/编码帧率（观看方下发指令触发） */
     fun setFramerate(fps: Int) {
         if (disposed) return
@@ -1238,13 +1262,15 @@ class WebRTCPeer(
         val videoSource = factory.createVideoSource(true)
         capturer.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
 
-        // 固定 1080p 采集（1080x1920 / 1920x1080），回归观看端合适的显示比例
-        val (capW, capH) = captureSizeForScreen()
+        // 设备自适应起始采集：低端老设备开局直接 720p，避免硬冲 1080p 硬编导致卡顿；
+        // 旗舰/中端设备仍 1080p 起步保持清晰度，后续编码瓶颈自适应会继续降档。
+        val initialProfile = initialCaptureProfile()
+        val (capW, capH) = captureSizeForLevel(initialProfile)
         // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
         // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
         captureFps = 30
-        lastCaptureProfile = 0
-        reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}...")
+        lastCaptureProfile = initialProfile
+        reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}（设备档位$initialProfile）...")
         capturer.startCapture(capW, capH, captureFps)
 
         reportProgress("③d 挂载视频轨道...")
