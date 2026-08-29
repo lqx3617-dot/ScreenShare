@@ -1,5 +1,6 @@
 package com.screenshare
 
+import android.app.ActivityManager
 import android.content.Context
 import android.media.projection.MediaProjection
 import android.os.SystemClock
@@ -1198,6 +1199,21 @@ class WebRTCPeer(
         return cw to ch
     }
 
+    /**
+     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
+     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
+     * 依据 ActivityManager.isLowRamDevice 与 largeMemoryClass 双重判断。
+     */
+    private fun initialCaptureProfile(): Int {
+        return try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            if (am.isLowRamDevice || am.largeMemoryClass <= 256) 1 else 0
+        } catch (t: Throwable) {
+            Log.w(TAG, "设备能力探测失败，默认1080p: ${t.message}")
+            0
+        }
+    }
+
     /** 共享方：切换采集/编码帧率（观看方下发指令触发） */
     fun setFramerate(fps: Int) {
         if (disposed) return
@@ -1238,13 +1254,15 @@ class WebRTCPeer(
         val videoSource = factory.createVideoSource(true)
         capturer.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
 
-        // 固定 1080p 采集（1080x1920 / 1920x1080），回归观看端合适的显示比例
-        val (capW, capH) = captureSizeForScreen()
+        // 设备自适应起始采集：低端老设备开局直接 720p，避免硬冲 1080p 硬编导致卡顿；
+        // 旗舰/中端设备仍 1080p 起步保持清晰度，后续编码瓶颈自适应会继续降档。
+        val initialProfile = initialCaptureProfile()
+        val (capW, capH) = captureSizeForLevel(initialProfile)
         // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
         // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
         captureFps = 30
-        lastCaptureProfile = 0
-        reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}...")
+        lastCaptureProfile = initialProfile
+        reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}（设备档位$initialProfile）...")
         capturer.startCapture(capW, capH, captureFps)
 
         reportProgress("③d 挂载视频轨道...")
