@@ -17,6 +17,7 @@ keystore.properties
 
 # 签名产物与临时构建目录
 /ScreenShare-allarch-signed.apk
+/ScreenShare-arm64-signed.apk
 /ScreenShare-allarch-signed.apk.aligned
 /ScreenShare-allarch-signed.apk.idsig
 /ScreenShare-allarch-signed.apk.*
