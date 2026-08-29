@@ -2815,7 +2815,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         cameraPipLastFrameAt = SystemClock.elapsedRealtime()
         val runnable = object : Runnable {
             override fun run() {
-                if (cameraPipTrack == null) return
+                if (cameraPipTrack == null) {
+                    // track 已释放：隐藏残留提示，避免「网络不佳」文字停留在屏幕上
+                    binding.tvCameraPipHint.visibility = View.GONE
+                    return
+                }
                 val since = SystemClock.elapsedRealtime() - cameraPipLastFrameAt
                 when {
                     since < 4000 -> {
@@ -2831,10 +2835,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         binding.tvCameraPipHint.visibility = View.VISIBLE
                     }
                 }
-                cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(this, 1000)
+                binding.tvCameraPipHint.postDelayed(this, 1000)
             }
         }
-        cameraPipFrameCheck = binding.tvCameraPipHint.postDelayed(runnable, 4000)
+        cameraPipFrameCheck = runnable
+        binding.tvCameraPipHint.postDelayed(runnable, 4000)
     }
 
     /** 取消摄像头 PIP 冻帧检测，避免 Activity 销毁后残留回调 */
