@@ -1731,6 +1731,10 @@ class WebRTCPeer(
     private fun applyEncoderLoadProfile(down: Boolean) {
         val targetProfile = if (down) 1 else 0
         val effective = maxOf(captureProfileForLevel(curAdaptLevel), targetProfile)
+        // 编码瓶颈时除降分辨率外同步降采集帧率（30→24）。播放视频等高动态画面单靠降分辨率
+        // 仍可能让 30fps 编不动，观看端一帧一帧跳；恢复时回弱网档位对应的基础帧率。
+        val baseFps = captureFpsForLevel(curAdaptLevel)
+        val targetFps = if (down) minOf(baseFps, 24) else baseFps
         // degradationPreference：编码瓶颈时保帧率降分辨率（动态画面流畅优先）
         val degradation = if (effective > 0) {
             RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
@@ -1741,33 +1745,37 @@ class WebRTCPeer(
             videoSender?.let { rtp ->
                 val params = rtp.parameters
                 params.degradationPreference = degradation
+                params.encodings?.firstOrNull()?.maxFramerate = targetFps
                 rtp.parameters = params
-                Log.d(TAG, "编码负载自适应: ${if (down) "降720p" else "回升1080p"} 策略=$degradation")
+                Log.d(TAG, "编码负载自适应: ${if (down) "降720p@24" else "回升1080p@$targetFps"} 策略=$degradation")
             }
-            // V4：1 对 1 模式视频实际承载在 viewer 连接，同步设置其 sender 的降级策略
+            // V4：1 对 1 模式视频实际承载在 viewer 连接，同步设置其 sender 的降级策略与帧率上限
             viewerConnections.values.forEach { conn ->
                 conn.videoSender?.let { rtp ->
                     val params = rtp.parameters
                     params.degradationPreference = degradation
+                    params.encodings?.firstOrNull()?.maxFramerate = targetFps
                     rtp.parameters = params
                 }
             }
         } catch (t: Throwable) {
             Log.w(TAG, "编码负载切策略失败: ${t.message}")
         }
-        if (effective != lastCaptureProfile) {
+        if (effective != lastCaptureProfile || targetFps != captureFps) {
             val now = System.currentTimeMillis()
-            val isDowngrade = effective > lastCaptureProfile
+            val isDowngrade = effective > lastCaptureProfile || targetFps < captureFps
             val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
             if (isDowngrade || cooldownOk) {
                 lastCaptureProfile = effective
+                lastCaptureFps = targetFps
+                captureFps = targetFps
                 lastCaptureSwitchMs = now
                 try {
                     val capturer = videoCapturer
                     if (capturer != null) {
                         val (capW, capH) = captureSizeForLevel(effective)
-                        capturer.changeCaptureFormat(capW, capH, captureFps)
-                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${captureFps} 档位$effective")
+                        capturer.changeCaptureFormat(capW, capH, targetFps)
+                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${targetFps} 档位$effective")
                     }
                 } catch (t: Throwable) {
                     Log.w(TAG, "编码负载降分辨率失败: ${t.message}")
