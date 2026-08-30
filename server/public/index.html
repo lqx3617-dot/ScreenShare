@@ -73,6 +73,73 @@ let heartbeatTimer = null;
 let inRoom = false;
 let localCands = [], remoteCands = [], remoteCandDetails = [], eventLog = [];
 
+// 系统音频播放器：Android host 通过 DataChannel("system-audio") 直传
+// 原始 PCM（16bit / 48000Hz / 单声道），这里解码为 AudioBuffer 排队播放
+const AUDIO_SAMPLE_RATE = 48000;
+let audioCtx = null;
+let audioQueue = [];
+let audioFlushTimer = null;
+let audioScheduledUntil = 0;
+
+function initAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioScheduledUntil = 0;
+  } catch (e) {
+    logEvent("[audio] AudioContext 创建失败: " + e.message);
+  }
+}
+
+function writePcm(bytes) {
+  if (!audioCtx) initAudio();
+  if (!audioCtx || audioCtx.state === "closed") return;
+  try {
+    const samples = bytes.byteLength >> 1;
+    if (samples === 0) return;
+    const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, samples);
+    const float = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) float[i] = int16[i] / 32768;
+    audioQueue.push(float);
+  } catch (e) {
+    logEvent("[audio] 解码失败: " + e.message);
+  }
+}
+
+function flushAudio() {
+  if (!audioCtx || audioCtx.state === "closed") return;
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
+  }
+  if (audioQueue.length === 0) return;
+  const buf = audioCtx.createBuffer(1, audioQueue.reduce((n, f) => n + f.length, 0), AUDIO_SAMPLE_RATE);
+  const ch = buf.getChannelData(0);
+  let off = 0;
+  for (const f of audioQueue) { ch.set(f, off); off += f.length; }
+  audioQueue = [];
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const t = Math.max(audioCtx.currentTime + 0.05, audioScheduledUntil);
+  src.start(t);
+  audioScheduledUntil = t + buf.duration;
+}
+
+function audioLoop() {
+  flushAudio();
+  audioFlushTimer = setTimeout(audioLoop, 50);
+}
+function startAudioLoop() {
+  if (audioFlushTimer) return;
+  initAudio();
+  audioLoop();
+}
+function stopAudioLoop() {
+  if (audioFlushTimer) { clearTimeout(audioFlushTimer); audioFlushTimer = null; }
+  audioQueue = [];
+  audioScheduledUntil = 0;
+}
+
 function candType(c) {
   return (c || "").includes("typ relay") ? "relay" :
          (c || "").includes("typ srflx") ? "srflx" :
@@ -225,6 +292,7 @@ function initPeer() {
     }
     if (stream) {
       videoEl.srcObject = stream;
+      videoEl.muted = true;   // 视频轨无声（音频走 DataChannel），避免自动播放拦截
       joinView.style.display = "none";
       stage.style.display = "block";
       setStatus("");
@@ -233,6 +301,19 @@ function initPeer() {
 
   pc.onremovetrack = (ev) => {
     logEvent("[removeTrack] " + ev.track.kind);
+  };
+
+  // 接收系统音频：Android host 通过 DataChannel("system-audio") 发送原始 PCM
+  pc.ondatachannel = (ev) => {
+    const dc = ev.channel;
+    logEvent("[datachannel] " + (dc.label || "?"));
+    if (dc.label === "system-audio") {
+      startAudioLoop();
+      dc.binaryType = "arraybuffer";
+      dc.onmessage = (e) => {
+        writePcm(e.data);
+      };
+    }
   };
 }
 
@@ -310,6 +391,11 @@ function teardown() {
   if (pc) { try { pc.close(); } catch (e) {} pc = null; }
   localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
   if (diagEl) diagEl.textContent = "";
+  stopAudioLoop();
+  if (audioCtx && audioCtx.state !== "closed") {
+    try { audioCtx.close(); } catch (e) {}
+  }
+  audioCtx = null;
   stopHeartbeat();
   if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   videoEl.srcObject = null;
@@ -320,6 +406,8 @@ function teardown() {
 }
 
 $("joinBtn").addEventListener("click", () => {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
   const code = $("codeInput").value.trim();
   if (!/^[0-9]{4}$/.test(code)) {
     setStatus("会议号需为 4 位数字", true);
