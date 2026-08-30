@@ -90,6 +90,9 @@ let audioScheduledUntil = 0;
 let audioDcState = "未收到";
 let audioBytes = 0;
 let audioBlocks = 0;
+let audioPeak = 0;      // 展示中的最近1秒峰值电平（0~1）
+let peakAccum = 0;      // 积累中的块峰值
+let peakTick = 0;
 
 const audInfoEl = () => document.getElementById("audInfo");
 function showAudioInfo() {
@@ -99,8 +102,13 @@ function showAudioInfo() {
   el.textContent =
     "音频通道: " + audioDcState +
     " | 收到 " + audioBlocks + " 块 / " + (audioBytes / 1024).toFixed(0) + "KB" +
+    " | 电平峰值: " + audioPeak.toFixed(3) +
     " | AudioContext: " + s;
   el.className = "aud" + (audioBytes > 0 && s === "running" ? "" : " off");
+}
+// audioLoop 每 50ms 调一次，10 次约 0.5s 刷新一次峰值窗口
+function decayPeak() {
+  if (++peakTick >= 10) { audioPeak = peakAccum; peakAccum = 0; peakTick = 0; showAudioInfo(); }
 }
 
 function initAudio() {
@@ -124,7 +132,12 @@ function writePcm(bytes) {
     if (samples === 0) return;
     const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, samples);
     const float = new Float32Array(samples);
-    for (let i = 0; i < samples; i++) float[i] = int16[i] / 32768;
+    for (let i = 0; i < samples; i++) {
+      const v = int16[i] / 32768;
+      float[i] = v;
+      const a = v < 0 ? -v : v;
+      if (a > peakAccum) peakAccum = a;
+    }
     audioQueue.push(float);
   } catch (e) {
     logEvent("[audio] 解码失败: " + e.message);
@@ -152,6 +165,7 @@ function flushAudio() {
 
 function audioLoop() {
   flushAudio();
+  decayPeak();
   audioFlushTimer = setTimeout(audioLoop, 50);
 }
 function startAudioLoop() {
