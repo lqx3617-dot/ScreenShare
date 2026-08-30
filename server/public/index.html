@@ -91,7 +91,9 @@ let audioDcState = "未收到";
 let audioBytes = 0;
 let audioBlocks = 0;
 let micNode = null;     // 麦克风轨（host 对讲音轨）的 WebAudio 播放节点
-let audioPeak = 0;      // 展示中的最近1秒峰值电平（0~1）
+let silentWindows = 0;  // 连续静音窗口数（500ms/个）
+let lastBlockCount = 0;
+let audioPeak = 0;      // 展示中的最近窗口峰值电平（0~1）
 let peakAccum = 0;      // 积累中的块峰值
 let peakTick = 0;
 
@@ -100,16 +102,40 @@ function showAudioInfo() {
   const el = audInfoEl();
   if (!el) return;
   const s = audioCtx ? audioCtx.state : "未初始化";
-  el.textContent =
-    "音频通道: " + audioDcState +
-    " | 收到 " + audioBlocks + " 块 / " + (audioBytes / 1024).toFixed(0) + "KB" +
-    " | 电平峰值: " + audioPeak.toFixed(3) +
-    " | AudioContext: " + s;
-  el.className = "aud" + (audioBytes > 0 && s === "running" ? "" : " off");
+  // 一切正常（通道连接+播放器运行+有数据+非静音）时隐藏诊断条
+  const ok = audioDcState === "已连接" && s === "running" &&
+             audioBlocks > 0 && audioPeak > 0.001 && silentWindows < 20;
+  if (ok) { el.style.display = "none"; return; }
+  el.style.display = "";
+  if (silentWindows >= 20) {
+    el.textContent = "收到音频数据但内容静音：当前播放的应用可能禁止了音频采集，请尝试更换播放器或播放来源";
+  } else if (audioDcState === "未收到") {
+    el.textContent = "音频通道: 未建立";
+  } else if (audioBlocks === 0) {
+    el.textContent = "音频通道: " + audioDcState + "（等待数据）";
+  } else if (s === "suspended") {
+    el.textContent = "播放被系统暂停：请点击屏幕任意位置恢复";
+  } else {
+    el.textContent = "音频通道: " + audioDcState +
+      " | 收到 " + audioBlocks + " 块 / " + (audioBytes / 1024).toFixed(0) + "KB" +
+      " | 电平峰值: " + audioPeak.toFixed(3) +
+      " | AudioContext: " + s;
+  }
+  el.className = "aud" + (ok ? "" : " off");
 }
 // audioLoop 每 50ms 调一次，10 次约 0.5s 刷新一次峰值窗口
 function decayPeak() {
-  if (++peakTick >= 10) { audioPeak = peakAccum; peakAccum = 0; peakTick = 0; showAudioInfo(); }
+  if (++peakTick >= 10) {
+    audioPeak = peakAccum; peakAccum = 0; peakTick = 0;
+    if (audioPeak < 0.001 && audioBlocks > lastBlockCount) {
+      silentWindows++;
+      lastBlockCount = audioBlocks;
+    } else {
+      silentWindows = 0;
+      lastBlockCount = audioBlocks;
+    }
+    showAudioInfo();
+  }
 }
 
 function initAudio() {
