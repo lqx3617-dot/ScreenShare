@@ -35,6 +35,11 @@
   }
   .bar .leave { margin-left: auto; padding: 6px 14px; font-size: 13px; background: rgba(230,57,107,.85); width: auto; }
   .hint { font-size: 12px; color: #888; text-align: center; margin-top: 10px; }
+  .aud {
+    margin-top: 8px; font-size: 12px; color: #7ecb7e; text-align: center;
+    min-height: 16px; white-space: pre-wrap; word-break: break-all;
+  }
+  .aud.off { color: #888; }
 </style>
 </head>
 <body>
@@ -45,6 +50,7 @@
   <button id="joinBtn">加入会议</button>
   <div class="status" id="status"></div>
   <p class="hint">输入共享方手机上的 4 位会议号</p>
+  <div class="aud off" id="audInfo"></div>
 </div>
 
 <div class="stage" id="stage">
@@ -80,6 +86,21 @@ let audioCtx = null;
 let audioQueue = [];
 let audioFlushTimer = null;
 let audioScheduledUntil = 0;
+let audioDcState = "未收到";
+let audioBytes = 0;
+let audioBlocks = 0;
+
+const audInfoEl = () => document.getElementById("audInfo");
+function showAudioInfo() {
+  const el = audInfoEl();
+  if (!el) return;
+  const s = audioCtx ? audioCtx.state : "未初始化";
+  el.textContent =
+    "音频通道: " + audioDcState +
+    " | 收到 " + audioBlocks + " 块 / " + (audioBytes / 1024).toFixed(0) + "KB" +
+    " | AudioContext: " + s;
+  el.className = "aud" + (audioBytes > 0 && s === "running" ? "" : " off");
+}
 
 function initAudio() {
   if (audioCtx) return;
@@ -94,6 +115,9 @@ function initAudio() {
 function writePcm(bytes) {
   if (!audioCtx) initAudio();
   if (!audioCtx || audioCtx.state === "closed") return;
+  audioBytes += bytes.byteLength;
+  audioBlocks++;
+  showAudioInfo();
   try {
     const samples = bytes.byteLength >> 1;
     if (samples === 0) return;
@@ -306,13 +330,18 @@ function initPeer() {
   // 接收系统音频：Android host 通过 DataChannel("system-audio") 发送原始 PCM
   pc.ondatachannel = (ev) => {
     const dc = ev.channel;
-    logEvent("[datachannel] " + (dc.label || "?"));
+    logEvent("[datachannel] " + (dc.label || "?") + " state=" + dc.readyState);
     if (dc.label === "system-audio") {
+      audioDcState = dc.readyState;
+      dc.onopen = () => { audioDcState = "已连接"; showAudioInfo(); };
+      dc.onclose = () => { audioDcState = "已关闭"; showAudioInfo(); };
+      dc.onerror = (e) => { audioDcState = "错误"; logEvent("[audio] DC错误"); showAudioInfo(); };
       startAudioLoop();
       dc.binaryType = "arraybuffer";
       dc.onmessage = (e) => {
         writePcm(e.data);
       };
+      showAudioInfo();
     }
   };
 }
@@ -392,6 +421,8 @@ function teardown() {
   localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
   if (diagEl) diagEl.textContent = "";
   stopAudioLoop();
+  audioDcState = "未收到"; audioBytes = 0; audioBlocks = 0;
+  showAudioInfo();
   if (audioCtx && audioCtx.state !== "closed") {
     try { audioCtx.close(); } catch (e) {}
   }
