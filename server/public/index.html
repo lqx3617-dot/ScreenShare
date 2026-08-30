@@ -90,6 +90,7 @@ let audioScheduledUntil = 0;
 let audioDcState = "未收到";
 let audioBytes = 0;
 let audioBlocks = 0;
+let micNode = null;     // 麦克风轨（host 对讲音轨）的 WebAudio 播放节点
 let audioPeak = 0;      // 展示中的最近1秒峰值电平（0~1）
 let peakAccum = 0;      // 积累中的块峰值
 let peakTick = 0;
@@ -324,6 +325,22 @@ function initPeer() {
 
   pc.ontrack = (ev) => {
     logEvent("[onTrack] kind=" + ev.track.kind + " streams=" + (ev.streams || []).length + " state=" + ev.track.readyState);
+    // 麦克风轨（host 对讲音轨）：用 AudioContext 播放（audioCtx 已在 join 手势中解锁）
+    if (ev.track.kind === "audio") {
+      try {
+        if (!audioCtx) initAudio();
+        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+        if (audioCtx) {
+          micNode = audioCtx.createMediaStreamSource(new MediaStream([ev.track]));
+          micNode.connect(audioCtx.destination);
+          audioDcState = audioDcState === "未收到" ? "未收到(麦克风轨已接)" : audioDcState;
+          showAudioInfo();
+        }
+      } catch (e) {
+        logEvent("[audio] 麦克风轨接入失败: " + e.message);
+      }
+      return;
+    }
     // Safari 的 onTrack 常不带 streams（streams=0），需手动用 track 组装 MediaStream
     let stream = (ev.streams && ev.streams[0]) || null;
     if (!stream && ev.track.kind === "video") {
@@ -331,7 +348,7 @@ function initPeer() {
     }
     if (stream) {
       videoEl.srcObject = stream;
-      videoEl.muted = true;   // 视频轨无声（音频走 DataChannel），避免自动播放拦截
+      videoEl.muted = true;   // 视频轨无声（音频走 AudioContext），避免自动播放拦截
       joinView.style.display = "none";
       stage.style.display = "block";
       setStatus("");
@@ -437,6 +454,7 @@ function teardown() {
   if (diagEl) diagEl.textContent = "";
   stopAudioLoop();
   audioDcState = "未收到"; audioBytes = 0; audioBlocks = 0;
+  if (micNode) { try { micNode.disconnect(); } catch (e) {} micNode = null; }
   showAudioInfo();
   if (audioCtx && audioCtx.state !== "closed") {
     try { audioCtx.close(); } catch (e) {}
