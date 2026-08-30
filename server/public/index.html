@@ -53,7 +53,7 @@
     <span id="connState"></span>
     <button class="leave" id="leaveBtn">退出</button>
   </div>
-  <video id="video" autoplay playsinline></video>
+  <video id="video" autoplay playsinline muted></video>
 </div>
 
 <script>
@@ -62,6 +62,7 @@
 const $ = (id) => document.getElementById(id);
 const joinView = $("joinView"), stage = $("stage");
 const statusEl = $("status"), videoEl = $("video");
+const diagEl = $("diag");
 const wsScheme = location.protocol === "https:" ? "wss" : "ws";
 const SIGNAL_URL = wsScheme + "://" + location.host + "/ws";
 
@@ -70,6 +71,27 @@ let pc = null;
 let viewerId = 0;
 let heartbeatTimer = null;
 let inRoom = false;
+let localCands = [], remoteCands = [], remoteCandDetails = [], eventLog = [];
+
+function candType(c) {
+  return (c || "").includes("typ relay") ? "relay" :
+         (c || "").includes("typ srflx") ? "srflx" :
+         (c || "").includes("typ host") ? "host" : "other";
+}
+function logEvent(s) {
+  eventLog.push(s);
+  if (eventLog.length > 15) eventLog.shift();
+  refreshDiag();
+}
+function refreshDiag() {
+  if (!diagEl) return;
+  diagEl.textContent =
+    "本地候选: " + (localCands.length ? localCands.join("  ") : "无") +
+    "\n远端候选: " + (remoteCands.length ? remoteCands.join("  ") : "无") +
+    "\n" + remoteCandDetails.join("\n") +
+    "\n" + eventLog.join("\n") +
+    (pc ? "\nICE状态: " + (pc.iceConnectionState || "new") + " | 连接: " + (pc.connectionState || "new") : "");
+}
 
 function setStatus(text, isError) {
   statusEl.textContent = text;
@@ -160,9 +182,15 @@ function initPeer() {
     ],
   };
   pc = new RTCPeerConnection(cfg);
+  localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
+  refreshDiag();
 
   pc.onicecandidate = (ev) => {
     if (ev.candidate) {
+      const s = ev.candidate.candidate;
+      const t = candType(s);
+      if (!localCands.includes(t)) localCands.push(t);
+      refreshDiag();
       relay(JSON.stringify({
         type: "candidate",
         id: ev.candidate.sdpMid,
@@ -172,19 +200,39 @@ function initPeer() {
     }
   };
 
+  pc.oniceconnectionstatechange = () => {
+    if ($("connState")) $("connState").textContent = stateText(pc.iceConnectionState);
+    refreshDiag();
+  };
+  pc.onconnectionstatechange = () => {
+    if ($("connState")) $("connState").textContent = stateText(pc.connectionState);
+    if (pc.connectionState === "failed") setStatus("连接失败（可能网络不通）", true);
+    refreshDiag();
+  };
+  pc.onicecandidateerror = (ev) => {
+    logEvent("[ICE错误] " + (ev.errorText || ev.errorCode || "?") + " (" + ev.url + ")");
+  };
+  pc.onicegatheringstatechange = () => {
+    refreshDiag();
+  };
+
   pc.ontrack = (ev) => {
-    videoEl.srcObject = ev.streams[0] || null;
-    if (ev.streams[0]) {
+    logEvent("[onTrack] kind=" + ev.track.kind + " streams=" + (ev.streams || []).length + " state=" + ev.track.readyState);
+    // Safari 的 onTrack 常不带 streams（streams=0），需手动用 track 组装 MediaStream
+    let stream = (ev.streams && ev.streams[0]) || null;
+    if (!stream && ev.track.kind === "video") {
+      stream = new MediaStream([ev.track]);
+    }
+    if (stream) {
+      videoEl.srcObject = stream;
       joinView.style.display = "none";
       stage.style.display = "block";
       setStatus("");
     }
   };
 
-  pc.onconnectionstatechange = () => {
-    const s = pc.connectionState;
-    $("connState").textContent = stateText(s);
-    if (s === "failed") setStatus("连接失败（可能网络不通）", true);
+  pc.onremovetrack = (ev) => {
+    logEvent("[removeTrack] " + ev.track.kind);
   };
 }
 
@@ -204,8 +252,12 @@ async function handleRelay(raw) {
   if (sdp && sdp.type === "offer") {
     try {
       await pc.setRemoteDescription({ type: "offer", sdp: sdp.sdp });
+      logEvent("[offer] m-lines: " + (sdp.sdp.match(/^m=/gm) || []).join(" | ") + " | " +
+        (sdp.sdp.match(/a=mid:/g) || []).length + " mids | codecs: " + ((sdp.sdp.match(/a=rtpmap:\d+ (\S+)/g) || []).join(" ")).slice(0, 200));
+      logEvent("[offer] transceivers: " + (pc.getTransceivers ? pc.getTransceivers().map(t => t.receiver.track.kind + "(" + t.receiver.track.readyState + ")").join(",") : "n/a"));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      logEvent("[answer] m-lines: " + (answer.sdp.match(/^m=/gm) || []).join(" | "));
       // 协议对齐 SignalManager.encodeAnswer：必须带 role 字段，Android 端 decode 依赖它
       relay(JSON.stringify({
         role: "join",
@@ -213,6 +265,7 @@ async function handleRelay(raw) {
         ice: [],
       }));
     } catch (e) {
+      logEvent("[协商失败] " + e.message);
       setStatus("协商失败：" + e.message, true);
     }
     return;
@@ -220,6 +273,11 @@ async function handleRelay(raw) {
 
   if (data.type === "candidate" && data.candidate) {
     try {
+      const t = candType(data.candidate);
+      if (!remoteCands.includes(t)) remoteCands.push(t);
+      remoteCandDetails.push("收到 " + t + ": " + data.candidate.split(" ").slice(-2, -1)[0]);
+      if (remoteCandDetails.length > 6) remoteCandDetails.shift();
+      refreshDiag();
       await pc.addIceCandidate({
         candidate: data.candidate,
         sdpMid: data.id,
@@ -234,6 +292,9 @@ async function handleRelay(raw) {
     for (const c of ice) {
       if (!c.candidate) continue;
       try {
+        const t = candType(c.candidate);
+        if (!remoteCands.includes(t)) remoteCands.push(t);
+        refreshDiag();
         await pc.addIceCandidate({
           candidate: c.candidate,
           sdpMid: c.id,
@@ -247,6 +308,8 @@ async function handleRelay(raw) {
 function teardown() {
   inRoom = false;
   if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
+  if (diagEl) diagEl.textContent = "";
   stopHeartbeat();
   if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   videoEl.srcObject = null;
