@@ -131,7 +131,10 @@ function writePcm(bytes) {
   try {
     const samples = bytes.byteLength >> 1;
     if (samples === 0) return;
-    const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, samples);
+    // e.data 是 ArrayBuffer（无 .buffer 属性），TypedArray 情况则取其底层视图
+    const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
+    const off = bytes instanceof ArrayBuffer ? 0 : (bytes.byteOffset || 0);
+    const int16 = new Int16Array(buf, off, samples);
     const float = new Float32Array(samples);
     for (let i = 0; i < samples; i++) {
       const v = int16[i] / 32768;
