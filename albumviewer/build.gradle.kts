@@ -51,6 +51,13 @@ android {
             "PUBLISH_URL",
             "\"${project.findProperty("screenshare.download.url") as String? ?: ""}\""
         )
+        // 发版管理接口鉴权 token（与 download-server 的 PUBLISH_TOKEN 对应），
+        // 机密只存在 local.properties/环境变量，不进 git；未配置时请求带空 token 由服务端 403 拒绝
+        buildConfigField(
+            "String",
+            "PUBLISH_TOKEN",
+            "\"${secret("screenshare.publish.token")}\""
+        )
         buildConfigField(
             "String",
             "UPDATE_URL",

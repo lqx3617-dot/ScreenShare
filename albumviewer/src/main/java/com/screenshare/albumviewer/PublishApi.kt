@@ -20,6 +20,9 @@ data class PublishStatus(
 class PublishApi(private val context: Context) {
 
     private val baseUrl = BuildConfig.PUBLISH_URL.trimEnd('/')
+    // 发版管理接口鉴权 token：与 download-server 的 PUBLISH_TOKEN 比对，
+    // 服务端未配置或 token 不符时返回 403，客户端据此提示无发版权限
+    private val publishToken = BuildConfig.PUBLISH_TOKEN
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -39,6 +42,7 @@ class PublishApi(private val context: Context) {
             val req = Request.Builder()
                 .url("$baseUrl/api/publish")
                 .post(body)
+                .header("x-publish-token", publishToken)
                 .build()
             client.newCall(req).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
@@ -61,6 +65,7 @@ class PublishApi(private val context: Context) {
     suspend fun status(taskId: String): PublishStatus? = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("$baseUrl/api/publish/status?task=$taskId")
+            .header("x-publish-token", publishToken)
             .build()
         try {
             client.newCall(req).execute().use { resp ->
