@@ -93,6 +93,7 @@ let audioBlocks = 0;
 let micNode = null;     // 麦克风轨（host 对讲音轨）的 WebAudio 播放节点
 let silentWindows = 0;  // 连续静音窗口数（500ms/个）
 let lastBlockCount = 0;
+let decodeErrCount = 0; // 解码异常日志只记前两次
 let audioPeak = 0;      // 展示中的最近窗口峰值电平（0~1）
 let peakAccum = 0;      // 积累中的块峰值
 let peakTick = 0;
@@ -106,7 +107,9 @@ function showAudioInfo() {
   const ok = audioDcState === "已连接" && s === "running" &&
              audioBlocks > 0 && audioPeak > 0.001 && silentWindows < 20;
   if (ok) { el.style.display = "none"; return; }
+  // 走到这里均为异常状态
   el.style.display = "";
+  el.className = "aud off";
   if (silentWindows >= 20) {
     el.textContent = "收到音频数据但内容静音：当前播放的应用可能禁止了音频采集，请尝试更换播放器或播放来源";
   } else if (audioDcState === "未收到") {
@@ -121,8 +124,12 @@ function showAudioInfo() {
       " | 电平峰值: " + audioPeak.toFixed(3) +
       " | AudioContext: " + s;
   }
-  el.className = "aud" + (ok ? "" : " off");
 }
+
+// iOS 手势恢复：AudioContext 被 suspend 时提示用户点击屏幕，此处绑定恢复逻辑
+stage.addEventListener("click", () => {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+});
 // audioLoop 每 50ms 调一次，10 次约 0.5s 刷新一次峰值窗口
 function decayPeak() {
   if (++peakTick >= 10) {
@@ -151,16 +158,17 @@ function initAudio() {
 function writePcm(bytes) {
   if (!audioCtx) initAudio();
   if (!audioCtx || audioCtx.state === "closed") return;
-  audioBytes += bytes.byteLength;
+  // Blob 防御：正常路径 binaryType="arraybuffer" 得到 ArrayBuffer；异常实现可能是 Blob
+  const size = bytes.byteLength || bytes.size || 0;
+  audioBytes += size;
   audioBlocks++;
-  showAudioInfo();
   try {
-    const samples = bytes.byteLength >> 1;
+    const samples = size >> 1;
     if (samples === 0) return;
     // e.data 是 ArrayBuffer（无 .buffer 属性），TypedArray 情况则取其底层视图
     const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
-    const off = bytes instanceof ArrayBuffer ? 0 : (bytes.byteOffset || 0);
-    const int16 = new Int16Array(buf, off, samples);
+    if (!buf) throw new Error("unsupported: " + (bytes.constructor && bytes.constructor.name));
+    const int16 = new Int16Array(buf, bytes instanceof ArrayBuffer ? 0 : (bytes.byteOffset || 0), samples);
     const float = new Float32Array(samples);
     for (let i = 0; i < samples; i++) {
       const v = int16[i] / 32768;
@@ -168,9 +176,12 @@ function writePcm(bytes) {
       const a = v < 0 ? -v : v;
       if (a > peakAccum) peakAccum = a;
     }
+    // 上限保护：AudioContext 长期 suspended 时防止内存无限增长（250 块 = 5 秒）
+    if (audioQueue.length > 250) audioQueue.shift();
     audioQueue.push(float);
   } catch (e) {
-    logEvent("[audio] 解码失败: " + e.message);
+    // 只记前两次，避免异常数据刷屏
+    if (decodeErrCount < 2) { logEvent("[audio] 解码失败: " + e.message); decodeErrCount++; }
   }
 }
 
@@ -180,6 +191,14 @@ function flushAudio() {
     audioCtx.resume().catch(() => {});
   }
   if (audioQueue.length === 0) return;
+  const now = audioCtx.currentTime;
+  // 积压控制：调度起点超前实时过多（突发积压/页面切后台恢复）时丢弃旧数据追实时，
+  // 防止 audioScheduledUntil 越漂越远导致延迟只增不减
+  if (audioScheduledUntil > now + 0.5) {
+    audioQueue = [];
+    audioScheduledUntil = 0;
+    return;
+  }
   const buf = audioCtx.createBuffer(1, audioQueue.reduce((n, f) => n + f.length, 0), AUDIO_SAMPLE_RATE);
   const ch = buf.getChannelData(0);
   let off = 0;
@@ -188,7 +207,7 @@ function flushAudio() {
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
   src.connect(audioCtx.destination);
-  const t = Math.max(audioCtx.currentTime + 0.05, audioScheduledUntil);
+  const t = Math.max(now + 0.05, audioScheduledUntil);
   src.start(t);
   audioScheduledUntil = t + buf.duration;
 }
@@ -360,6 +379,8 @@ function initPeer() {
         if (!audioCtx) initAudio();
         if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
         if (audioCtx) {
+          // host 重协商会重复触发 audio ontrack，先断开旧节点避免声音叠加
+          if (micNode) { try { micNode.disconnect(); } catch (e) {} }
           micNode = audioCtx.createMediaStreamSource(new MediaStream([ev.track]));
           micNode.connect(audioCtx.destination);
           audioDcState = audioDcState === "未收到" ? "未收到(麦克风轨已接)" : audioDcState;
@@ -483,6 +504,8 @@ function teardown() {
   if (diagEl) diagEl.textContent = "";
   stopAudioLoop();
   audioDcState = "未收到"; audioBytes = 0; audioBlocks = 0;
+  silentWindows = 0; lastBlockCount = 0; decodeErrCount = 0;
+  audioPeak = 0; peakAccum = 0; peakTick = 0;
   if (micNode) { try { micNode.disconnect(); } catch (e) {} micNode = null; }
   showAudioInfo();
   if (audioCtx && audioCtx.state !== "closed") {
