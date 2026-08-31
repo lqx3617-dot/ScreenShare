@@ -323,15 +323,25 @@ object UpdateChecker {
      */
     private fun downloadToFile(apkUrl: String, target: File, cancelled: AtomicBoolean, onProgress: (Long, Long) -> Unit): Boolean {
         return try {
-            val conn = URL(apkUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 30000
-            conn.readTimeout = 30000
-            conn.requestMethod = "GET"
-            conn.connect()
-            val totalBytes = conn.contentLengthLong
-            conn.disconnect()
+            // 先探测服务器是否支持 Range（206）；若返回 200 全量则降级单线程下载，
+            // 避免各分段从各自 start 覆盖写全量导致安装包损坏
+            val probe = URL(apkUrl).openConnection() as HttpURLConnection
+            probe.connectTimeout = 30000
+            probe.readTimeout = 30000
+            probe.requestMethod = "GET"
+            probe.setRequestProperty("Range", "bytes=0-0")
+            probe.connect()
+            val probeCode = probe.responseCode
+            // 真实总大小：Range 请求返回的 Content-Length 是「本段长度」（如 bytes=0-0 返回 1），
+            // 必须从 Content-Range: bytes 0-0/<total> 的 <total> 解析，否则 totalBytes 错成 1，
+            // 分段 end 算出 -1（bytes=0--1），服务器返回 200 全量导致各段覆盖写、下载永远卡住
+            val totalBytes = probe.getHeaderField("Content-Range")
+                ?.let { it.substringAfter('/').trim().toLongOrNull() }
+                ?: probe.contentLengthLong
+            probe.disconnect()
 
             if (totalBytes <= 0) return false
+            if (probeCode != 206) return downloadWhole(apkUrl, target, cancelled, onProgress)
 
             target.delete()
             RandomAccessFile(target, "rw").use { it.setLength(totalBytes.toLong()) }
@@ -358,9 +368,48 @@ object UpdateChecker {
             }
 
             latch.await()
-            !cancelled.get() && failedSegments.isEmpty()
+            if (cancelled.get()) return false
+            if (failedSegments.isEmpty()) return true
+            // 部分/全部分段失败：删除残file，降级单线程整文件下载（服务器可能忽略 Range）
+            Log.w(TAG, "分段下载失败 ${failedSegments.size}/${THREAD_COUNT}，降级单线程")
+            target.delete()
+            return downloadWhole(apkUrl, target, cancelled, onProgress)
         } catch (e: Exception) {
             Log.e(TAG, "下载准备失败: ${e.message}")
+            false
+        }
+    }
+
+    /** 服务器不支持 Range 时的降级：单线程整文件下载 */
+    private fun downloadWhole(apkUrl: String, target: File, cancelled: AtomicBoolean, onProgress: (Long, Long) -> Unit): Boolean {
+        return try {
+            val c = URL(apkUrl).openConnection() as HttpURLConnection
+            c.connectTimeout = 30000
+            c.readTimeout = 60000
+            c.connect()
+            if (c.responseCode != 200) return false
+            val total = c.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+            if (total <= 0) return false
+            target.delete()
+            val out = java.io.FileOutputStream(target)
+            val input = c.inputStream
+            val buf = ByteArray(64 * 1024)
+            var done = 0L
+            while (true) {
+                if (cancelled.get()) {
+                    out.close(); input.close(); c.disconnect()
+                    return false
+                }
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                done += n
+                onProgress(done, total)
+            }
+            out.close(); input.close(); c.disconnect()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "整文件下载失败: ${e.message}")
             false
         }
     }
@@ -389,6 +438,12 @@ object UpdateChecker {
             val code = c.responseCode
             if (code != 206 && code != 200) {
                 throw java.io.IOException("服务器返回 $code，不支持分段下载")
+            }
+            // 服务器对分段请求返回 200（忽略 Range 给全量）：各分段会同时写全量互相覆盖，
+            // 且进度按 total 累加会远超真实大小。拒绝这种响应，整体降级为单线程整文件下载。
+            if (code != 206) {
+                c.disconnect()
+                throw java.io.IOException("服务器忽略 Range 返回全量 200，降级单线程")
             }
             activeConnections.add(c)
 
@@ -443,7 +498,54 @@ object UpdateChecker {
         else -> "%.1f MB".format(bytes.toDouble() / 1048576)
     }
 
+    /**
+     * 校验下载的 APK 签名与当前已安装应用是否一致。
+     * 防止恶意替换更新：MD5 只防传输损坏，不防中间人伪造（攻击者可同时改 MD5）。
+     * @return 签名一致返回 true；无法解析或签名不一致返回 false。
+     */
+    private fun verifyApkSignature(context: Context, apk: File): Boolean {
+        return try {
+            val cur = context.packageManager.getPackageInfo(context.packageName, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+            val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+                ?: return false
+            archive.applicationInfo.sourceDir = apk.absolutePath
+            archive.applicationInfo.publicSourceDir = apk.absolutePath
+
+            val curSigs = if (Build.VERSION.SDK_INT >= 28) {
+                val si = cur.signingInfo ?: return false
+                if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                cur.signatures
+            }
+            val apkSigs = if (Build.VERSION.SDK_INT >= 28) {
+                val si = archive.signingInfo ?: return false
+                if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+            } else {
+                @Suppress("DEPRECATION")
+                archive.signatures
+            }
+            if (curSigs == null || apkSigs == null) return false
+            curSigs.any { curSig -> apkSigs.any { it.toByteArray().contentEquals(curSig.toByteArray()) } }
+        } catch (e: Exception) {
+            Log.e(TAG, "签名校验异常: ${e.message}")
+            false
+        }
+    }
+
     private fun installApk(context: Context, apk: File) {
+        // 安全：安装前校验 APK 签名与当前应用一致，防恶意替换
+        if (!verifyApkSignature(context, apk)) {
+            Log.e(TAG, "APK 签名校验失败，拒绝安装")
+            (context as? android.app.Activity)?.runOnUiThread {
+                AlertDialog.Builder(context)
+                    .setTitle("安装已阻止")
+                    .setMessage("下载的更新包签名与本应用不一致，已拒绝安装。请从官方渠道获取更新。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
+            return
+        }
         // Android 8+ 需要"安装未知应用"权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             (context as? android.app.Activity)?.runOnUiThread {

@@ -7,6 +7,8 @@ import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.projection.MediaProjection
 import android.util.Log
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * 系统音频内录/播放桥（v1.134 精简）。
@@ -121,8 +123,14 @@ object SystemAudioBridge {
 
     // ==================== 观看方：播放系统 PCM ====================
     @Volatile private var audioTrack: AudioTrack? = null
+    // 有界 PCM 队列：DataChannel 回调（信令/发送线程）只入队不阻塞，专用播放线程消费。
+    // 之前 writePcm 直接在信令线程执行阻塞式 AudioTrack.write，AudioTrack 缓冲（40ms 余量）
+    // 写满后会无限期阻塞，导致整个 WebRTC 信令/数据处理链路冻结。
+    // 容量 = 160 块 × 20ms = 3.2s：覆盖网络抖动 + AudioTrack 短暂阻塞，超龄数据直接丢弃追实时。
+    private val pcmQueue = ArrayBlockingQueue<ByteArray>(160)
+    @Volatile private var playThread: Thread? = null
 
-    /** 开始播放（创建流式 AudioTrack 并 play） */
+    /** 开始播放（创建流式 AudioTrack 并 play，同时启动专用消费线程） */
     fun startPlayback(): Boolean {
         stopPlayback()
         val minBuf = AudioTrack.getMinBufferSize(
@@ -165,24 +173,50 @@ object SystemAudioBridge {
             audioTrack = null
             return false
         }
+        val thread = Thread {
+            Log.d(TAG, "系统音频播放线程启动")
+            try {
+                while (true) {
+                    // 200ms 超时轮询：stopPlayback 无需 interrupt 即可在 join 内退出
+                    val chunk = pcmQueue.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                    val t = audioTrack
+                    if (t == null) return@Thread
+                    try {
+                        t.write(chunk, 0, chunk.size)
+                    } catch (tw: Throwable) {
+                        Log.w(TAG, "写入 AudioTrack 失败: ${tw.message}")
+                        // AudioTrack 已释放/异常：退出线程，由下次 startPlayback 重建
+                        return@Thread
+                    }
+                }
+            } catch (_: InterruptedException) {
+                // 正常停止路径
+            }
+        }
+        thread.isDaemon = true
+        thread.start()
+        playThread = thread
         return true
     }
 
-    /** 观看方写入一段 PCM16 到 AudioTrack（v1.133：DataChannel 收到原始 PCM 直接写入） */
+    /** 观看方写入一段 PCM16（v1.133：DataChannel 收到原始 PCM 直接入队，不阻塞调用线程） */
     fun writePcm(data: ByteArray) {
-        try {
-            audioTrack?.write(data, 0, data.size)
-        } catch (t: Throwable) {
-            Log.w(TAG, "写入 AudioTrack 失败: ${t.message}")
+        if (!pcmQueue.offer(data)) {
+            // 队列满：丢弃最旧一帧追实时（音频延迟积累比丢一帧 20ms 危害大得多）
+            pcmQueue.poll()
+            pcmQueue.offer(data)
         }
     }
 
     fun stopPlayback() {
-        try {
-            audioTrack?.pause()
-            audioTrack?.flush()
-            audioTrack?.release()
-        } catch (_: Throwable) {}
+        // 停止消费线程：先摘 audioTrack（让循环退出）再等线程退出，最后释放 AudioTrack
+        val t = audioTrack
         audioTrack = null
+        try { t?.pause() } catch (_: Throwable) {}
+        try { t?.flush() } catch (_: Throwable) {}
+        try { t?.release() } catch (_: Throwable) {}
+        playThread?.join(1000)
+        playThread = null
+        pcmQueue.clear()
     }
 }

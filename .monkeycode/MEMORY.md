@@ -48,6 +48,7 @@ Entries discovered by the Agent during task execution should follow this format:
   - 每次签名后需 apksigner verify 验证 v2/v3 通过
   - **发版铁律：必须先改 build.gradle.kts 版本号，再跑 assembleRelease**（v1.212 曾因先构建后改版本号、改完未重建直接签名，导致发布的 APK 实际还是旧版 214/1.211，用户下载后安装仍是 211）。签名前必须核对 output-metadata.json 的 versionCode/versionName 与目标一致
   - 全架构版（含全部 ABI）约 54MB；仅 arm64 约 19MB
+  - **allarch 与 arm64 构建覆盖同一产物**：两种参数构建都输出到 app/build/outputs/apk/release/app-release-unsigned.apk，后一次构建会覆盖前一次。必须按「allarch 构建 → 立即签名/拷走 → 再 arm64 构建 → 签名」顺序执行，不能在两个构建都完成后才签名（allarch 已被 arm64 覆盖）
 
 [Project Knowledge Summary]
 - Date: 2026-08-03
@@ -474,3 +475,49 @@ Entries discovered by the Agent during task execution should follow this format:
   - **下载服务器必须带 KEYSTORE_PASS**：download-server.js 会 require('/workspace/server/publish.js')，publish.js 第18行强制要求 KEYSTORE_PASS 环境变量否则抛错退出——重启下载服务器必须带 `KEYSTORE_PASS=screenshare123`。
   - **信令服务器 WS 握手不鉴权**：diagAuthorized 只保护 POST /crash 与 /diag（HTTP 崩溃上报），WS 连接本身不校验 x-diag-token。验证诊断 token 须 curl POST /crash（新/旧→200，错误→403）。
   - v1.225(228) 产物：allarch md5=d2727ba0a211ba0cd83d3c82264310d5（24.6MB）、arm64 md5=c069415ff12980df0661aac35f7234b7（17MB）；AlbumViewer v1.194(16) md5=eb11d8335271e89034550d9ce5110fdd（2.4MB）。commit 2a89c1a 已推送。
+
+## 合并 fix/rate-limit 功能分支与发布（v1.226/229，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 合并 fix/rate-limit 功能分支并重打包发布
+- Category: Workflow & Collaboration
+- Instructions:
+  - **fix/rate-limit 是功能分支**：从 e6e0cfc（v1.224/227）分叉，含 5 个提交——信令限流(e5647aa)、工具条布局(27f241a)、自适应稳定帧率(72d132e)、PIP 可拖动(a8011cd)、PIP 触摸整理(1be7ede)。仅改 MainActivity.kt/WebRTCPeer.kt/activity_main.xml/server.js（+128/-25）。
+  - **与 main 无冲突自动合并**：72d132e（发送端自适应调参）与 main 的 v1.223/226 掉帧优化（观看端 viewerStall/stream-stall 反馈）同区域但角度不同，git 自动合并不冲突，关键逻辑二者都已保留（captureSwitchCooldownMs=8000 + viewerStallActive 共存）。
+  - **签名时临时文件坑**：zipalign 输出文件若已存在（如 /tmp/align_app.apk）会跳过并沿用旧文件，导致签出旧 md5（曾误签出上版 d2727ba0）。**重新签名前必须 `rm -f` 临时对齐文件**，或用新临时文件名，确保用最新 unsigned APK。本次修正后 allarch=24e9b2e2...、arm64=b48187a5...。
+  - 合并后信令服务器必须重启才能加载限流代码（server.js 改了）；token/OLD 与上一轮一致不变。
+  - v1.226(229) 产物：allarch md5=24e9b2e2596dc0ecd0c8ed7d6531ccd4（24.6MB）、arm64 md5=b48187a50db5d1bdfec863745e2a0722（17MB）；AlbumViewer 维持 v1.194(16) md5=eb11d833...（未改动不重打）。commit 4415011 已推送。全流程：merge e1d8c00 → 构建签名 → 服务器重启 → version.json 229/1.226。
+
+## 会议室相册菜单去二级弹窗（v1.227/230，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 去掉主App会议室相册上传的二级弹窗
+- Category: Workflow & Collaboration
+- Instructions:
+  - 主 App 会议室「相册」入口（onAlbumClicked，MainActivity.kt 1304 行）是四选项菜单；唯一带二级弹窗的是「远程拍照上传」——原来选中后再弹「后置+前置/仅前置」子菜单。已去掉：选中直接用 `{"type":"camera","action":"capture","mode":"both"}`（默认后置+前置）拍照上传。
+  - 主 App 相册上传/拍照链路本身是后台静默、无预览框的（startAlbumUpload/startCameraCapture 不弹 UI），弹窗只来自 onAlbumClicked 的菜单。
+  - 相册 App（AlbumViewer）不负责上传（只是查看器：查看/保存/删除/去重），本次无需改。
+  - v1.227(230) 产物：allarch md5=0bda38cc5a29c5f0aaf2b58a577e716c（24.6MB）、arm64 md5=9b873717c6876c1d602c766af7c7cc9d（17MB）；AlbumViewer 维持 16/1.194 不重打。commit b40fbd6 已推送。
+
+## 上传后去掉全屏相册自动弹出（v1.228/231，2026-08-27）
+[Project Knowledge Summary]
+- Date: 2026-08-27
+- Context: Discovered by Agent while 去掉上传/拍照成功后自动弹出的全屏相册查看
+- Category: Workflow & Collaboration
+- Instructions:
+  - 主 App 收到 album-result 带 url（成功）时，原来在 MainActivity.kt 的 setControlListener「album-result」分支自动调 openAlbumViewer() 弹全屏相册（WebView 加载 /all）。已改为只 Toast「照片已上传」，不开弹窗。
+  - 相册上传(startAlbumUpload) 与 远程拍照上传(startCameraCapture) 都经 control「album-result」回发 url，共享同一处理分支，改一处两者都消除自动弹窗。
+  - openAlbumViewer() 仍保留在两个手动入口：未连接点「相册」(onAlbumClicked 早退) 和菜单项3「查看相册（全部照片）」；手动查看不受影响。
+  - v1.228(231) 产物：allarch md5=a868d34c582b0b7bc443c62d2a6f8fd3（24.6MB）、arm64 md5=5bfbffbbe56440be6bcd3fd7f00ae3c3（17MB）；AlbumViewer 维持 16/1.194 不重打。commit 6ca73bd 已推送。
+
+## 二次合并 fix/rate-limit 更新（v1.229/232 + 相册 v1.195/17，2026-08-28）
+[Project Knowledge Summary]
+- Date: 2026-08-28
+- Context: Discovered by Agent while 二次合并 fix/rate-limit 分支更新并发布
+- Category: Workflow & Collaboration
+- Instructions:
+  - **分支被 rebase 重写**：fix/rate-limit 原 5 个提交被 rebase 为中文提交信息（hash 全变），其上新增 13 个提交（视频通话补强/音频竞态/相册App优化）。fetch 会显示 forced update；merge-base 与旧头相同是因为 rebase 保留了内容历史。
+  - **合并编译错误两类**（分支与 main 各自演进同一区域所致）：①`pipDragMoved` 等拖拽状态变量重复声明（main 上次合并已引入一份、分支 rebase 后又一份，git 自动合并双双保留）——修复靠删重复块，且应 grep 全文件确认无其他重复；②冻帧检测 `cameraPipFrameCheck` 类型错误：`View.postDelayed` 返回 Boolean 不能赋给 `Runnable?`，正确写法是变量持 runnable 本身、postDelayed 只负责调度（cancel 用 removeCallbacks(runnable)）。
+  - 分支改动同时涉及相册 App（MainActivity/RelayClient/UpdateChecker），相册 App 需同步递增重打（16→17/1.195）。
+  - v1.229(232) 产物：allarch md5=3c2ec23de79ae1c868500d34bf51600d（24.6MB）、arm64 md5=7a48772bec2c5cf63e043f4fa3683e0b（17MB）；AlbumViewer v1.195(17) md5=aa08b0dea34a465cbeff413e9997580f（2.4MB）。commit d97e0d7(merge)+04267e6(fix) 已推送。
+  - CHANGELOG 冲突解决模式：HEAD 保留已有版本条目，分支的「未发布」条目改写为本次新版本号后合并进主 App 区块顶部。

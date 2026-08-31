@@ -35,16 +35,44 @@ const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
 const app = express();
+// 反代信任：客户端经平台反代访问时注入 X-Forwarded-For，trust proxy=1 让 req.ip 取 XFF 首段
+// 真实客户端 IP，否则所有设备共享同一限流桶（无法区分用户），且 express-rate-limit 会报
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR 校验错误。取 1（只信任最近一跳反代，XFF 首段不被伪造掩盖）。
+app.set("trust proxy", 1);
 app.use(express.json({ limit: BODY_LIMIT }));
 
-// 速率限制：写操作（上传/去重/删除）30 次/分钟，读操作 60 次/分钟，防暴力破解与 DoS
+// 速率限制：写操作（去重/删除等低频管理操作）200 次/分钟，读操作 60 次/分钟，防暴力破解与 DoS。
 const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+// create 会话限流（防枚举/刷量）：每设备每分钟最多 30 个新会话。会话 token 是逐张上传的
+// 前提，严格限制 create 即可天然防止恶意刷图（无 token 无法 upload）。
+const createLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "too many requests" },
 });
+// 照片上传限流（upload/original/finish）：合法高频操作，仅防极端刷量。
+// 批量上传几百上千张相册在 1 分钟内完成属正常场景，上限放宽到 5000/分钟；
+// 防滥用依赖 createLimiter（必须先拿到合法 token 才能 upload）。
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "too many requests" },
+});
+// /api/upload 按 action 分流限流：create 走严格 createLimiter，其余走宽松 uploadLimiter。
+function uploadActionLimiter(req, res, next) {
+  if ((req.body || {}).action === "create") return createLimiter(req, res, next);
+  return uploadLimiter(req, res, next);
+}
 const readLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -143,7 +171,8 @@ function json(res, code, obj) {
 }
 
 // ==================== POST /api/upload ====================
-app.post("/api/upload", writeLimiter, async (req, res) => {
+// 按 action 分流：create 严格限流，upload/original/finish 宽松（批量上传不被阻断）
+app.post("/api/upload", uploadActionLimiter, async (req, res) => {
   const body = req.body || {};
   const action = body.action;
 

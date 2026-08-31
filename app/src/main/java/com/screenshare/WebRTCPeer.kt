@@ -147,6 +147,9 @@ class WebRTCPeer(
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    // 屏幕采集 VideoSource：存成员引用以便 disconnect 统一释放
+    //（PC.dispose 不负责独立的 VideoSource，漏释放则每次开启共享泄漏一个 native 源）
+    private var videoSource: VideoSource? = null
     // 关键帧请求短时防抖：多 viewer 同时恢复时 requestKeyFrame 可能连续触发，
     // changeCaptureFormat 会重启采集器造成画面闪断，因此 500ms 内只允许触发一次。
     private var lastKeyFrameAt = 0L
@@ -840,10 +843,11 @@ class WebRTCPeer(
             conn.micSender = null
             if (negotiate) createOfferFor(vid)
         }
-        micAudioSource?.dispose()
-        micAudioSource = null
+        // 释放顺序：先 track 后 source（track 持有对 native AudioSource 的引用，反序会悬空崩溃）
         localAudioTrack?.dispose()
         localAudioTrack = null
+        micAudioSource?.dispose()
+        micAudioSource = null
         Log.d(TAG, "麦克风音频已停止")
     }
 
@@ -934,15 +938,21 @@ class WebRTCPeer(
             }
         }
         cameraViewerSenders.clear()
-        cameraVideoTrack?.dispose()
-        cameraVideoTrack = null
-        cameraVideoSource?.dispose()
-        cameraVideoSource = null
-        cameraCapturer?.stopCapture()
-        cameraCapturer?.dispose()
+        // 释放顺序（libwebrtc 约定）：先停采集→dispose capturer→track→source→helper。
+        // 原顺序（track/source 先于 stopCapture）会让采集器向已释放的 VideoSource 推帧，触发 use-after-free 崩溃
+        try { cameraCapturer?.stopCapture() } catch (t: Throwable) {
+            Log.w(TAG, "摄像头 stopCapture 失败: ${t.message}")
+        }
+        try { cameraCapturer?.dispose() } catch (t: Throwable) {
+            Log.w(TAG, "摄像头 capturer dispose 失败: ${t.message}")
+        }
         cameraCapturer = null
+        try { cameraVideoTrack?.dispose() } catch (t: Throwable) {}
+        cameraVideoTrack = null
+        try { cameraVideoSource?.dispose() } catch (t: Throwable) {}
+        cameraVideoSource = null
         cameraDeviceName = null
-        cameraSurfaceTextureHelper?.dispose()
+        try { cameraSurfaceTextureHelper?.dispose() } catch (t: Throwable) {}
         cameraSurfaceTextureHelper = null
         Log.d(TAG, "视频通话摄像头已停止")
     }
@@ -1255,71 +1265,92 @@ class WebRTCPeer(
         }
         videoCapturer = capturer
         reportProgress("③b 初始化采集器...")
-        surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCapture", eglBaseContext)
+        try {
+            surfaceTextureHelper = SurfaceTextureHelper.create("ScreenCapture", eglBaseContext)
 
-        val factory = getFactory()
-        // 新版：视频源从 factory 实例创建
-        val videoSource = factory.createVideoSource(true)
-        capturer.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+            val factory = getFactory()
+            // 新版：视频源从 factory 实例创建（存成员引用，disconnect/releaseScreenCapture 统一释放）
+            val source = factory.createVideoSource(true)
+            videoSource = source
+            capturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
 
-        // 设备自适应起始采集：低端老设备开局直接 720p，避免硬冲 1080p 硬编导致卡顿；
-        // 旗舰/中端设备仍 1080p 起步保持清晰度，后续编码瓶颈自适应会继续降档。
-        val initialProfile = initialCaptureProfile()
-        val (capW, capH) = captureSizeForLevel(initialProfile)
-        // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
-        // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
-        captureFps = 30
-        lastCaptureProfile = initialProfile
-        reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}（设备档位$initialProfile）...")
-        capturer.startCapture(capW, capH, captureFps)
+            // 设备自适应起始采集：低端老设备开局直接 720p，避免硬冲 1080p 硬编导致卡顿；
+            // 旗舰/中端设备仍 1080p 起步保持清晰度，后续编码瓶颈自适应会继续降档。
+            val initialProfile = initialCaptureProfile()
+            val (capW, capH) = captureSizeForLevel(initialProfile)
+            // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
+            // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
+            captureFps = 30
+            lastCaptureProfile = initialProfile
+            reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}（设备档位$initialProfile）...")
+            capturer.startCapture(capW, capH, captureFps)
 
-        reportProgress("③d 挂载视频轨道...")
-        localVideoTrack = factory.createVideoTrack("screen_track", videoSource)
-        localVideoTrack?.setEnabled(true)
+            reportProgress("③d 挂载视频轨道...")
+            localVideoTrack = factory.createVideoTrack("screen_track", source)
+            localVideoTrack?.setEnabled(true)
 
-        // 添加视频轨道（默认 transceiver 传音视频；仅视频）
-        localVideoTrack?.let { track ->
-            val rtp = peerConnection?.addTrack(track)
-            if (rtp == null) {
-                Log.e(TAG, "addTrack 失败：未添加视频轨道")
-            } else {
-                Log.d(TAG, "addTrack 成功，sender=${rtp.track()?.id()}")
-                videoSender = rtp
-                val params = rtp.parameters
-                params.encodings?.firstOrNull()?.let { enc ->
-                    // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
-                    // 12M 上限 + 初始 2.5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
-                    enc.maxBitrateBps = 12_000_000
-                    enc.minBitrateBps = 1_000_000
-                    enc.maxFramerate = 30
-                    // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
-                    enc.networkPriority = 4
-                    enc.bitratePriority = 4.0
+            // 添加视频轨道（默认 transceiver 传音视频；仅视频）
+            localVideoTrack?.let { track ->
+                val rtp = peerConnection?.addTrack(track)
+                if (rtp == null) {
+                    Log.e(TAG, "addTrack 失败：未添加视频轨道")
+                } else {
+                    Log.d(TAG, "addTrack 成功，sender=${rtp.track()?.id()}")
+                    videoSender = rtp
+                    val params = rtp.parameters
+                    params.encodings?.firstOrNull()?.let { enc ->
+                        // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
+                        // 12M 上限 + 初始 2.5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
+                        enc.maxBitrateBps = 12_000_000
+                        enc.minBitrateBps = 1_000_000
+                        enc.maxFramerate = 30
+                        // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
+                        enc.networkPriority = 4
+                        enc.bitratePriority = 4.0
+                    }
+                    // 码率不足时优先保分辨率（降帧率而非降清晰度），用户要求不降画质
+                    try {
+                        params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
+                    }
+                    rtp.parameters = params
+                    // 初始带宽 4M 起步：低于 5M 峰值避免启动瞬间拥塞，高于 2.5M 让画面更快清晰
+                    //（1080p30 屏幕共享 2.5M 起步爬坡期画面模糊，弱网由拥塞控制 + 弱网自适应兜底降档）
+                    try {
+                        peerConnection?.setBitrate(1_000_000, 4_000_000, 12_000_000)
+                        Log.d(TAG, "已设置初始带宽 1/4/12 Mbps")
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "setBitrate 失败: ${t.message}")
+                    }
                 }
-                // 码率不足时优先保分辨率（降帧率而非降清晰度），用户要求不降画质
-                try {
-                    params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-                } catch (t: Throwable) {
-                    Log.w(TAG, "设置 degradationPreference 失败: ${t.message}")
-                }
-                rtp.parameters = params
-                // 初始带宽 4M 起步：低于 5M 峰值避免启动瞬间拥塞，高于 2.5M 让画面更快清晰
-                //（1080p30 屏幕共享 2.5M 起步爬坡期画面模糊，弱网由拥塞控制 + 弱网自适应兜底降档）
-                try {
-                    peerConnection?.setBitrate(1_000_000, 4_000_000, 12_000_000)
-                    Log.d(TAG, "已设置初始带宽 1/4/12 Mbps")
-                } catch (t: Throwable) {
-                    Log.w(TAG, "setBitrate 失败: ${t.message}")
-                }
+            } ?: run {
+                Log.e(TAG, "localVideoTrack 为空，未添加视频轨道")
             }
-        } ?: run {
-            Log.e(TAG, "localVideoTrack 为空，未添加视频轨道")
-        }
 
-        // 系统音频改走 DataChannel（SystemAudioBridge），不再添加麦克风音频轨道
-        Log.d(TAG, "屏幕采集已启动: ${capW}x${capH}@${captureFps}fps (码率上限12M)")
-        reportProgress("③e 采集就绪")
-        return true
+            // 系统音频改走 DataChannel（SystemAudioBridge），不再添加麦克风音频轨道
+            Log.d(TAG, "屏幕采集已启动: ${capW}x${capH}@${captureFps}fps (码率上限12M)")
+            reportProgress("③e 采集就绪")
+            return true
+        } catch (t: Throwable) {
+            Log.e(TAG, "屏幕采集启动失败: ${t.message}")
+            // 失败路径统一释放半初始化资源，避免 capturer/helper/source 泄漏
+            releaseScreenCapture()
+            return false
+        }
+    }
+
+    /** 释放屏幕采集全部资源（按 stopCapture→capturer→track→source→helper 顺序） */
+    private fun releaseScreenCapture() {
+        try { videoCapturer?.stopCapture() } catch (_: Throwable) {}
+        try { videoCapturer?.dispose() } catch (_: Throwable) {}
+        videoCapturer = null
+        try { localVideoTrack?.dispose() } catch (_: Throwable) {}
+        localVideoTrack = null
+        try { videoSource?.dispose() } catch (_: Throwable) {}
+        videoSource = null
+        try { surfaceTextureHelper?.dispose() } catch (_: Throwable) {}
+        surfaceTextureHelper = null
     }
 
     /** 启动采集进度回调（用于屏幕逐步诊断，startSessionCore 里设置） */
@@ -2014,14 +2045,14 @@ class WebRTCPeer(
         }
         viewerConnections.clear()
         pendingViewerCandidates.clear()
-        videoCapturer?.stopCapture()
-        videoCapturer?.dispose()
-        localVideoTrack?.dispose()
+        // 屏幕采集：按 stopCapture→capturer→track→source→helper 顺序统一释放
+        releaseScreenCapture()
         stopCameraVideo()
+        // 麦克风：先 track 后 source（track 持有 native AudioSource 引用，反序悬空崩溃）
+        try { localAudioTrack?.dispose() } catch (_: Throwable) {}
+        localAudioTrack = null
         try { micAudioSource?.dispose() } catch (_: Throwable) {}
         micAudioSource = null
-        localAudioTrack?.dispose()
-        surfaceTextureHelper?.dispose()
         systemAudioListener = null
         try { controlChannel?.dispose() } catch (_: Throwable) {}
         controlChannel = null
@@ -2031,10 +2062,6 @@ class WebRTCPeer(
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
-        videoCapturer = null
-        localVideoTrack = null
-        localAudioTrack = null
-        surfaceTextureHelper = null
         Log.d(TAG, "WebRTC 已断开并清理")
     }
 }

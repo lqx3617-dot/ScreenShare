@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>共享屏界 - 网页观看</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #141418; color: #f0f0f2;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .wrap { width: min(420px, 92vw); }
+  h1 { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 4px; letter-spacing: 2px; color: #E6396B; }
+  .sub { font-size: 13px; color: #999; text-align: center; margin-bottom: 28px; }
+  input {
+    width: 100%; padding: 14px; font-size: 22px; letter-spacing: 8px; text-align: center;
+    background: #222; color: #fff; border: 1px solid #333; border-radius: 10px; outline: none;
+  }
+  input:focus { border-color: #E6396B; }
+  button {
+    width: 100%; margin-top: 14px; padding: 14px; font-size: 17px; font-weight: 600;
+    background: #E6396B; color: #fff; border: 0; border-radius: 10px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 14px; color: #bbb; text-align: center; min-height: 20px; }
+  .status.error { color: #ff6b6b; }
+  .stage { width: 100vw; height: 100vh; display: none; background: #000; position: relative; }
+  .stage video { width: 100%; height: 100%; object-fit: contain; }
+  .bar {
+    position: absolute; top: 0; left: 0; right: 0; padding: 10px 14px;
+    background: linear-gradient(rgba(0,0,0,.7), transparent);
+    font-size: 14px; display: flex; align-items: center; gap: 10px; z-index: 10;
+  }
+  .bar .leave { margin-left: auto; padding: 6px 14px; font-size: 13px; background: rgba(230,57,107,.85); width: auto; }
+  .hint { font-size: 12px; color: #888; text-align: center; margin-top: 10px; }
+  .aud {
+    position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 10;
+    font-size: 12px; color: #7ecb7e; text-align: center;
+    background: rgba(0,0,0,.55); border-radius: 8px; padding: 7px 8px;
+  }
+  .aud.off { color: #999; }
+</style>
+</head>
+<body>
+<div class="wrap" id="joinView">
+  <h1>共享屏界</h1>
+  <p class="sub">浏览器直接观看，无需安装 App</p>
+  <input id="codeInput" type="text" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
+  <button id="joinBtn">加入会议</button>
+  <div class="status" id="status"></div>
+  <p class="hint">输入共享方手机上的 4 位会议号</p>
+</div>
+
+  <div class="stage" id="stage">
+  <div class="bar">
+    <span id="roomLabel">会议</span>
+    <span id="connState"></span>
+    <button class="leave" id="leaveBtn">退出</button>
+  </div>
+  <video id="video" autoplay playsinline muted></video>
+  <div class="aud off" id="audInfo"></div>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const joinView = $("joinView"), stage = $("stage");
+const statusEl = $("status"), videoEl = $("video");
+const diagEl = $("diag");
+const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+const SIGNAL_URL = wsScheme + "://" + location.host + "/ws";
+
+let ws = null;
+let pc = null;
+let viewerId = 0;
+let heartbeatTimer = null;
+let inRoom = false;
+let localCands = [], remoteCands = [], remoteCandDetails = [], eventLog = [];
+
+// 系统音频播放器：Android host 通过 DataChannel("system-audio") 直传
+// 原始 PCM（16bit / 48000Hz / 单声道），这里解码为 AudioBuffer 排队播放
+const AUDIO_SAMPLE_RATE = 48000;
+let audioCtx = null;
+let audioQueue = [];
+let audioFlushTimer = null;
+let audioScheduledUntil = 0;
+let audioDcState = "未收到";
+let audioBytes = 0;
+let audioBlocks = 0;
+let micNode = null;     // 麦克风轨（host 对讲音轨）的 WebAudio 播放节点
+let silentWindows = 0;  // 连续静音窗口数（500ms/个）
+let lastBlockCount = 0;
+let decodeErrCount = 0; // 解码异常日志只记前两次
+let audioPeak = 0;      // 展示中的最近窗口峰值电平（0~1）
+let peakAccum = 0;      // 积累中的块峰值
+let peakTick = 0;
+
+const audInfoEl = () => document.getElementById("audInfo");
+function showAudioInfo() {
+  const el = audInfoEl();
+  if (!el) return;
+  const s = audioCtx ? audioCtx.state : "未初始化";
+  // 一切正常（通道连接+播放器运行+有数据+非静音）时隐藏诊断条
+  const ok = audioDcState === "已连接" && s === "running" &&
+             audioBlocks > 0 && audioPeak > 0.001 && silentWindows < 20;
+  if (ok) { el.style.display = "none"; return; }
+  // 走到这里均为异常状态
+  el.style.display = "";
+  el.className = "aud off";
+  if (silentWindows >= 20) {
+    el.textContent = "收到音频数据但内容静音：当前播放的应用可能禁止了音频采集，请尝试更换播放器或播放来源";
+  } else if (audioDcState === "未收到") {
+    el.textContent = "音频通道: 未建立";
+  } else if (audioBlocks === 0) {
+    el.textContent = "音频通道: " + audioDcState + "（等待数据）";
+  } else if (s === "suspended") {
+    el.textContent = "播放被系统暂停：请点击屏幕任意位置恢复";
+  } else {
+    el.textContent = "音频通道: " + audioDcState +
+      " | 收到 " + audioBlocks + " 块 / " + (audioBytes / 1024).toFixed(0) + "KB" +
+      " | 电平峰值: " + audioPeak.toFixed(3) +
+      " | AudioContext: " + s;
+  }
+}
+
+// iOS 手势恢复：AudioContext 被 suspend 时提示用户点击屏幕，此处绑定恢复逻辑
+stage.addEventListener("click", () => {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+});
+// audioLoop 每 50ms 调一次，10 次约 0.5s 刷新一次峰值窗口
+function decayPeak() {
+  if (++peakTick >= 10) {
+    audioPeak = peakAccum; peakAccum = 0; peakTick = 0;
+    if (audioPeak < 0.001 && audioBlocks > lastBlockCount) {
+      silentWindows++;
+      lastBlockCount = audioBlocks;
+    } else {
+      silentWindows = 0;
+      lastBlockCount = audioBlocks;
+    }
+    showAudioInfo();
+  }
+}
+
+function initAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioScheduledUntil = 0;
+  } catch (e) {
+    logEvent("[audio] AudioContext 创建失败: " + e.message);
+  }
+}
+
+function writePcm(bytes) {
+  if (!audioCtx) initAudio();
+  if (!audioCtx || audioCtx.state === "closed") return;
+  // Blob 防御：正常路径 binaryType="arraybuffer" 得到 ArrayBuffer；异常实现可能是 Blob
+  const size = bytes.byteLength || bytes.size || 0;
+  audioBytes += size;
+  audioBlocks++;
+  try {
+    const samples = size >> 1;
+    if (samples === 0) return;
+    // e.data 是 ArrayBuffer（无 .buffer 属性），TypedArray 情况则取其底层视图
+    const buf = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
+    if (!buf) throw new Error("unsupported: " + (bytes.constructor && bytes.constructor.name));
+    const int16 = new Int16Array(buf, bytes instanceof ArrayBuffer ? 0 : (bytes.byteOffset || 0), samples);
+    const float = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) {
+      const v = int16[i] / 32768;
+      float[i] = v;
+      const a = v < 0 ? -v : v;
+      if (a > peakAccum) peakAccum = a;
+    }
+    // 上限保护：AudioContext 长期 suspended 时防止内存无限增长（250 块 = 5 秒）
+    if (audioQueue.length > 250) audioQueue.shift();
+    audioQueue.push(float);
+  } catch (e) {
+    // 只记前两次，避免异常数据刷屏
+    if (decodeErrCount < 2) { logEvent("[audio] 解码失败: " + e.message); decodeErrCount++; }
+  }
+}
+
+function flushAudio() {
+  if (!audioCtx || audioCtx.state === "closed") return;
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
+  }
+  if (audioQueue.length === 0) return;
+  const now = audioCtx.currentTime;
+  // 积压控制：调度起点超前实时过多（突发积压/页面切后台恢复）时丢弃旧数据追实时，
+  // 防止 audioScheduledUntil 越漂越远导致延迟只增不减
+  if (audioScheduledUntil > now + 0.5) {
+    audioQueue = [];
+    audioScheduledUntil = 0;
+    return;
+  }
+  const buf = audioCtx.createBuffer(1, audioQueue.reduce((n, f) => n + f.length, 0), AUDIO_SAMPLE_RATE);
+  const ch = buf.getChannelData(0);
+  let off = 0;
+  for (const f of audioQueue) { ch.set(f, off); off += f.length; }
+  audioQueue = [];
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  const t = Math.max(now + 0.05, audioScheduledUntil);
+  src.start(t);
+  audioScheduledUntil = t + buf.duration;
+}
+
+function audioLoop() {
+  flushAudio();
+  decayPeak();
+  audioFlushTimer = setTimeout(audioLoop, 50);
+}
+function startAudioLoop() {
+  if (audioFlushTimer) return;
+  initAudio();
+  audioLoop();
+}
+function stopAudioLoop() {
+  if (audioFlushTimer) { clearTimeout(audioFlushTimer); audioFlushTimer = null; }
+  audioQueue = [];
+  audioScheduledUntil = 0;
+}
+
+function candType(c) {
+  return (c || "").includes("typ relay") ? "relay" :
+         (c || "").includes("typ srflx") ? "srflx" :
+         (c || "").includes("typ host") ? "host" : "other";
+}
+function logEvent(s) {
+  eventLog.push(s);
+  if (eventLog.length > 15) eventLog.shift();
+  refreshDiag();
+}
+function refreshDiag() {
+  if (!diagEl) return;
+  diagEl.textContent =
+    "本地候选: " + (localCands.length ? localCands.join("  ") : "无") +
+    "\n远端候选: " + (remoteCands.length ? remoteCands.join("  ") : "无") +
+    "\n" + remoteCandDetails.join("\n") +
+    "\n" + eventLog.join("\n") +
+    (pc ? "\nICE状态: " + (pc.iceConnectionState || "new") + " | 连接: " + (pc.connectionState || "new") : "");
+}
+
+function setStatus(text, isError) {
+  statusEl.textContent = text;
+  statusEl.className = "status" + (isError ? " error" : "");
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function relay(data) {
+  send({ type: "relay", data });
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => send({ type: "ping" }), 10000);
+}
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+}
+
+function connect(code) {
+  setStatus("正在连接信令服务器...");
+  ws = new WebSocket(SIGNAL_URL);
+
+  ws.onopen = () => {
+    startHeartbeat();
+    send({ type: "join", code });
+    setStatus("已提交，等待共享方确认...");
+  };
+
+  ws.onmessage = async (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+    switch (msg.type) {
+      case "joined":
+        viewerId = msg.viewerId;
+        inRoom = true;
+        setStatus("已连接，正在建立画面...");
+        initPeer();
+        break;
+
+      case "join-rejected":
+        setStatus("共享方拒绝了加入请求", true);
+        break;
+
+      case "host-left":
+        setStatus("共享方已离开会议", true);
+        teardown();
+        break;
+
+      case "error":
+        setStatus(msg.message || "发生错误", true);
+        break;
+
+      case "relay":
+        if (pc) handleRelay(msg.data);
+        break;
+
+      case "pong":
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    stopHeartbeat();
+    if (inRoom) {
+      setStatus("连接已断开，请退出重试", true);
+      teardown();
+    } else {
+      setStatus("连接失败或已断开", true);
+    }
+  };
+
+  ws.onerror = () => {
+    setStatus("信令服务器连接异常", true);
+  };
+}
+
+function initPeer() {
+  const cfg = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
+    ],
+  };
+  pc = new RTCPeerConnection(cfg);
+  localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
+  refreshDiag();
+
+  pc.onicecandidate = (ev) => {
+    if (ev.candidate) {
+      const s = ev.candidate.candidate;
+      const t = candType(s);
+      if (!localCands.includes(t)) localCands.push(t);
+      refreshDiag();
+      relay(JSON.stringify({
+        type: "candidate",
+        id: ev.candidate.sdpMid,
+        label: ev.candidate.sdpMLineIndex,
+        candidate: ev.candidate.candidate,
+      }));
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    if ($("connState")) $("connState").textContent = stateText(pc.iceConnectionState);
+    refreshDiag();
+  };
+  pc.onconnectionstatechange = () => {
+    if ($("connState")) $("connState").textContent = stateText(pc.connectionState);
+    if (pc.connectionState === "failed") setStatus("连接失败（可能网络不通）", true);
+    refreshDiag();
+  };
+  pc.onicecandidateerror = (ev) => {
+    logEvent("[ICE错误] " + (ev.errorText || ev.errorCode || "?") + " (" + ev.url + ")");
+  };
+  pc.onicegatheringstatechange = () => {
+    refreshDiag();
+  };
+
+  pc.ontrack = (ev) => {
+    logEvent("[onTrack] kind=" + ev.track.kind + " streams=" + (ev.streams || []).length + " state=" + ev.track.readyState);
+    // 麦克风轨（host 对讲音轨）：用 AudioContext 播放（audioCtx 已在 join 手势中解锁）
+    if (ev.track.kind === "audio") {
+      try {
+        if (!audioCtx) initAudio();
+        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+        if (audioCtx) {
+          // host 重协商会重复触发 audio ontrack，先断开旧节点避免声音叠加
+          if (micNode) { try { micNode.disconnect(); } catch (e) {} }
+          micNode = audioCtx.createMediaStreamSource(new MediaStream([ev.track]));
+          micNode.connect(audioCtx.destination);
+          audioDcState = audioDcState === "未收到" ? "未收到(麦克风轨已接)" : audioDcState;
+          showAudioInfo();
+        }
+      } catch (e) {
+        logEvent("[audio] 麦克风轨接入失败: " + e.message);
+      }
+      return;
+    }
+    // Safari 的 onTrack 常不带 streams（streams=0），需手动用 track 组装 MediaStream
+    let stream = (ev.streams && ev.streams[0]) || null;
+    if (!stream && ev.track.kind === "video") {
+      stream = new MediaStream([ev.track]);
+    }
+    if (stream) {
+      videoEl.srcObject = stream;
+      videoEl.muted = true;   // 视频轨无声（音频走 AudioContext），避免自动播放拦截
+      joinView.style.display = "none";
+      stage.style.display = "block";
+      setStatus("");
+    }
+  };
+
+  pc.onremovetrack = (ev) => {
+    logEvent("[removeTrack] " + ev.track.kind);
+  };
+
+  // 接收系统音频：Android host 通过 DataChannel("system-audio") 发送原始 PCM
+  pc.ondatachannel = (ev) => {
+    const dc = ev.channel;
+    logEvent("[datachannel] " + (dc.label || "?") + " state=" + dc.readyState);
+    if (dc.label === "system-audio") {
+      audioDcState = dc.readyState;
+      dc.onopen = () => { audioDcState = "已连接"; showAudioInfo(); };
+      dc.onclose = () => { audioDcState = "已关闭"; showAudioInfo(); };
+      dc.onerror = (e) => { audioDcState = "错误"; logEvent("[audio] DC错误"); showAudioInfo(); };
+      startAudioLoop();
+      dc.binaryType = "arraybuffer";
+      dc.onmessage = (e) => {
+        writePcm(e.data);
+      };
+      showAudioInfo();
+    }
+  };
+}
+
+function stateText(s) {
+  const map = {
+    "new": "新建连接", "connecting": "连接中...", "connected": "已连接",
+    "disconnected": "连接中断", "failed": "连接失败", "closed": "已关闭",
+  };
+  return map[s] || s;
+}
+
+async function handleRelay(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch (e) { return; }
+
+  const sdp = data.sdp;
+  if (sdp && sdp.type === "offer") {
+    try {
+      await pc.setRemoteDescription({ type: "offer", sdp: sdp.sdp });
+      logEvent("[offer] m-lines: " + (sdp.sdp.match(/^m=/gm) || []).join(" | ") + " | " +
+        (sdp.sdp.match(/a=mid:/g) || []).length + " mids | codecs: " + ((sdp.sdp.match(/a=rtpmap:\d+ (\S+)/g) || []).join(" ")).slice(0, 200));
+      logEvent("[offer] transceivers: " + (pc.getTransceivers ? pc.getTransceivers().map(t => t.receiver.track.kind + "(" + t.receiver.track.readyState + ")").join(",") : "n/a"));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      logEvent("[answer] m-lines: " + (answer.sdp.match(/^m=/gm) || []).join(" | "));
+      // 协议对齐 SignalManager.encodeAnswer：必须带 role 字段，Android 端 decode 依赖它
+      relay(JSON.stringify({
+        role: "join",
+        sdp: { type: "answer", sdp: answer.sdp },
+        ice: [],
+      }));
+    } catch (e) {
+      logEvent("[协商失败] " + e.message);
+      setStatus("协商失败：" + e.message, true);
+    }
+    return;
+  }
+
+  if (data.type === "candidate" && data.candidate) {
+    try {
+      const t = candType(data.candidate);
+      if (!remoteCands.includes(t)) remoteCands.push(t);
+      remoteCandDetails.push("收到 " + t + ": " + data.candidate.split(" ").slice(-2, -1)[0]);
+      if (remoteCandDetails.length > 6) remoteCandDetails.shift();
+      refreshDiag();
+      await pc.addIceCandidate({
+        candidate: data.candidate,
+        sdpMid: data.id,
+        sdpMLineIndex: data.label,
+      });
+    } catch (e) { /* 忽略迟到候选 */ }
+    return;
+  }
+
+  const ice = data.ice;
+  if (Array.isArray(ice)) {
+    for (const c of ice) {
+      if (!c.candidate) continue;
+      try {
+        const t = candType(c.candidate);
+        if (!remoteCands.includes(t)) remoteCands.push(t);
+        refreshDiag();
+        await pc.addIceCandidate({
+          candidate: c.candidate,
+          sdpMid: c.id,
+          sdpMLineIndex: c.label,
+        });
+      } catch (e) { /* 忽略 */ }
+    }
+  }
+}
+
+function teardown() {
+  inRoom = false;
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+  localCands = []; remoteCands = []; remoteCandDetails = []; eventLog = [];
+  if (diagEl) diagEl.textContent = "";
+  stopAudioLoop();
+  audioDcState = "未收到"; audioBytes = 0; audioBlocks = 0;
+  silentWindows = 0; lastBlockCount = 0; decodeErrCount = 0;
+  audioPeak = 0; peakAccum = 0; peakTick = 0;
+  if (micNode) { try { micNode.disconnect(); } catch (e) {} micNode = null; }
+  showAudioInfo();
+  if (audioCtx && audioCtx.state !== "closed") {
+    try { audioCtx.close(); } catch (e) {}
+  }
+  audioCtx = null;
+  stopHeartbeat();
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  videoEl.srcObject = null;
+  stage.style.display = "none";
+  joinView.style.display = "";
+  $("joinBtn").disabled = false;
+  $("codeInput").disabled = false;
+}
+
+$("joinBtn").addEventListener("click", () => {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  const code = $("codeInput").value.trim();
+  if (!/^[0-9]{4}$/.test(code)) {
+    setStatus("会议号需为 4 位数字", true);
+    return;
+  }
+  if (pc) teardown();
+  $("joinBtn").disabled = true;
+  $("codeInput").disabled = true;
+  connect(code);
+});
+
+$("codeInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("joinBtn").click();
+});
+
+$("leaveBtn").addEventListener("click", teardown);
+</script>
+</body>
+</html>

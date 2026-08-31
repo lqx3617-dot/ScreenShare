@@ -27,6 +27,7 @@ class RelayClient(
     companion object {
         private const val TAG = "RelayClient"
         private const val TIMEOUT_MS = 15000L
+        private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         private val client by lazy {
             OkHttpClient.Builder()
                 .pingInterval(10, TimeUnit.SECONDS)
@@ -41,7 +42,7 @@ class RelayClient(
 
     /** 终态自动复位：任何终态（成功/失败/超时/关闭）后允许下次再次发送 */
     private fun finishAndReset() {
-        timeoutRunnable?.let { android.os.Handler(android.os.Looper.getMainLooper()).removeCallbacks(it) }
+        timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         timeoutRunnable = null
         started.set(false)
         replied.set(false)
@@ -106,7 +107,7 @@ class RelayClient(
             finishAndReset()
         }
         timeoutRunnable = runnable
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(runnable, TIMEOUT_MS)
+        mainHandler.postDelayed(runnable, TIMEOUT_MS)
     }
 
     /** 清除上次状态，允许再次发送 */

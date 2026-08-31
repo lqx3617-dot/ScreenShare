@@ -65,7 +65,16 @@ const allClients = new Set();
 
   function remoteIp(obj) {
     if (!obj) return "unknown";
-    return String(obj.remoteAddress || "").replace(/^::ffff:/, "") || "unknown";
+    // 反向代理后优先取 X-Forwarded-For 首段真实客户端 IP，避免所有请求都归到
+    // 代理地址导致多设备共享限流配额（依赖反代覆写 XFF 头，仅内网反代可直连本端口）。
+    const headers = obj._headers || obj.headers;
+    if (headers) {
+      const xff = String(headers["x-forwarded-for"] || "");
+      const first = xff.split(",")[0].trim();
+      if (first) return first.replace(/^::ffff:/, "");
+    }
+    const sock = obj._socket || obj.socket;
+    return String((sock && sock.remoteAddress) || "").replace(/^::ffff:/, "") || "unknown";
   }
 
   function allowAuthAttempt(ip) {
@@ -147,7 +156,7 @@ const server = http.createServer((req, res) => {
   // 房间在线状态查询：客户端 GET /room-status?code=XXXX 判断该会议号是否有 host 在线
   // 用于专属房间卡片显示「对方在线/不在线」，纯查询不建连，不参与房间流程
   if (req.method === "GET" && req.url.startsWith("/room-status")) {
-      if (!allowAuthAttempt(remoteIp(req.socket))) {
+      if (!allowAuthAttempt(remoteIp(req))) {
         res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("too many requests");
         return;
@@ -166,6 +175,22 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ error: "internal" }));
       return;
     }
+  }
+  // 网页观看端：GET / 与 /viewer 返回静态页面（浏览器 WebRTC 观看）
+  if (req.method === "GET" && (req.url === "/" || req.url === "/viewer" || req.url === "/index.html")) {
+    fs.readFile(path.join(__dirname, "public", "index.html"), (err, buf) => {
+      if (err) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("not found");
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(buf);
+    });
+    return;
   }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
   res.end("ScreenShare signaling server is running");
@@ -203,12 +228,13 @@ function normalizeCode(code) {
   return String(code || "").trim().toUpperCase();
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, request) => {
   let roomCode = null;
   let role = null; // "host" | "viewer"
   let viewerId = null;
   ws.lastSeen = Date.now();
   ws._socketId = ws._socket && ws._socket.remotePort;
+  ws._headers = request && request.headers;
   allClients.add(ws);
 
   ws.on("message", (raw) => {
@@ -223,7 +249,7 @@ wss.on("connection", (ws) => {
 
     switch (msg.type) {
       case "create": {
-          if (!allowAuthAttempt(remoteIp(ws._socket))) {
+          if (!allowAuthAttempt(remoteIp(ws))) {
             send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
             return;
           }
@@ -253,7 +279,7 @@ wss.on("connection", (ws) => {
       }
 
       case "join": {
-          if (!allowAuthAttempt(remoteIp(ws._socket))) {
+          if (!allowAuthAttempt(remoteIp(ws))) {
             send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
             return;
           }

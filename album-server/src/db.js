@@ -60,6 +60,9 @@ function loadSession(token) {
 }
 
 function saveSession(s) {
+  // created_at 语义为「最后活跃时间」：每次保存（上传/查看/删除等会话活动）都刷新，
+  // 避免会话创建后仅因固定 24h 到期就被整体清理，导致活跃使用中的照片被误删。
+  s.createdAt = Date.now();
   getDb()
     .prepare(
       "INSERT OR REPLACE INTO sessions(token, created_at, total, done, received, originals, videos, device) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
