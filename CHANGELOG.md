@@ -22,6 +22,7 @@
 
 ## 主 App (ScreenShare)
 
+- **v1.237 (versionCode 240)** — 首页「创建房间」「加入会议」主按钮应用流动光斑效果（自定义 GlowButtonView：黄橙渐变底 + 12 个模糊光斑循环移动，尺寸自适应；与 Web 观看端 CTA 光斑风格统一）
 - **v1.236 (versionCode 239)** — 代码审查修复（WebRTC 资源与音频链路）：①WebRTC 资源释放顺序重排——屏幕共享 VideoSource 存成员引用并在断开时统一释放（此前每次共享泄漏一个 native 源）；摄像头采集改为先停采集再按 capturer→track→source→helper 顺序释放（原顺序会向已释放的 source 推帧崩溃）；麦克风释放改为先 track 后 source（track 持有 native AudioSource 引用，反序悬空）；②系统音频播放移出信令线程——DataChannel 收到 PCM 后原来直接在信令线程阻塞式写入 AudioTrack（40ms 缓冲写满即冻结整个 WebRTC 链路），改为有界队列 + 专用消费线程，队列满丢最旧帧追实时
 - **v1.235 (versionCode 238)** — 低端机录屏流畅度优化（合并 fix/rate-limit 有效部分）：①低端设备（isLowRamDevice 或 largeMemoryClass≤256MB）开局直接 720p 采集，避免硬冲 1080p 硬编导致卡顿，后续仍可自适应降档；②观看端关键帧请求改为每连接仅一次，避免 ICE 抖动时反复触发采集格式切换、重启采集器打断帧流
 - **v1.234 (versionCode 237)** — 回退 v1.233 的「设备自适应采集分辨率」降档增强：低端机上实测画面反而更卡顿（编码瓶颈时持续降档到 480p 会反复触发采集格式切换，负反馈循环加剧掉帧）。恢复为只降到 720p 的稳定策略，保持 v1.230 的流畅表现
