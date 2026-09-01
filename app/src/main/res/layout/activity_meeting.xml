@@ -33,16 +33,11 @@
                 android:elevation="6dp"
                 android:background="@drawable/bg_glass">
 
-                <Button
+                <com.screenshare.GlowButtonView
                     android:id="@+id/btnCreateRoom"
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
-                android:text="创建房间"
-                android:textSize="16sp"
-                android:textAllCaps="false"
-                android:textStyle="bold"
-                android:background="@drawable/bg_btn_neon_cyan"
-                android:textColor="#FFFFFFFF" />
+                    android:contentDescription="创建房间" />
 
                 <View
                     android:layout_width="match_parent"
@@ -77,17 +72,12 @@
                     android:imeOptions="actionDone"
                     android:importantForAutofill="no" />
 
-                <Button
+                <com.screenshare.GlowButtonView
                     android:id="@+id/btnJoinMeeting"
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
                     android:layout_marginTop="14dp"
-                android:text="加入会议"
-                android:textSize="16sp"
-                android:textAllCaps="false"
-                android:textStyle="bold"
-                android:background="@drawable/bg_btn_neon_violet"
-                android:textColor="#FFFFFFFF" />
+                    android:contentDescription="加入会议" />
             </LinearLayout>
 
             <!-- 专属房间（情侣快捷入口：固定房间号，一键进入） -->
