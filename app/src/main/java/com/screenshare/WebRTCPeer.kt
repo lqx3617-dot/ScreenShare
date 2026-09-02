@@ -1608,7 +1608,16 @@ class WebRTCPeer(
                                     // 接收方经 RTCP 回报的丢包：packetsLost 累计值 + fractionLost 比例
                                     outLost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
                                     val frac = (s.members["fractionLost"] as? Number)?.toDouble()
-                                    if (frac != null && frac >= 0) outLossPct = frac * 100.0
+                                    if (frac != null && frac >= 0) {
+                                        // fractionLost 语义修正：本 SDK 上报的是 RTCP 8bit 原始字节
+                                        //（0~255，每单位≈1/256），而 W3C 规范为 0~1 比例。此前直接
+                                        // ×100 会把 ~1% 的轻微丢包误判成 285.7% 重度丢包，触发弱网
+                                        // 自适应把码率一路压死（实测老设备 WiFi 轻微丢包→画面又糊又卡、
+                                        // 延迟越积越远）。>1 时按字节值换算回真实比例再取百分数，并夹紧
+                                        // 到 0~100 兜底防脏值。
+                                        val ratio = if (frac <= 1.0) frac else frac / 256.0
+                                        outLossPct = (ratio * 100.0).coerceIn(0.0, 100.0)
+                                    }
                                 }
                                 "candidate-pair" -> {
                                     val members = s.members
