@@ -22,6 +22,7 @@
 
 ## 主 App (ScreenShare)
 
+- **v1.238 (versionCode 241)** — WebRTC 线程安全加固（代码审查高危项集中修复）：①多 viewer 连接表改并发安全结构（ICE 回调线程与主线程并发读写不再丢数据）；②viewer 断线重建时连接释放移到主线程执行（原在 ICE 回调线程内释放正在回调的连接，存在底层崩溃风险）；③控制通道指令统一投递主线程处理（此前直接在回调线程操作界面/无障碍服务）；④摄像头小窗画面回调中界面更新切主线程；⑤光斑按钮在页面不可见时自动暂停动画（省电）
 - **v1.237 (versionCode 240)** — 首页「创建房间」「加入会议」主按钮应用流动光斑效果（自定义 GlowButtonView：黄橙渐变底 + 12 个模糊光斑循环移动，尺寸自适应；与 Web 观看端 CTA 光斑风格统一）
 - **v1.236 (versionCode 239)** — 代码审查修复（WebRTC 资源与音频链路）：①WebRTC 资源释放顺序重排——屏幕共享 VideoSource 存成员引用并在断开时统一释放（此前每次共享泄漏一个 native 源）；摄像头采集改为先停采集再按 capturer→track→source→helper 顺序释放（原顺序会向已释放的 source 推帧崩溃）；麦克风释放改为先 track 后 source（track 持有 native AudioSource 引用，反序悬空）；②系统音频播放移出信令线程——DataChannel 收到 PCM 后原来直接在信令线程阻塞式写入 AudioTrack（40ms 缓冲写满即冻结整个 WebRTC 链路），改为有界队列 + 专用消费线程，队列满丢最旧帧追实时
 - **v1.235 (versionCode 238)** — 低端机录屏流畅度优化（合并 fix/rate-limit 有效部分）：①低端设备（isLowRamDevice 或 largeMemoryClass≤256MB）开局直接 720p 采集，避免硬冲 1080p 硬编导致卡顿，后续仍可自适应降档；②观看端关键帧请求改为每连接仅一次，避免 ICE 抖动时反复触发采集格式切换、重启采集器打断帧流
