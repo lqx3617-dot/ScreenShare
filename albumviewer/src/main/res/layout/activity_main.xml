@@ -53,16 +53,12 @@
             android:singleLine="true"
             android:textSize="14sp" />
 
-        <Button
+        <com.screenshare.albumviewer.GlowButtonView
             android:id="@+id/btn_open"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="56dp"
             android:layout_marginTop="16dp"
-            android:backgroundTint="@color/neon_cyan"
-            android:text="打开相册"
-            android:textColor="@color/bg_dark"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:contentDescription="打开相册" />
 
         <TextView
             android:id="@+id/tv_device_tip"
@@ -90,16 +86,12 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
-        <Button
+        <com.screenshare.albumviewer.GlowButtonView
             android:id="@+id/btn_connect_device"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="56dp"
             android:layout_marginTop="8dp"
-            android:backgroundTint="@color/neon_violet"
-            android:text="连接设备 · 触发同步"
-            android:textColor="@color/bg_dark"
-            android:textSize="16sp"
-            android:textStyle="bold" />
+            android:contentDescription="连接设备触发同步" />
 
         <TextView
             android:id="@+id/tv_connect_status"
