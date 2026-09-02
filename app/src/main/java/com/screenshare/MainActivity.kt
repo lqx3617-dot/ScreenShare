@@ -2757,7 +2757,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             cameraPipSink = VideoSink { frame ->
                 cameraPipLastFrameAt = SystemClock.elapsedRealtime()
-                binding.tvCameraPipHint.visibility = View.GONE
+                // VideoSink 在 WebRTC 渲染线程回调，UI 操作必须切主线程；
+                // 仅在提示仍可见时投递（正常播放中每帧回调，避免每帧 30 次无效 post）
+                if (binding.tvCameraPipHint.visibility == View.VISIBLE) {
+                    runOnUiThread { binding.tvCameraPipHint.visibility = View.GONE }
+                }
                 renderer.onFrame(frame)
             }
             track.addSink(cameraPipSink!!)

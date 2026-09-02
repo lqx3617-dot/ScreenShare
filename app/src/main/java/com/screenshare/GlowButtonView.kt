@@ -83,12 +83,22 @@ class GlowButtonView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        animator.start()
+        if (windowVisibility == VISIBLE) animator.start()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         animator.cancel()
+    }
+
+    /** 页面不可见（息屏/被遮挡/切后台）时暂停光斑动画，回前台恢复，避免白耗电 */
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == VISIBLE) {
+            if (isAttachedToWindow && !animator.isRunning) animator.start()
+        } else {
+            animator.cancel()
+        }
     }
 
     fun setLabel(text: String) {

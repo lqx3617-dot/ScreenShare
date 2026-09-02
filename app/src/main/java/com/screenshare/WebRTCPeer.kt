@@ -3,8 +3,11 @@ package com.screenshare
 import android.app.ActivityManager
 import android.content.Context
 import android.media.projection.MediaProjection
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -170,9 +173,13 @@ class WebRTCPeer(
         // 避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态场景尤其致命）。
         var keyFrameRequested: Boolean = false
     )
-    private val viewerConnections = mutableMapOf<Int, ViewerConnection>()
-    // viewer 断线重建计数（防持续弱网下无限重建）与上限
-    private val viewerRestartCounts = mutableMapOf<Int, Int>()
+    private val viewerConnections = ConcurrentHashMap<Int, ViewerConnection>()
+    // viewer 断线重建计数（防持续弱网下无限重建）与上限。
+    // ICE/观察者回调在 WebRTC native 线程执行，重建/移除会被该线程触发，需并发安全。
+    private val viewerRestartCounts = ConcurrentHashMap<Int, Int>()
+    // 主线程 Handler：WebRTC 回调线程内触发的 PC close/dispose 与控制消息处理
+    // 统一收敛到主线程，避免在回调线程释放正在回调的 native 对象导致 use-after-free 崩溃
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val viewerMaxRestarts = 5
     // 编码负载自适应（v1.120）：开视频软件等动态画面时硬编跟不上，主动降采集分辨率保帧率。
     // 与弱网档位(curAdaptLevel)独立，最终采集档位取两者的较大值
@@ -562,7 +569,7 @@ class WebRTCPeer(
                     if (!buffer.binary) {
                         val data = ByteArray(buffer.data.remaining())
                         buffer.data.get(data)
-                        controlListener?.invoke(String(data))
+                        dispatchControlMessage(String(data))
                     }
                 }
             })
@@ -695,18 +702,23 @@ class WebRTCPeer(
         }
     }
 
-    /** 移除指定 viewer 连接（host 端，viewer 离开时调用） */
+    /** 移除指定 viewer 连接（host 端，viewer 离开时调用）。
+     * map 移除同步执行（保证后续 createViewerConnection 立即可重建同 viewerId），
+     * PC close/dispose 延迟到主线程——本方法可能由 ICE 回调线程触发（restartViewer/FAILED），
+     * 在回调线程内释放正在回调的 PC 会 use-after-free 崩溃。 */
     fun removeViewer(viewerId: Int) {
         val conn = viewerConnections.remove(viewerId) ?: return
         pendingViewerCandidates.remove(viewerId)
         viewerRestartCounts.remove(viewerId)
-        try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
-        try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
-        try {
-            conn.pc.close()
-            conn.pc.dispose()
-        } catch (t: Throwable) { Log.w(TAG, "viewer#$viewerId 清理失败: ${t.message}") }
-        AppLogger.webrtc("viewer#$viewerId removed")
+        mainHandler.post {
+            try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
+            try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
+            try {
+                conn.pc.close()
+                conn.pc.dispose()
+            } catch (t: Throwable) { Log.w(TAG, "viewer#$viewerId 清理失败: ${t.message}") }
+        }
+        AppLogger.webrtc("viewer#$viewerId removed (dispose on main)")
     }
 
     /** 该 viewer 断线重连（ICE restart 简化版：直接重建连接，host 端）。
@@ -763,7 +775,7 @@ class WebRTCPeer(
                             try {
                                 val data = ByteArray(buffer.data.remaining())
                                 buffer.data.get(data)
-                                controlListener?.invoke(String(data))
+                                dispatchControlMessage(String(data))
                             } catch (t: Throwable) {
                                 Log.w(TAG, "viewer#$viewerId 控制指令处理异常: ${t.message}")
                             }
@@ -1176,6 +1188,19 @@ class WebRTCPeer(
         controlListener = listener
     }
 
+    /** 控制消息统一投递主线程处理。
+     * DataChannel onMessage 在 WebRTC native 线程回调，监听方（MainActivity）会操作
+     * UI/无障碍服务/媒体控制，跨线程直接调用会崩溃或产生竞态。 */
+    private fun dispatchControlMessage(msg: String) {
+        mainHandler.post {
+            try {
+                controlListener?.invoke(msg)
+            } catch (t: Throwable) {
+                Log.w(TAG, "控制指令处理异常: ${t.message}")
+            }
+        }
+    }
+
     private fun registerControlObserver(dc: DataChannel) {
         dc.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
@@ -1187,9 +1212,8 @@ class WebRTCPeer(
                     try {
                         val data = ByteArray(buffer.data.remaining())
                         buffer.data.get(data)
-                        val msg = String(data)
-                        Log.d(TAG, "收到控制指令: $msg")
-                        controlListener?.invoke(msg)
+                        Log.d(TAG, "收到控制指令: ${String(data)}")
+                        dispatchControlMessage(String(data))
                     } catch (t: Throwable) {
                         Log.w(TAG, "控制指令处理异常: ${t.message}")
                     }
@@ -2037,13 +2061,8 @@ class WebRTCPeer(
         resetAdaptiveState()
         restartInFlight = false
         reconnectCount = 0
-        // V4: 清理所有 viewer 连接
-        viewerConnections.values.forEach { conn ->
-            try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
-            try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
-            try { conn.pc.close(); conn.pc.dispose() } catch (_: Throwable) {}
-        }
-        viewerConnections.clear()
+        // V4: 清理所有 viewer 连接（PC 释放统一 post 主线程，见 removeViewer 注释）
+        viewerConnections.keys.toList().forEach { removeViewer(it) }
         pendingViewerCandidates.clear()
         // 屏幕采集：按 stopCapture→capturer→track→source→helper 顺序统一释放
         releaseScreenCapture()
