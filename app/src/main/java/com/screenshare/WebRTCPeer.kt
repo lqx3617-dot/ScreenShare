@@ -190,6 +190,9 @@ class WebRTCPeer(
     // 解决共享方出向统计看不到的"接收端解码/渲染瓶颈"与"帧到达过晚被丢"两类掉帧。
     @Volatile private var viewerStallActive = false
     private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
+    // 编码帧率统计缺失连续采样计数（v1.240）：部分机型 outbound-rtp.framesPerSecond 恒不上报，
+    // 恢复判定无法依赖帧率证据，改用"连续无瓶颈证据"缓慢恢复，防止统计缺失永久锁死降档
+    private var encNoStatSamples = 0
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -1754,6 +1757,8 @@ class WebRTCPeer(
      * - 编码帧率恢复 >= 目标*0.85 持续若干次且观看端未反馈掉帧：回 MAINTAIN_RESOLUTION + 回升 1080p
      * v1.223 提速：触发采样 3→2 次（4.5s→3s）、阈值 0.70→0.78，动态画面更早介入少掉帧；
      * 恢复采样 3→4 次，降得快回得慢防来回震荡。
+     * v1.240: outFps 统计缺失不再直接跳过——cpu 瓶颈/观看端掉帧反馈仍可介入降档；
+     * 恢复路径增加"统计缺失但连续无瓶颈证据"的缓慢回升，防止永久锁死降档。
      * 由 MainActivity 统计线程周期调用（约 1.5s 一次）。
      *
      * @param encodedFps 实际编码帧率（outFps），0 表示暂无统计
@@ -1762,13 +1767,22 @@ class WebRTCPeer(
     fun adaptToEncoderLoad(encodedFps: Int, qualityLimit: String) {
         val pc = peerConnection ?: return
         if (disposed) return
-        if (encodedFps <= 0) return
         val target = captureFps
         if (target <= 0) return
         val cpuBottleneck = qualityLimit == "cpu"
+        // v1.240: outFps 统计缺失（部分机型 framesPerSecond 恒为 0）时原逻辑直接 return，
+        // 编码瓶颈保护完全失效。改为：仅未降档且无任何瓶颈证据时跳过（避免无据误降）；
+        // 已降档时不跳过，让下方恢复判定能走"连续无瓶颈证据缓慢回升"路径，防止永久锁死
+        if (encodedFps <= 0) {
+            if (encNoStatSamples < Int.MAX_VALUE) encNoStatSamples++
+            if (!cpuBottleneck && !viewerStallActive && !encLoadDown) return
+        } else {
+            encNoStatSamples = 0
+        }
         // 观看端反馈掉帧期间视为持续卡顿（抑制恢复），由观看端解除反馈后走常规回升采样
         val isEncLag = viewerStallActive || cpuBottleneck || encodedFps < target * 0.78
-        val isEncOk = !viewerStallActive && !cpuBottleneck && encodedFps >= target * 0.85
+        val isEncOk = !viewerStallActive && !cpuBottleneck &&
+            (encodedFps >= target * 0.85 || (encodedFps <= 0 && encNoStatSamples >= 8))
         if (!encLoadDown) {
             // 未降质：持续卡帧/CPU瓶颈触发降质（2 次采样约 3s）
             if (isEncLag) {
@@ -1917,8 +1931,12 @@ class WebRTCPeer(
         var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
         if (fractionLossPct < 0 && lastOutSentCum > 0) {
             val dSent = outSentCum - lastOutSentCum
-            val dLost = outLostCum - lastOutLostCum
-            if (dSent > 0) sendLossPct = dLost * 100.0 / dSent
+            if (dSent > 0) {
+                // v1.240: 增量兜底防脏值——统计重置/连接重建窗口 lost 倒退 clamp 到 0，
+                // 跨窗口重叠导致的超量丢包 clamp 到 dSent（丢包率上限 100%）
+                val dLost = (outLostCum - lastOutLostCum).coerceIn(0L, dSent)
+                sendLossPct = dLost * 100.0 / dSent
+            }
         }
         lastOutSentCum = outSentCum
         lastOutLostCum = outLostCum
@@ -1929,9 +1947,12 @@ class WebRTCPeer(
             sendLossPct >= 1.5 -> 1
             else -> 0
         }
-        // RTT 档位（异地/TURN 中继场景）：RTT 高即使丢包低也可能排队延迟，主动限制码率上限，
-        // 避免拥塞控制在高 RTT 下收敛慢、码率估计偏高导致画面积压卡顿
+        // RTT 档位（异地/TURN 中继/蜂窝共享场景）：RTT 高即使丢包低也可能排队延迟，主动限制码率上限，
+        // 避免拥塞控制在高 RTT 下收敛慢、码率估计偏高导致画面积压卡顿。
+        // v1.240: 新增 >=600ms 深降档（3=480p@24）——蜂窝上行链路 6M 码率仍偏重，
+        // 深降档保连续性；档位恢复走 6s/档回升路径
         val rttLevel = when {
+            rttMs >= 600 -> 3
             rttMs >= 350 -> 2
             rttMs >= 200 -> 1
             else -> 0
@@ -1942,9 +1963,11 @@ class WebRTCPeer(
             curAdaptLevel = level
             recoverTimer = 0
         } else if (level < curAdaptLevel) {
-            // 网络好转：计数满 8 次（约 12s）才回升一档，避免抖动
+            // 网络好转：连续 4 次（约 6s）回升一档，避免抖动。
+            // v1.240 由 8 次（12s）提速——蜂窝/跨网场景从最高档回满约 24s（原 48s），
+            // 弱网缓解后画质恢复更及时；6s 窗口仍足以滤除蜂窝 RTT 瞬时波动
             recoverTimer++
-            if (recoverTimer >= 8) {
+            if (recoverTimer >= 4) {
                 curAdaptLevel--
                 recoverTimer = 0
             }
@@ -2058,6 +2081,7 @@ class WebRTCPeer(
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0
+        encNoStatSamples = 0
         viewerStallActive = false
         lastCaptureFps = 30
         lastCameraBitrateCap = 0
