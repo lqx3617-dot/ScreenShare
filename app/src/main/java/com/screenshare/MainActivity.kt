@@ -158,6 +158,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 弱网/编码负载自适应线程：与全屏状态无关，连接建立即运行（修复"非全屏打开视频软件卡顿"）
     private var adaptiveThread: android.os.HandlerThread? = null
     private var adaptiveHandler: android.os.Handler? = null
+    // v1.241: 实际发送码率差分基准（供带宽匹配档位判定链路可用带宽）
+    private var lastAdaptOutBytes = 0L
+    private var lastAdaptOutMs = 0L
     private var adaptiveRunnable: Runnable? = null
     // 诊断上报去重签名（值变化才重报）
     @Volatile private var lastDiagSig = ""
@@ -1864,6 +1867,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // 观看端掉帧反馈：持续掉帧→立即降档（保帧率+降分辨率），恢复→允许回升评估
                         val active = obj.optInt("value", 0) == 1
                         p.setViewerStall(active)
+                        // v1.242: 诊断上报观看端掉帧反馈（远程排障：区分链路差/编码慢/接收端瓶颈）
+                        reportDiagnostic("viewer-stall=${if (active) "on" else "off"}")
                     }
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
@@ -2757,7 +2762,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             cameraPipSink = VideoSink { frame ->
                 cameraPipLastFrameAt = SystemClock.elapsedRealtime()
-                binding.tvCameraPipHint.visibility = View.GONE
+                // VideoSink 在 WebRTC 渲染线程回调，UI 操作必须切主线程；
+                // 仅在提示仍可见时投递（正常播放中每帧回调，避免每帧 30 次无效 post）
+                if (binding.tvCameraPipHint.visibility == View.VISIBLE) {
+                    runOnUiThread { binding.tvCameraPipHint.visibility = View.GONE }
+                }
                 renderer.onFrame(frame)
             }
             track.addSink(cameraPipSink!!)
@@ -3468,6 +3477,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         stopAdaptiveLoop()
         lastLostTotal = 0L
         lastLost = 0L
+        lastAdaptOutBytes = 0L
+        lastAdaptOutMs = 0L
         val thread = android.os.HandlerThread("adaptive-worker")
         thread.start()
         adaptiveThread = thread
@@ -3487,10 +3498,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             val rttMs = json.optInt("rtt", 0)
                             val outFps = json.optInt("outFps", 0)
                             val qualityLimit = json.optString("qualityLimit", "")
+                            // v1.241: 实际发送码率（拥塞控制收敛后的真实链路带宽），
+                            // 供弱网自适应把采集档位压到与蜂窝等受限链路匹配，保帧率优先
+                            val outBytes = json.optLong("outBytes", 0)
+                            val nowMs = System.currentTimeMillis()
+                            val actualBps = if (lastAdaptOutBytes > 0 && outBytes > lastAdaptOutBytes && lastAdaptOutMs > 0) {
+                                ((outBytes - lastAdaptOutBytes) * 8000.0 / (nowMs - lastAdaptOutMs)).toInt()
+                            } else 0
+                            if (outBytes > 0) {
+                                lastAdaptOutBytes = outBytes
+                                lastAdaptOutMs = nowMs
+                            }
                             if (vid > 0) {
-                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs)
+                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs, actualBps)
                             } else {
-                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs)
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs, actualBps)
                             }
                             peer?.adaptToEncoderLoad(outFps, qualityLimit)
                         }

@@ -105,9 +105,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<View>(R.id.btn_open).setOnClickListener { openInput() }
+        findViewById<GlowButtonView>(R.id.btn_open).apply {
+            setLabel("打开相册")
+            setOnClickListener { openInput() }
+        }
 
-        findViewById<View>(R.id.btn_connect_device).setOnClickListener { connectDevice() }
+        findViewById<GlowButtonView>(R.id.btn_connect_device).apply {
+            setLabel("连接设备 · 触发同步")
+            setOnClickListener { connectDevice() }
+        }
 
         findViewById<View>(R.id.btn_check_update).setOnClickListener { UpdateChecker.check(this, manual = true) }
         findViewById<View>(R.id.btn_check_update_album).setOnClickListener { UpdateChecker.check(this, manual = true) }
