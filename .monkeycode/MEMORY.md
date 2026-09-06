@@ -532,3 +532,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - **token 三处一致才通**：local.properties 的 screenshare.diag.token（编译进 BuildConfig.DIAG_TOKEN）= 服务器 supervise 启动参数 DIAG_TOKEN（/tmp/opencode/supervise-server.sh）。服务器另有 DIAG_TOKEN_OLD 过渡接受旧值。2026-09-06 发现 App 端 token 与服务器新旧值都不匹配导致全部 403（diag.log 为空根因），v1.242(245) 已同步修复；环境重置或轮换 token 后需重新比对三处。
   - 排障时先 curl 本地模拟：`curl -X POST -H "x-diag-token: <token>" --data test http://127.0.0.1:8095/diag`，落盘即链路通；diag.log 为空先查 token 匹配再查 App 触发条件（host 全屏 + 软编/cpu瓶颈/丢包≥3%/RTT≥500ms + 值变化去重）。
   - 服务器侧实时排障数据源：/tmp/server-8095.log（信令会话+SDP 候选，可看出 host 是蜂窝还是 WiFi）、relay 日志（term_1787248810013_3.log，在线设备表 RMX3350 真我/OPD2511 一加平板/V2361A vivo）、supervise-daemon.log（重启历史）。
+
+## v1.243 发版与服务器限流加固（2026-09-06）
+[Project Knowledge Summary]
+- Date: 2026-09-06
+- Context: Discovered by Agent while 手工采纳 origin/fix/rate-limit（f789c34）有效改动发版 v1.243
+- Category: Workflow & Collaboration
+- Instructions:
+  - v1.243(246) 产物：allarch md5=1531ddaa91623d785cebd34157d93d12（24.6MB）、arm64 md5=110bf724e48e418856d498bbae9e1b1a（17.8MB）；AlbumViewer 未改动不重打。commit c8b2ce0 已推送。WebRTCPeer 改动=viewer 初始码率 12M→9M/1M→600k(setBitrate 0.6/3.5/9M)+adaptBitrateCaps 整体下移 {9,6,4,2.8,1.8,1.2,0.8M}+严重掉帧(<60%目标)/cpu/观看端反馈立即降档+自适应 setBitrate 下限 min(500k,cap)；主连接初始带宽保持 12M 不动（分支也只改 viewer 连接）。
+  - server.js 采纳分支安全改动：AUTH 限流 30→20 次/分、pls-join「喊TA」单独限流 6 次/分（plsJoinAttempts Map）、XFF 信任改 TRUST_PROXY=1 显式开关。**REQUIRE_TOKEN 保持默认关**（分支默认强制 token 是破坏性变更：App SignalClient 与 Web index.html 的 join 均不带 token，直接合并全线「加入口令无效」）；pls-join 清理的嵌套 bug 已改为平行 for 清理。
+  - **supervise-server.sh 是启动时一次性读入内存的 while 循环，改脚本后不重启 supervise 守护进程不生效**：改 8095 行加 TRUST_PROXY=1 后必须 background_terminal_kill 旧 supervise 终端 + 新建 supervise 终端，且先 kill 当前 8095 进程让新 supervise 用新参数拉起（否则端口活着不会重启，进程仍是旧 env/旧代码）。验证：`tr '\0' '\n' < /proc/<pid>/environ | rg TRUST_PROXY`。
+  - 限流冒烟测试（node -e + ws）：host create 后另一连接 join 拿 viewer 角色（join-pending 即已 role=viewer），连发 8 次 pls-join → host 收 come-on 6 次、第 7 次起 viewer 收「提醒过于频繁」即限流生效；host 角色发 pls-join 会被「共享方无需发起提醒」先拦截，测不到限流。
+  - 分支合并策略沉淀：分支相对 main 的净改动只有 WebRTCPeer 参数 + server.js 安全项，其余（GlowButtonView→Button 布局回退、CHANGELOG/版本号倒退、index.html 删 playoutDelayHint）是作者基线落后的脏改动，合并时保留 main，不做 git merge 直接手工采纳。版本号/CHANGELOG 由本次版本覆盖。
+  - 下载服务器 8090 version.json 基于 APK mtime 自动重算（versionCode/versionName/md5），无需重启；但 release-config.json 的 changelog 字段只在启动与 publish 接口时 loadConfig，v1.236 起 git 手工发版均未再更新该文件（version.json changelog 停留在 v1.235 文案），如需要可改文件+重启 8090（supervise 会自动拉起）。
