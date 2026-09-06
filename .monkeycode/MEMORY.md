@@ -521,3 +521,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - 分支改动同时涉及相册 App（MainActivity/RelayClient/UpdateChecker），相册 App 需同步递增重打（16→17/1.195）。
   - v1.229(232) 产物：allarch md5=3c2ec23de79ae1c868500d34bf51600d（24.6MB）、arm64 md5=7a48772bec2c5cf63e043f4fa3683e0b（17MB）；AlbumViewer v1.195(17) md5=aa08b0dea34a465cbeff413e9997580f（2.4MB）。commit d97e0d7(merge)+04267e6(fix) 已推送。
   - CHANGELOG 冲突解决模式：HEAD 保留已有版本条目，分支的「未发布」条目改写为本次新版本号后合并进主 App 区块顶部。
+
+## 诊断上报链路排障要点（2026-09-06）
+[Project Knowledge Summary]
+- Date: 2026-09-06
+- Context: Discovered by Agent while 排查真机共享卡顿（fractionLost 修复与蜂窝弱网优化发版期间 diag.log 始终为空）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 诊断上报链路：App 端 reportDiagnostic()/crash handler 经 OkHttp POST 到信令服务器 /diag、/crash，header x-diag-token，服务器落盘 /workspace/server/diag/diag.log 与 crash/ 目录（crash 在 crashes/）。
+  - **token 三处一致才通**：local.properties 的 screenshare.diag.token（编译进 BuildConfig.DIAG_TOKEN）= 服务器 supervise 启动参数 DIAG_TOKEN（/tmp/opencode/supervise-server.sh）。服务器另有 DIAG_TOKEN_OLD 过渡接受旧值。2026-09-06 发现 App 端 token 与服务器新旧值都不匹配导致全部 403（diag.log 为空根因），v1.242(245) 已同步修复；环境重置或轮换 token 后需重新比对三处。
+  - 排障时先 curl 本地模拟：`curl -X POST -H "x-diag-token: <token>" --data test http://127.0.0.1:8095/diag`，落盘即链路通；diag.log 为空先查 token 匹配再查 App 触发条件（host 全屏 + 软编/cpu瓶颈/丢包≥3%/RTT≥500ms + 值变化去重）。
+  - 服务器侧实时排障数据源：/tmp/server-8095.log（信令会话+SDP 候选，可看出 host 是蜂窝还是 WiFi）、relay 日志（term_1787248810013_3.log，在线设备表 RMX3350 真我/OPD2511 一加平板/V2361A vivo）、supervise-daemon.log（重启历史）。
