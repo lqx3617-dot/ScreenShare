@@ -595,6 +595,13 @@ function initPeer() {
       stream = new MediaStream([ev.track]);
     }
     if (stream) {
+      // v1.242: 压低浏览器 jitter buffer——蜂窝/高 RTT 链路下浏览器默认缓冲可达 1~2s，
+      // 观看延迟越积越远；0.2s 平衡流畅与延迟（抖动大时缓冲自适应兜底）。
+      // playoutDelayHint 为尽力而为 API，不支持的浏览器（Safari/Firefox）静默忽略
+      try {
+        const rx = ev.receiver || (pc.getReceivers ? pc.getReceivers().find(r => r.track === ev.track) : null);
+        if (rx && typeof rx.playoutDelayHint === "number") rx.playoutDelayHint = 0.2;
+      } catch (e) {}
       videoEl.srcObject = stream;
       videoEl.muted = true;   // 视频轨无声（音频走 AudioContext），避免自动播放拦截
       joinView.style.display = "none";

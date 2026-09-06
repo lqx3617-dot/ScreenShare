@@ -1867,6 +1867,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // 观看端掉帧反馈：持续掉帧→立即降档（保帧率+降分辨率），恢复→允许回升评估
                         val active = obj.optInt("value", 0) == 1
                         p.setViewerStall(active)
+                        // v1.242: 诊断上报观看端掉帧反馈（远程排障：区分链路差/编码慢/接收端瓶颈）
+                        reportDiagnostic("viewer-stall=${if (active) "on" else "off"}")
                     }
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
