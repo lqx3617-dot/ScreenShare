@@ -558,3 +558,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - 视频上传取消语义：uploadVideoWithProgress 无 cancel 参数（保持签名），取消在视频边界生效（循环开头 break → 循环后 throw 已取消 → catch bestEffortFinish）。
   - 构建脚本模板已复制为 /tmp/opencode/build_v1244.sh（对齐临时文件名 align_*_247.apk），后续 v1.245 复制改版本号即可。
   - 真机待验证：视频条目可播放、转码期间共享不卡、取消及时停止。
+
+## v1.199 相册App重构（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户要求「重构相册app把链接还有链接码删了」，经询问确认链接码与设备码入口全部删除
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.199(21) 产物：AlbumViewer-signed.apk md5=f4e8d48d469d9bb7fa686e504f19b168（2.4MB）；commit be1c8dd 已推送。
+  - 重构内容：删除首页链接粘贴/32位链接码输入框（et_link+btn_open）与连接设备（8位设备码）触发同步入口（et_device_code+btn_connect_device）；删除 openInput/openAlbum/showInputView/openDeviceAlbum/connectDevice/onRelayAck/showConnectStatus/refreshStatus 及 RelayClient 中继、currentToken/albumStatus/viewingDevice 字段；启动直接 loadAggregatedAlbum()（聚合相册，5s 轮询刷新）；清理 AlbumApi 死代码 getStatus/getAlbumsByDevice/getDevices/AlbumStatus/AlbumDevice。
+  - 布局调整：activity_main.xml 精简为仅 include layout_album；tv_title（三连击发版面板入口）移至 layout_album 顶栏替代 btn_back；btn_check_update（输入页）删除保留 btn_check_update_album。
+  - 注意：RelayClient.kt 与 GlowButtonView.kt 已成死代码但文件保留（遵循 no-delete 规则未删文件）；GlowButtonView 仅被已删按钮使用。如后续清理可直接删除这两个文件。
+  - AlbumViewer 签名与主 App 同 key（/workspace/signing/release.keystore pass:screenshare123），产物覆盖根目录 AlbumViewer-signed.apk；albumviewer 模块是独立 include，构建命令 ./gradlew :albumviewer:assembleRelease。
