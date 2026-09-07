@@ -1555,7 +1555,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
                 runOnUiThread {
-                    val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片" else "相册上传失败: $msg"
+                    val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片或视频" else "相册上传失败: $msg"
                     p?.sendControl("""{"type":"album-result","error":"$err"}""")
                 }
             }
