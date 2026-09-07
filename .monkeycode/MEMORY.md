@@ -544,4 +544,17 @@ Entries discovered by the Agent during task execution should follow this format:
   - **supervise-server.sh 是启动时一次性读入内存的 while 循环，改脚本后不重启 supervise 守护进程不生效**：改 8095 行加 TRUST_PROXY=1 后必须 background_terminal_kill 旧 supervise 终端 + 新建 supervise 终端，且先 kill 当前 8095 进程让新 supervise 用新参数拉起（否则端口活着不会重启，进程仍是旧 env/旧代码）。验证：`tr '\0' '\n' < /proc/<pid>/environ | rg TRUST_PROXY`。
   - 限流冒烟测试（node -e + ws）：host create 后另一连接 join 拿 viewer 角色（join-pending 即已 role=viewer），连发 8 次 pls-join → host 收 come-on 6 次、第 7 次起 viewer 收「提醒过于频繁」即限流生效；host 角色发 pls-join 会被「共享方无需发起提醒」先拦截，测不到限流。
   - 分支合并策略沉淀：分支相对 main 的净改动只有 WebRTCPeer 参数 + server.js 安全项，其余（GlowButtonView→Button 布局回退、CHANGELOG/版本号倒退、index.html 删 playoutDelayHint）是作者基线落后的脏改动，合并时保留 main，不做 git merge 直接手工采纳。版本号/CHANGELOG 由本次版本覆盖。
-  - 下载服务器 8090 version.json 基于 APK mtime 自动重算（versionCode/versionName/md5），无需重启；但 release-config.json 的 changelog 字段只在启动与 publish 接口时 loadConfig，v1.236 起 git 手工发版均未再更新该文件（version.json changelog 停留在 v1.235 文案），如需要可改文件+重启 8090（supervise 会自动拉起）。
+   - 下载服务器 8090 version.json 基于 APK mtime 自动重算（versionCode/versionName/md5），无需重启；但 release-config.json 的 changelog 字段只在启动与 publish 接口时 loadConfig，v1.236 起 git 手工发版均未再更新该文件（version.json changelog 停留在 v1.235 文案），如需要可改文件+重启 8090（supervise 会自动拉起）。
+
+## v1.244 相册上传支持视频（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户需求「增加上传视频现在只能上传照片」，经 feature-design 流程（spec=.monkeycode/specs/album-upload-video/，commit d1e47ae）实现发版
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.244(247) 产物：allarch md5=a5fe96f6d147cb8cbfdfeefbaf5db039（24.6MB）、arm64 md5=7fd9af5282bedd65900e9b1b19a87b5b（17.8MB）；commit b3e4460 已推送。AlbumViewer 未改动不重打。
+  - 实现：AlbumUploader.uploadAlbum 照片并发上传完成后串行补传视频（复用 uploadVideoWithProgress，720p/2Mbps 转码）；视频条目 index 从公开常量 AlbumUploader.VIDEO_INDEX_BASE(1000000)+1 起，ScreenSyncService 后台同步改引用同一常量（原私有 VIDEO_INDEX_BASE 已删）；仅视频无照片可传（skipped==total 判定加 && videoIds.isEmpty()）；空相册=照片+视频均空，MainActivity 文案「相册没有照片或视频」；单视频失败跳过；无 READ_MEDIA_VIDEO 权限时 queryAllVideoIds 返回空自动退化仅照片（共享中不弹权限框）。
+  - 视频上传取消语义：uploadVideoWithProgress 无 cancel 参数（保持签名），取消在视频边界生效（循环开头 break → 循环后 throw 已取消 → catch bestEffortFinish）。
+  - 构建脚本模板已复制为 /tmp/opencode/build_v1244.sh（对齐临时文件名 align_*_247.apk），后续 v1.245 复制改版本号即可。
+  - 真机待验证：视频条目可播放、转码期间共享不卡、取消及时停止。
