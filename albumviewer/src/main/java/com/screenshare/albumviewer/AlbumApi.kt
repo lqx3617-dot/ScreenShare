@@ -11,25 +11,11 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-data class AlbumStatus(
-    val token: String,
-    val total: Int,
-    val done: Int,
-    val received: Int,
-)
-
 /** 聚合相册中的一张照片：所属会话 token + 该会话内的照片序号 + 是否为视频 */
 data class AlbumPhoto(
     val token: String,
     val index: Int,
     val isVideo: Boolean = false,
-)
-
-/** 远程相册同步：有照片的设备（按设备分组查看） */
-data class AlbumDevice(
-    val device: String,
-    val sessions: Int,
-    val photos: Int,
 )
 
 class AlbumApi(private val context: Context) {
@@ -74,26 +60,6 @@ class AlbumApi(private val context: Context) {
         }
     }
 
-    suspend fun getStatus(token: String): AlbumStatus? = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$baseUrl/api/status?token=$token")
-            .build()
-        try {
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val j = JSONObject(resp.body?.string() ?: return@withContext null)
-                AlbumStatus(
-                    token = token,
-                    total = j.optInt("total", 0),
-                    done = j.optInt("done", 0),
-                    received = j.optInt("received", 0),
-                )
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     /**
      * 拉取聚合相册全部照片（所有会话混排，无需链接）。
      * 返回 null 表示请求失败；成功返回照片列表（按会话创建时间正序，会话内按序号）。
@@ -107,46 +73,6 @@ class AlbumApi(private val context: Context) {
                 if (!resp.isSuccessful) return@withContext null
                 val j = JSONObject(resp.body?.string() ?: return@withContext null)
                 parseAlbums(j)
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /** 拉取指定设备（设备码）的相册照片。 */
-    suspend fun getAlbumsByDevice(device: String): List<AlbumPhoto>? = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$baseUrl/api/albums?device=${java.net.URLEncoder.encode(device, "UTF-8")}")
-            .build()
-        try {
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val j = JSONObject(resp.body?.string() ?: return@withContext null)
-                parseAlbums(j)
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /** 拉取有照片的设备列表（远程相册同步按设备查看）。 */
-    suspend fun getDevices(): List<AlbumDevice>? = withContext(Dispatchers.IO) {
-        val req = Request.Builder()
-            .url("$baseUrl/api/devices")
-            .build()
-        try {
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val j = JSONObject(resp.body?.string() ?: return@withContext null)
-                val arr = j.optJSONArray("devices") ?: return@withContext emptyList()
-                (0 until arr.length()).mapNotNull { i ->
-                    val d = arr.optJSONObject(i) ?: return@mapNotNull null
-                    AlbumDevice(
-                        device = d.optString("device", ""),
-                        sessions = d.optInt("sessions", 0),
-                        photos = d.optInt("photos", 0),
-                    )
-                }
             }
         } catch (e: Exception) {
             null
