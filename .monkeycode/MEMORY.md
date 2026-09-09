@@ -569,5 +569,5 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.199(21) 产物：AlbumViewer-signed.apk md5=f4e8d48d469d9bb7fa686e504f19b168（2.4MB）；commit be1c8dd 已推送。
   - 重构内容：删除首页链接粘贴/32位链接码输入框（et_link+btn_open）与连接设备（8位设备码）触发同步入口（et_device_code+btn_connect_device）；删除 openInput/openAlbum/showInputView/openDeviceAlbum/connectDevice/onRelayAck/showConnectStatus/refreshStatus 及 RelayClient 中继、currentToken/albumStatus/viewingDevice 字段；启动直接 loadAggregatedAlbum()（聚合相册，5s 轮询刷新）；清理 AlbumApi 死代码 getStatus/getAlbumsByDevice/getDevices/AlbumStatus/AlbumDevice。
   - 布局调整：activity_main.xml 精简为仅 include layout_album；tv_title（三连击发版面板入口）移至 layout_album 顶栏替代 btn_back；btn_check_update（输入页）删除保留 btn_check_update_album。
-  - 注意：RelayClient.kt 与 GlowButtonView.kt 已成死代码但文件保留（遵循 no-delete 规则未删文件）；GlowButtonView 仅被已删按钮使用。如后续清理可直接删除这两个文件。
+  - 注意：RelayClient.kt 与 GlowButtonView.kt 已成死代码但文件保留（遵循 no-delete 规则未删文件）；GlowButtonView 仅被已删按钮使用。如后续清理可直接删除这两个文件。（更新：2026-09-07 用户授权后已删除两文件，commit 3600797；R8 本已剔除其 dex，release 产物 md5 不变）
   - AlbumViewer 签名与主 App 同 key（/workspace/signing/release.keystore pass:screenshare123），产物覆盖根目录 AlbumViewer-signed.apk；albumviewer 模块是独立 include，构建命令 ./gradlew :albumviewer:assembleRelease。
