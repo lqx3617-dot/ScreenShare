@@ -583,3 +583,17 @@ Entries discovered by the Agent during task execution should follow this format:
   - 优化内容：①轮询生命周期感知——onStart 启动 startPolling、onStop 取消 refreshJob（原来退后台仍每 5s 请求，耗电耗流量）；②单协程 while(isActive) 循环替代递归自取消模式，网络失败自动重试（原来 photos==null 即停止轮询需手动刷新），已有数据时静默重试避免闪屏；③修复空相册时 rvGrid 与 tvEmpty 各 weight=1 各占半屏的问题，改为可见性互斥（empty 时 rvGrid GONE/tvEmpty VISIBLE）；④视频长按菜单区分「保存视频/删除视频」，新增 saveVideo/saveVideoToGallery（MediaStore.Video + DIRECTORY_MOVIES，原来对视频误存缩略图 jpg）；⑤清理死代码 setEmpty()、GridAdapter.albumKey、未使用的 FrameLayout import。
   - 坑：Kotlin 字符串模板 `"个$what吗"` 会把中文字符并入标识符解析为 `what吗` 导致 Unresolved reference，必须写成 `${what}吗`。含中文后缀的模板变量一律加花括号。
   - 审查方法：通读 MainActivity + 布局 + AlbumApi，重点查生命周期、失败重试、布局权重、视频/照片文案与保存路径、死代码。
+
+## v1.245 修复相册上传视频权限漏检（2026-09-11）
+
+[Project Knowledge Summary]
+- Date: 2026-09-11
+- Context: 用户反馈 v1.244 后「视频还是没有上传」，排查发现上传侧权限链路只查 READ_MEDIA_IMAGES
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **根因**：MainActivity.onAlbumRequested 的 upload 分支在 Android 13+ 只检查/申请 READ_MEDIA_IMAGES，从未确保 READ_MEDIA_VIDEO。用户升级后视频权限未授权（或启动弹框被拒）时，onAlbumRequested 见图片已授权即直接 startAlbumUpload，queryAllVideoIds 返回空 → 视频静默不上传。
+  - 修复三处：①onAlbumRequested 同时收集缺失的 READ_MEDIA_IMAGES + READ_MEDIA_VIDEO（<33 为 READ_EXTERNAL_STORAGE）并一次申请；②onRequestPermissionsResult 的 PERM_REQUEST_ALBUM 分支改为用 checkSelfPermission 分别判定图片/视频（原 grantResults[0] 只反映第一项）；③onAlbumPermissionResult 改双布尔签名，至少一项授权即上传，缺视频权限时 Toast 明示「本次仅上传照片」。
+  - AlbumUploader.queryAllVideoIds 加 try-catch：无权限/异常时返回空列表而非抛出中止整批（query 无权限在部分机型抛 SecurityException，会走 startAlbumUpload 的 Thread catch 报「相册上传失败」）。
+  - 服务端 videos 持久化与聚合展示无问题：db.js 有 videos 列（JSON 数组），app.js /api/albums 带 videos，web.js isVideo 判定正确；排除「传了看不到」路径。
+  - v1.245(248) 产物：allarch md5=994195eab8cf0d5eb32f72fec4baa8a3（24.6MB）、arm64 md5=d76bffb02780f87f6c48a723ed2b48dc（17.8MB）；8090 version.json 已自动同步 248/1.245。commit b46e514。构建脚本 /tmp/opencode/build_v1245.sh。
+  - 待真机验证：仅授权图片时提示「仅上传照片」；补授视频权限后视频上传成功、观看端可播放。
