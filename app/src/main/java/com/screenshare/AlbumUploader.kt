@@ -80,17 +80,22 @@ object AlbumUploader {
         return uris
     }
 
-    /** 查询全部视频 id（倒序，供远程相册同步视频扫描） */
+    /** 查询全部视频 id（倒序，供远程相册同步视频扫描）；无 READ_MEDIA_VIDEO 权限时返回空而非抛异常中止整批 */
     fun queryAllVideoIds(context: Context): List<Long> {
         val ids = ArrayList<Long>()
-        val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(MediaStore.Video.Media._ID)
-        val sortOrder = "${MediaStore.Video.Media._ID} DESC"
-        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-            while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+        return try {
+            val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(MediaStore.Video.Media._ID)
+            val sortOrder = "${MediaStore.Video.Media._ID} DESC"
+            context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+            }
+            ids
+        } catch (t: Throwable) {
+            Log.w(TAG, "查询视频失败（可能未授权 READ_MEDIA_VIDEO）: ${t.message}")
+            emptyList()
         }
-        return ids
     }
 
     /** 提取视频第一帧作为缩略图（base64 JPEG，供网格展示） */
