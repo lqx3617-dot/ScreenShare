@@ -570,4 +570,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - 重构内容：删除首页链接粘贴/32位链接码输入框（et_link+btn_open）与连接设备（8位设备码）触发同步入口（et_device_code+btn_connect_device）；删除 openInput/openAlbum/showInputView/openDeviceAlbum/connectDevice/onRelayAck/showConnectStatus/refreshStatus 及 RelayClient 中继、currentToken/albumStatus/viewingDevice 字段；启动直接 loadAggregatedAlbum()（聚合相册，5s 轮询刷新）；清理 AlbumApi 死代码 getStatus/getAlbumsByDevice/getDevices/AlbumStatus/AlbumDevice。
   - 布局调整：activity_main.xml 精简为仅 include layout_album；tv_title（三连击发版面板入口）移至 layout_album 顶栏替代 btn_back；btn_check_update（输入页）删除保留 btn_check_update_album。
   - 注意：RelayClient.kt 与 GlowButtonView.kt 已成死代码但文件保留（遵循 no-delete 规则未删文件）；GlowButtonView 仅被已删按钮使用。如后续清理可直接删除这两个文件。（更新：2026-09-07 用户授权后已删除两文件，commit 3600797；R8 本已剔除其 dex，release 产物 md5 不变）
-  - AlbumViewer 签名与主 App 同 key（/workspace/signing/release.keystore pass:screenshare123），产物覆盖根目录 AlbumViewer-signed.apk；albumviewer 模块是独立 include，构建命令 ./gradlew :albumviewer:assembleRelease。
+- AlbumViewer 签名与主 App 同 key（/workspace/signing/release.keystore pass:screenshare123），产物覆盖根目录 AlbumViewer-signed.apk；albumviewer 模块是独立 include，构建命令 ./gradlew :albumviewer:assembleRelease。
+
+## v1.200 相册App重构后优化（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户要求「审查一下还有什么要优化的」，对 v1.199 重构后的相册 App 做代码审查与优化
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.200(22) 产物：AlbumViewer-signed.apk md5=899e8ba00d672d3de5582ce798076398；commit 9643906 已推送；8090 albumviewer-version.json 已自动同步 22/1.200。
+  - 优化内容：①轮询生命周期感知——onStart 启动 startPolling、onStop 取消 refreshJob（原来退后台仍每 5s 请求，耗电耗流量）；②单协程 while(isActive) 循环替代递归自取消模式，网络失败自动重试（原来 photos==null 即停止轮询需手动刷新），已有数据时静默重试避免闪屏；③修复空相册时 rvGrid 与 tvEmpty 各 weight=1 各占半屏的问题，改为可见性互斥（empty 时 rvGrid GONE/tvEmpty VISIBLE）；④视频长按菜单区分「保存视频/删除视频」，新增 saveVideo/saveVideoToGallery（MediaStore.Video + DIRECTORY_MOVIES，原来对视频误存缩略图 jpg）；⑤清理死代码 setEmpty()、GridAdapter.albumKey、未使用的 FrameLayout import。
+  - 坑：Kotlin 字符串模板 `"个$what吗"` 会把中文字符并入标识符解析为 `what吗` 导致 Unresolved reference，必须写成 `${what}吗`。含中文后缀的模板变量一律加花括号。
+  - 审查方法：通读 MainActivity + 布局 + AlbumApi，重点查生命周期、失败重试、布局权重、视频/照片文案与保存路径、死代码。
