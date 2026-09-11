@@ -2,6 +2,7 @@ package com.screenshare.albumviewer
 
 import android.app.Dialog
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -125,13 +126,7 @@ class MainActivity : AppCompatActivity() {
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
         val content = LayoutInflater.from(this).inflate(R.layout.dialog_publish, null)
         dialog.setContentView(content)
-        dialog.window?.apply {
-            setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundDrawableResource(android.R.color.transparent)
-        }
+        dialog.applyFullScreen()
         dialog.setCancelable(true)
 
         val tvCurrent = content.findViewById<TextView>(R.id.tv_pub_current)
@@ -216,13 +211,7 @@ class MainActivity : AppCompatActivity() {
         val dlg = Dialog(this, R.style.Theme_ScreenShare_Dialog)
         val content = LayoutInflater.from(this).inflate(R.layout.dialog_dedup, null)
         dlg.setContentView(content)
-        dlg.window?.apply {
-            setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundDrawableResource(android.R.color.transparent)
-        }
+        dlg.applyFullScreen()
         val tv = content.findViewById<TextView>(R.id.tv_dedup_title)
         val msg = content.findViewById<TextView>(R.id.tv_dedup_msg)
         val btnCancel = content.findViewById<android.widget.Button>(R.id.btn_dedup_cancel)
@@ -269,7 +258,12 @@ class MainActivity : AppCompatActivity() {
                 val photos = api.getAllAlbums()
                 if (photos != null) {
                     adapter.setAll(photos)
-                    tvStatus.text = "全部相册 · 共 ${photos.size} 张"
+                    val videoCount = photos.count { it.isVideo }
+                    tvStatus.text = if (videoCount > 0) {
+                        "全部相册 · 共 ${photos.size} 项（${videoCount} 个视频）"
+                    } else {
+                        "全部相册 · 共 ${photos.size} 张照片"
+                    }
                     val empty = photos.isEmpty()
                     tvEmpty.visibility = if (empty) View.VISIBLE else View.GONE
                     rvGrid.visibility = if (empty) View.GONE else View.VISIBLE
@@ -296,29 +290,44 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 视频全屏播放（内嵌 VideoView，支持流式加载与拖动） */
+    /** 视频全屏播放（内嵌 VideoView，支持流式加载、缓冲指示与拖动） */
     private fun playVideo(photo: AlbumPhoto) {
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
-        val vv = VideoView(this)
-        vv.setBackgroundColor(android.graphics.Color.BLACK)
+        val content = LayoutInflater.from(this).inflate(R.layout.dialog_video, null)
+        val vv = content.findViewById<VideoView>(R.id.vv_video)
+        val pb = content.findViewById<ProgressBar>(R.id.pb_video)
+        val tvTip = content.findViewById<TextView>(R.id.tv_video_tip)
+        val btnClose = content.findViewById<View>(R.id.btn_video_close)
+
+        pb.visibility = View.VISIBLE
         vv.setOnPreparedListener { mp ->
-            mp.setOnVideoSizeChangedListener { _, w, h -> if (w > 0 && h > 0) mp.start() }
-            mp.setOnErrorListener { _, _, _ ->
-                Toast.makeText(this, "视频加载失败", Toast.LENGTH_SHORT).show()
-                dialog.dismiss()
-                true
+            // prepared 即播放，不再依赖 onVideoSizeChanged（部分视频不触发该回调会一直不播）
+            mp.isLooping = false
+            pb.visibility = View.GONE
+            tvTip.visibility = View.GONE
+            vv.start()
+        }
+        // 缓冲/渲染开始/结束切换加载指示，避免大视频长时间黑屏无反馈
+        vv.setOnInfoListener { _, what, _ ->
+            when (what) {
+                MediaPlayer.MEDIA_INFO_BUFFERING_START -> pb.visibility = View.VISIBLE
+                MediaPlayer.MEDIA_INFO_BUFFERING_END,
+                MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START -> pb.visibility = View.GONE
             }
+            false
         }
-        vv.setOnClickListener { if (vv.isPlaying) vv.pause() else vv.start() }
+        vv.setOnErrorListener { _, _, _ ->
+            pb.visibility = View.GONE
+            tvTip.text = "视频加载失败，请检查网络后重试"
+            tvTip.visibility = View.VISIBLE
+            true
+        }
         vv.setOnCompletionListener { dialog.dismiss() }
-        dialog.setContentView(vv)
-        dialog.window?.apply {
-            setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundDrawableResource(android.R.color.transparent)
-        }
+        vv.setOnClickListener { if (vv.isPlaying) vv.pause() else vv.start() }
+        btnClose.setOnClickListener { dialog.dismiss() }
+
+        dialog.setContentView(content)
+        dialog.applyFullScreen()
         dialog.setOnDismissListener { try { vv.stopPlayback() } catch (t: Throwable) {} }
         dialog.show()
         // VideoView 走平台 MediaPlayer，不会经过 OkHttp/Coil 拦截器，
@@ -353,13 +362,7 @@ class MainActivity : AppCompatActivity() {
         // 全屏 Dialog：大图必须铺满整屏，AlertDialog wrap_content 会把图片压成一条
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
         dialog.setContentView(content)
-        dialog.window?.apply {
-            setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundDrawableResource(android.R.color.transparent)
-        }
+        dialog.applyFullScreen()
 
         // 点击空白背景关闭；点图片区域保持不关（避免刚打开就误关）
         content.setOnClickListener { dialog.dismiss() }
@@ -367,7 +370,7 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
         // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
-        val origJob = CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
+        val origJob = scope.launch {
             tvTip.text = "正在加载高清原图…"
             tvTip.visibility = View.VISIBLE
             val orig = api.pollOriginal(token, index, maxTries = 20)
@@ -451,44 +454,45 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "正在获取第 $index 张高清原图…", Toast.LENGTH_SHORT).show()
         scope.launch {
             // 优先原图（共享方在线时实时压缩上传），拿不到用缩略图兜底
-            val data = api.fetchOriginal(token, index)
-                ?: api.httpGetBytes(api.thumbUrl(token, index))
-            if (data != null) {
-                val name = "album_${token.take(8)}_$index.jpg"
-                val ok = saveToGallery(name, data)
-                val fromOrig = data.size > 10000
-                val msg = when {
-                    !ok -> "保存失败"
-                    fromOrig -> "已保存高清原图到相册"
-                    else -> "共享方不在线，已保存预览图"
-                }
-                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-            } else {
+            val orig = api.fetchOriginal(token, index)
+            val fromOrig = orig != null
+            val data = orig ?: withContext(Dispatchers.IO) { api.httpGetBytes(api.thumbUrl(token, index)) }
+            if (data == null) {
                 Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
+                return@launch
             }
+            val name = "album_${token.take(8)}_$index.jpg"
+            val ok = withContext(Dispatchers.IO) { saveToGallery(name, data) }
+            val msg = when {
+                !ok -> "保存失败"
+                fromOrig -> "已保存高清原图到相册"
+                else -> "共享方不在线，已保存预览图"
+            }
+            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
         }
     }
 
-    /** 下载并保存视频到系统相册（Movies） */
+    /** 下载并保存视频到系统相册（Movies）：流式落盘，避免大视频一次性读入内存 OOM */
     private fun saveVideo(photo: AlbumPhoto) {
         Toast.makeText(this, "正在下载视频…", Toast.LENGTH_SHORT).show()
+        val name = "album_${photo.token.take(8)}_${photo.index}.mp4"
         scope.launch {
-            val data = api.httpGetBytes(api.videoUrl(photo.token, photo.index))
-            if (data != null) {
-                val name = "album_${photo.token.take(8)}_${photo.index}.mp4"
-                val ok = saveVideoToGallery(name, data)
-                Toast.makeText(
-                    this@MainActivity,
-                    if (ok) "已保存视频到相册" else "保存失败",
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
+            val ok = withContext(Dispatchers.IO) {
+                val tmp = File(cacheDir, "dl_${photo.token.take(8)}_${photo.index}.mp4")
+                val bytes = api.downloadToFile(api.videoUrl(photo.token, photo.index), tmp)
+                val saved = if (bytes != null && bytes > 0) saveVideoFileToGallery(name, tmp) else false
+                tmp.delete()
+                saved
             }
+            Toast.makeText(
+                this@MainActivity,
+                if (ok) "已保存视频到相册" else "下载失败",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
-    private fun saveVideoToGallery(fileName: String, bytes: ByteArray): Boolean {
+    private fun saveVideoFileToGallery(fileName: String, src: File): Boolean {
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = android.content.ContentValues().apply {
@@ -499,7 +503,9 @@ class MainActivity : AppCompatActivity() {
                 val resolver = contentResolver
                 val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
                     ?: return false
-                resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+                resolver.openOutputStream(uri)?.use { out ->
+                    src.inputStream().use { it.copyTo(out) }
+                } ?: return false
                 true
             } else {
                 val dir = File(
@@ -507,11 +513,12 @@ class MainActivity : AppCompatActivity() {
                     "相册查看"
                 )
                 if (!dir.exists()) dir.mkdirs()
-                File(dir, fileName).writeBytes(bytes)
+                val dst = File(dir, fileName)
+                src.copyTo(dst, overwrite = true)
                 sendBroadcast(
                     android.content.Intent(
                         android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
-                        Uri.fromFile(File(dir, fileName))
+                        Uri.fromFile(dst)
                     )
                 )
                 true
@@ -552,6 +559,17 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) {
             false
+        }
+    }
+
+    /** 全屏对话框：铺满整屏、透明背景（照片/视频/发布面板/去重弹窗共用） */
+    private fun Dialog.applyFullScreen() {
+        window?.apply {
+            setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawableResource(android.R.color.transparent)
         }
     }
 

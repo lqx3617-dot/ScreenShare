@@ -171,6 +171,20 @@ function json(res, code, obj) {
   res.status(code).json(obj);
 }
 
+/**
+ * 启动时把旧版 meta.json 会话懒迁移入库：只需执行一次。
+ * 早期 /api/albums 每次请求都全盘 readdir + 逐会话查库，聚合页/相册 App 每 5s 轮询时
+ * 会做 O(会话数) 次文件系统与 DB 操作，改为启动迁移一次后消除该开销。
+ */
+function migrateLegacySessions() {
+  try {
+    for (const name of fs.readdirSync(ALBUM_ROOT)) {
+      if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
+    }
+  } catch (e) {}
+}
+migrateLegacySessions();
+
 // ==================== POST /api/upload ====================
 // 按 action 分流：create 严格限流，upload/original/finish 宽松（批量上传不被阻断）
 app.post("/api/upload", uploadActionLimiter, async (req, res) => {
@@ -406,7 +420,6 @@ app.get("/api/pending", (req, res) => {
 });
 
 // ==================== 聚合相册：全部会话照片归拢 ====================
-// ==================== 聚合相册：全部会话照片归拢 ====================
 
 /**
  * 照片重复检测与删除：
@@ -530,12 +543,7 @@ app.get("/api/devices", (req, res) => {
 
 /** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
 app.get("/api/albums", (req, res) => {
-  // 扫描磁盘目录，把旧版 meta.json 会话懒迁移入库，确保历史照片也归拢进聚合视图
-  try {
-    for (const name of fs.readdirSync(ALBUM_ROOT)) {
-      if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
-    }
-  } catch (e) {}
+  // 旧版 meta.json 会话已在启动时迁移入库（migrateLegacySessions），此处无需再扫盘
   const deviceFilter = String(req.query.device || "").trim().replace(/\s+/g, "");
   const albums = db
     .listAll()

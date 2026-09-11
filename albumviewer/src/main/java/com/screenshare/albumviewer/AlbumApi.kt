@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -49,13 +50,34 @@ class AlbumApi(private val context: Context) {
         return "$baseUrl/api/video?token=$token&index=$index"
     }
 
-    /** 供保存/兜底下载复用同一带鉴权 header 的 client */
+    /** 供保存/兜底下载复用同一带鉴权 header 的 client（仅用于小文件，如缩略图） */
     fun httpGetBytes(url: String): ByteArray? {
         return try {
             client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) null else resp.body?.bytes()
             }
         } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * 流式下载到文件，返回写入的字节数，失败返回 null。
+     * 大文件（视频）必须走这里：`httpGetBytes` 会把整个响应体读进内存，几十 MB 的视频极易 OOM。
+     * OkHttp 的 readTimeout 约束的是相邻数据块间隔而非总时长，流式读取可持续下载大文件。
+     */
+    suspend fun downloadToFile(url: String, dest: File): Long? = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body ?: return@withContext null
+                body.byteStream().use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+                dest.length()
+            }
+        } catch (t: Throwable) {
+            dest.delete()
             null
         }
     }
