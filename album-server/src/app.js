@@ -565,6 +565,9 @@ app.get("/api/albums", (req, res) => {
 /** 聚合相册网页：无需链接即可查看全部照片（主 App 内 WebView 打开） */
 app.get("/all", (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
+  // 禁止缓存：页面内嵌的视频/图片 URL 与鉴权逻辑随版本变化，WebView 命中旧 HTML 会导致播放失败
+  res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.set("Pragma", "no-cache");
   // 网页需把 key 传给页面（页面内 <img> 无法带 header），header 与 query 双通道
   const key = String(req.query.key || req.headers["x-album-key"] || "");
   res.send(renderAllAlbumPage(key));
@@ -583,6 +586,9 @@ app.use((req, res, next) => {
   if (!session) return res.status(404).type("text/plain").send("not found");
   if (!file) {
     res.set("Content-Type", "text/html; charset=utf-8");
+    // 禁止缓存：页面内嵌的视频/图片 URL 与鉴权逻辑随版本变化，浏览器/WebView 命中旧 HTML 会导致播放失败
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.set("Pragma", "no-cache");
     // 网页内 <img> 加载缩略图无法带 header，key 经 query 传给页面（Header 通道保留）
     const key = String(req.query.key || req.headers["x-album-key"] || "");
     return res.send(renderAlbumPage(session, key));

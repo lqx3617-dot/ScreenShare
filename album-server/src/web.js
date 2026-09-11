@@ -46,7 +46,7 @@ body{margin:0;background:#111;font-family:-apple-system,sans-serif}
 </style></head><body>
 <div class="top">📷 相册${done ? ` · ${session.received.size} 项` : " · 上传中… 已收 " + session.received.size + " 项"}</div>
 ${idx ? `<div class="grid">${idx}</div>` : `<div class="none">${done ? "相册是空的" : "照片正在上传，请稍后刷新"}</div>`}
-<div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none"></video></div>
+<div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none" onclick="event.stopPropagation()"></video></div>
 <script>
 var TOKEN="${session.token}", DONE=${done}, RECEIVED=${session.received.size}, ALBUM_KEY="${key ? jsString(key) : ""}";
 function K(){return ALBUM_KEY?"?key="+encodeURIComponent(ALBUM_KEY):"";}
@@ -117,10 +117,10 @@ body{margin:0;background:#111;font-family:-apple-system,sans-serif}
 #ovtip{position:absolute;top:14px;left:50%;transform:translateX(-50%);color:#fff;background:rgba(0,0,0,.6);padding:6px 14px;border-radius:20px;font-size:13px}
 @media(min-width:768px){.grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}}
 </style></head><body>
-<div class="top"><span id="tcount"><b>相册</b> · 加载中…</span><span class="refresh" onclick="location.reload()">刷新</span></div>
+<div class="top"><span id="tcount"><b>相册</b> · 加载中…</span><span class="refresh" onclick="loadAlbums()">刷新</span></div>
 <div id="grid" class="grid"></div>
 <div id="none" class="none" style="display:none">还没有照片，共享方上传后会自动归拢到这里</div>
-<div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none"></video></div>
+<div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none" onclick="event.stopPropagation()"></video></div>
 <script>
 var TOKEN_ARR=[], RECEIVED=0, ALBUM_KEY="${KJS}";
 function K(){return ALBUM_KEY?"?key="+encodeURIComponent(ALBUM_KEY):"";}
@@ -186,7 +186,7 @@ setInterval(function(){
   if(document.getElementById("ov").style.display!=="none") return;
   fetch("/api/albums"+K()).then(function(r){return r.json();}).then(function(j){
     var n=(j.count||0);
-    if(n!==RECEIVED){ location.reload(); }
+    if(n!==RECEIVED){ loadAlbums(); }
   }).catch(function(){});
 },5000);
 loadAlbums();
