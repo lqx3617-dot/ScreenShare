@@ -13,7 +13,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.RadioGroup
@@ -84,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         adapter.onThumbLongClick = { index -> showPhotoMenu(index) }
 
         findViewById<View>(R.id.btn_refresh).setOnClickListener {
-            loadAggregatedAlbum()
+            startPolling()
         }
 
         // 隐藏发版入口：顶部标题 2 秒内连点 3 次打开发布面板
@@ -92,9 +91,18 @@ class MainActivity : AppCompatActivity() {
 
         // 云更新：启动检查相册 APP 新版本（静默，节流 12h）
         UpdateChecker.check(this)
+    }
 
-        // 打开即浏览聚合相册（无需链接/链接码/设备码）
-        loadAggregatedAlbum()
+    override fun onStart() {
+        super.onStart()
+        // 打开即浏览聚合相册（无需链接/链接码/设备码）；回到前台自动恢复轮询
+        startPolling()
+    }
+
+    override fun onStop() {
+        refreshJob?.cancel()
+        refreshJob = null
+        super.onStop()
     }
 
     private var titleTapCount = 0
@@ -243,7 +251,7 @@ class MainActivity : AppCompatActivity() {
                 btnCancel.isEnabled = true
                 btnOk.text = "完成"
                 // 刷新当前视图（去重后照片数变化）
-                loadAggregatedAlbum()
+                startPolling()
                 btnOk.setOnClickListener { dlg.dismiss() }
             }
         }
@@ -251,26 +259,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 聚合相册：打开即浏览全部会话照片（无需链接/链接码/设备码），上传中每 5s 自动轮询刷新。
+     * 聚合相册：打开即浏览全部会话照片（无需链接/链接码/设备码）。
+     * 单协程循环轮询每 5s 刷新；网络失败自动重试；onStop 取消、onStart 恢复。
      */
-    private fun loadAggregatedAlbum() {
+    private fun startPolling() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
-            val photos = api.getAllAlbums()
-            if (photos != null) {
-                adapter.setAll(photos)
-                tvStatus.text = "全部相册 · 共 ${photos.size} 张"
-                tvEmpty.visibility = if (photos.isEmpty()) View.VISIBLE else View.GONE
-                tvEmpty.text = "还没有照片，共享方上传后会自动归拢到这里"
-                // 持续轮询：新照片上传后自动刷新
-                refreshJob = launch {
-                    delay(5000)
-                    loadAggregatedAlbum()
+            while (isActive) {
+                val photos = api.getAllAlbums()
+                if (photos != null) {
+                    adapter.setAll(photos)
+                    tvStatus.text = "全部相册 · 共 ${photos.size} 张"
+                    val empty = photos.isEmpty()
+                    tvEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+                    rvGrid.visibility = if (empty) View.GONE else View.VISIBLE
+                    tvEmpty.text = "还没有照片，共享方上传后会自动归拢到这里"
+                } else if (adapter.photos.isEmpty()) {
+                    // 无缓存数据时才遮屏提示；已有数据则静默重试，避免列表闪烁
+                    tvStatus.text = "无法连接服务器，重试中…"
+                    tvEmpty.visibility = View.VISIBLE
+                    rvGrid.visibility = View.GONE
+                    tvEmpty.text = "网络异常，正在自动重试…"
                 }
-            } else {
-                tvStatus.text = "无法连接服务器"
-                tvEmpty.visibility = View.VISIBLE
-                tvEmpty.text = "网络异常，请检查网络后重试"
+                delay(5000)
             }
         }
     }
@@ -393,32 +404,33 @@ class MainActivity : AppCompatActivity() {
         return sample
     }
 
-    /** 长按照片弹出菜单：保存原图 / 删除 */
+    /** 长按条目弹出菜单：保存 / 删除（视频与照片文案区分） */
     private fun showPhotoMenu(position: Int) {
         val photo = adapter.photoAt(position) ?: return
-        val items = arrayOf("保存到相册", "删除照片")
+        val items = if (photo.isVideo) arrayOf("保存视频", "删除视频") else arrayOf("保存到相册", "删除照片")
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("第 ${photo.index} 张")
+            .setTitle(if (photo.isVideo) "第 ${photo.index} 个视频" else "第 ${photo.index} 张照片")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> saveImage(position)
+                    0 -> if (photo.isVideo) saveVideo(photo) else saveImage(position)
                     1 -> confirmDeletePhoto(photo)
                 }
             }
             .show()
     }
 
-    /** 删除确认：调服务器删除单张照片，成功后从列表移除并刷新 */
+    /** 删除确认：调服务器删除单张照片/视频，成功后从列表移除并刷新 */
     private fun confirmDeletePhoto(photo: AlbumPhoto) {
+        val what = if (photo.isVideo) "视频" else "照片"
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("删除照片")
-            .setMessage("确定删除第 ${photo.index} 张照片吗？\n将从服务器永久删除，不可恢复。")
+            .setTitle("删除${what}")
+            .setMessage("确定删除第 ${photo.index} 个${what}吗？\n将从服务器永久删除，不可恢复。")
             .setPositiveButton("删除") { _, _ ->
                 scope.launch {
                     val ok = api.deletePhoto(photo.token, photo.index)
                     if (ok) {
                         Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
-                        loadAggregatedAlbum()
+                        startPolling()
                     } else {
                         Toast.makeText(this@MainActivity, "删除失败，请检查网络", Toast.LENGTH_SHORT).show()
                     }
@@ -450,6 +462,58 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    /** 下载并保存视频到系统相册（Movies） */
+    private fun saveVideo(photo: AlbumPhoto) {
+        Toast.makeText(this, "正在下载视频…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val data = api.httpGetBytes(api.videoUrl(photo.token, photo.index))
+            if (data != null) {
+                val name = "album_${photo.token.take(8)}_${photo.index}.mp4"
+                val ok = saveVideoToGallery(name, data)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (ok) "已保存视频到相册" else "保存失败",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveVideoToGallery(fileName: String, bytes: ByteArray): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = android.content.ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/相册查看")
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+                true
+            } else {
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "相册查看"
+                )
+                if (!dir.exists()) dir.mkdirs()
+                File(dir, fileName).writeBytes(bytes)
+                sendBroadcast(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
+                        Uri.fromFile(File(dir, fileName))
+                    )
+                )
+                true
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -498,12 +562,6 @@ class MainActivity : AppCompatActivity() {
         var onThumbClick: ((Int) -> Unit)? = null
         var onThumbLongClick: ((Int) -> Unit)? = null
         private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
-        private val albumKey = BuildConfig.ALBUM_KEY
-
-        fun setEmpty() {
-            photos = emptyList()
-            notifyDataSetChanged()
-        }
 
         fun setAll(list: List<AlbumPhoto>) {
             val old = this.photos
