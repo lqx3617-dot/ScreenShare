@@ -612,3 +612,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.201(23) 产物：AlbumViewer-signed.apk md5=d81b25bfffd5e0dd02f0afc5428b73cb（2.4MB）；8090 albumviewer-version.json 已自动同步 23/1.201；构建脚本 /tmp/opencode/build_album_v1201.sh。commit 84e8fff（推送时 GitHub 网络中断，待网络恢复后 push）。
   - 服务端改动需重启 8096 进程生效（kill 旧 node pid，supervise 15s 内自动拉起）；本次未改主 App，主 App 内置 WebView 观看端因服务端修复而一并恢复。
   - 待真机验证：相册 App 点视频可播放；网页 `/all` 点视频可播放。
+
+## v1.202 相册 App 播放/保存体验优化 + 服务端聚合接口提速（2026-09-11）
+
+[Project Knowledge Summary]
+- Date: 2026-09-11
+- Context: 相册视频播放鉴权修复后继续优化观看端体验与健壮性
+- Category: Troubleshooting & Debugging & Operations & Deployment
+- Instructions:
+  - 大文件（视频）保存必须流式落盘：原 `httpGetBytes` 用 `resp.body?.bytes()` 把整个视频读进内存，几十 MB 会 OOM 且受 OkHttp readTimeout（20s）约束。新增 `AlbumApi.downloadToFile(url, dest)` 用 `byteStream().copyTo()` 流式写临时文件，再拷贝进 MediaStore（readTimeout 约束的是相邻块间隔而非总时长，流式可持续下载大文件）。
+  - 平台 VideoView 的 `setOnPreparedListener` 里应直接 `start()`，勿依赖 `setOnVideoSizeChangedListener` 触发播放（部分视频不触发该回调会一直不播）。
+  - 相册 App v1.202(24) 改动：视频对话框新增 `dialog_video.xml`（VideoView + ProgressBar 缓冲指示 + 关闭按钮 + 错误提示）、`setOnInfoListener` 按 MEDIA_INFO_BUFFERING_START/END、VIDEO_RENDERING_START 切换转圈；保存照片用「fetchOriginal 是否返回」显式区分原图/预览图（原用 `data.size>10000` 猜测不可靠）；保存写文件移到 `Dispatchers.IO`；状态栏显示视频数；抽取 `Dialog.applyFullScreen()` 扩展消除 4 处重复窗口设置。产物 md5=1283c0f0cfc4deb4f9f60d331ec24ee1，8090 albumviewer-version.json 已同步 24/1.202。
+  - 服务端 app.js：`/api/albums` 原先每次请求都 `readdirSync(ALBUM_ROOT)` + 逐会话 `loadSession`（仅为迁移旧 meta.json），而聚合页/相册 App 每 5s 轮询，开销随会话数线性增长；改为 `migrateLegacySessions()` 启动时执行一次。改动后重启 8096 验证 `/api/albums` 200。
+  - commit a432fab（连同 84e8fff、4ee148f 因 GitHub 网络中断待推送）。
