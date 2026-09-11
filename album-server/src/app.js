@@ -108,10 +108,9 @@ function isJpeg(buf) {
 }
 
 // ==================== 访问鉴权中间件 ====================
-// /api/*（App 用 OkHttp/Coil，可带自定义 header）：密钥仅经 header `x-album-key` 传递，
+// /api/*（App 用 OkHttp/Coil，可带自定义 header）：写操作仅经 header `x-album-key` 传递，
 // 废弃 query ?key=（避免密钥进 URL 日志/Referer 泄露）。
-// 网页 /all、/<token>/、/<token>/<pad>.jpg（浏览器 <img> 无法带自定义 header）：
-// 保留 query+header 双通道，否则网页缩略图全部 401。
+// 只读 GET（网页 <img>/<video>/fetch 与浏览器直接播放无法带自定义 header）：保留 query+header 双通道。
 function auth(req, res, next) {
   if (!ALBUM_KEY) return next();
   const fromHeader = String(req.headers["x-album-key"] || "");
@@ -119,8 +118,10 @@ function auth(req, res, next) {
   // 过渡期：旧版 App 携带的轮换前密钥仍放行（ALBUM_KEY_OLD 未设置时立即失效）
   if (ALBUM_KEY_OLD && fromHeader === ALBUM_KEY_OLD) return next();
   const isApi = req.path.startsWith("/api/");
-  if (!isApi && String(req.query.key || "") === ALBUM_KEY) return next();
-  if (!isApi && ALBUM_KEY_OLD && String(req.query.key || "") === ALBUM_KEY_OLD) return next();
+  // 只读 GET 放行 query key；写操作（POST）仍仅 header，防密钥经 URL 泄露后被用于上传/删除
+  const queryAllowed = !isApi || req.method === "GET";
+  if (queryAllowed && String(req.query.key || "") === ALBUM_KEY) return next();
+  if (queryAllowed && ALBUM_KEY_OLD && String(req.query.key || "") === ALBUM_KEY_OLD) return next();
   return res.status(401).type("text/plain").send("unauthorized");
 }
 app.use(auth);

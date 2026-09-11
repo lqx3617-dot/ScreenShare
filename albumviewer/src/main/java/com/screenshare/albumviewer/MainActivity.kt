@@ -321,7 +321,11 @@ class MainActivity : AppCompatActivity() {
         }
         dialog.setOnDismissListener { try { vv.stopPlayback() } catch (t: Throwable) {} }
         dialog.show()
-        vv.setVideoURI(Uri.parse(api.videoUrl(photo.token, photo.index)))
+        // VideoView 走平台 MediaPlayer，不会经过 OkHttp/Coil 拦截器，
+        // 必须显式携带 x-album-key，否则 /api/video 因无鉴权返回 401（表现为「看不到视频」）
+        val headers = if (BuildConfig.ALBUM_KEY.isNotEmpty())
+            mapOf("x-album-key" to BuildConfig.ALBUM_KEY) else emptyMap()
+        vv.setVideoURI(Uri.parse(api.videoUrl(photo.token, photo.index)), headers)
     }
 
     private fun showFullScreen(position: Int) {
