@@ -627,3 +627,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - commit a432fab（连同 84e8fff、4ee148f 因 GitHub 网络中断待推送）。
   - **网页/主 App 内置相册「视频播放不了」根因（v1.202 后补丁）**：web.js 中 `<video id="ovvideo">` 是 `#ov` 容器子元素，而 `#ov` 绑定 `onclick="closeView()"`，点击视频控件（播放/进度条）事件冒泡到容器 → 遮罩立即关闭、视频不可操作（WebView 自动播放被拦时按播放键就消失）。修复：`<video ... onclick="event.stopPropagation()">`。另一坑：聚合页原用 `location.reload()` 刷新，WebView 的 `loadUrl(url, headers)` 附加请求头不会随 JS `location.reload()` 重发 → 重载后无 x-album-key → 页面 key 为空 → 图片/视频全 401；改为 `loadAlbums()` 局部刷新。HTML 响应加 `Cache-Control: no-cache` 防命中旧脚本。
   - 排查结论备查：服务端 `/api/video`（header/query key/Range）与公网反代均实测 200/206；视频文件结构完整（ftyp+mdat+moov）、编码 H.264(avc1)+AAC(mp4a)，文件/网络均无问题，问题在客户端播放交互。commit 71dccc7。
+
+## v1.246 上传视频整段全黑根因（转码 SurfaceTexture 纹理）（2026-09-12）
+
+[Project Knowledge Summary]
+- Date: 2026-09-12
+- Context: 用户反馈相册查看 App 打开视频「有播放控件但画面全黑」，服务端/网络/编码均已排除
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **判黑方法（服务端侧，无需真机）**：用 ffmpeg `blackdetect=d=0.1:pix_th=0.10` 判断视频内容是否整段黑帧，用 `ffprobe -show_entries stream=profile,width,height,nb_frames,duration` 看编码。本次 6 个样本 `black_duration≈总时长`、多个时刻 YAVG≈16 → 内容本身全黑，问题在上传侧转码，与播放器/鉴权/网络无关。
+  - **根因（app/src/main/java/com/screenshare/VideoTranscoder.kt 的 SurfaceRender）**：①`SurfaceTexture` 用纹理名 0 在 EGL 上下文创建之前（字段初始化阶段）构造，会在「无当前 GL 上下文」时另生成内部纹理，着色器采样的 `texId` 永远拿不到解码帧 → 每帧全黑；必须先 `initEgl()` + `initGl()`（生成 texId），再 `SurfaceTexture(texId)`。②解码帧渲染顺序颠倒：应先 `decoder.releaseOutputBuffer(outIdx, true)` 再 `renderer.render(...)`（其内 `updateTexImage`），否则纹理慢一帧、首帧黑。
+  - v1.246(249) 产物：ScreenShare-allarch-signed.apk md5=6ccdb148709207a2bd929bf19ec51a0b、arm64 md5=50ff41b631d8c72b46302e391371c5ea；构建脚本 /tmp/opencode/build_v1246.sh。commit acca326（已 push）。
+  - 注意：修复前已上传的黑视频不会自动恢复，需用修复版 App 重新上传相册才会生成正常视频。
