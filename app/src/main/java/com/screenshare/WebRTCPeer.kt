@@ -511,7 +511,8 @@ class WebRTCPeer(
                 params.encodings?.firstOrNull()?.let { enc ->
                     // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
                     // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
-                    enc.maxBitrateBps = 9_000_000
+                    // v1.249: 低端机进一步截到 6M（maxBitrateCap）
+                    enc.maxBitrateBps = minOf(9_000_000, maxBitrateCap)
                     enc.minBitrateBps = 600_000
                     // v1.246: 与 host 侧 highMotionFpsCap 保持一致
                     enc.maxFramerate = highMotionFpsCap
@@ -1360,8 +1361,8 @@ class WebRTCPeer(
                     val params = rtp.parameters
                     params.encodings?.firstOrNull()?.let { enc ->
                         // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
-                        // 12M 上限 + 初始 2.5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
-                        enc.maxBitrateBps = 12_000_000
+                        // v1.249: 上限按设备分流——低端机 6M 防硬编热降频，中高端 12M 保持高清。
+                        enc.maxBitrateBps = maxBitrateCap
                         enc.minBitrateBps = 1_000_000
                         // v1.246: 编码器帧率上限与采集一致（highMotionFpsCap），
                         // 避免编码上限 30 卡住 48fps 采集
@@ -1380,8 +1381,8 @@ class WebRTCPeer(
                     // 初始带宽 4M 起步：低于 5M 峰值避免启动瞬间拥塞，高于 2.5M 让画面更快清晰
                     //（1080p30 屏幕共享 2.5M 起步爬坡期画面模糊，弱网由拥塞控制 + 弱网自适应兜底降档）
                     try {
-                        peerConnection?.setBitrate(1_000_000, 4_000_000, 12_000_000)
-                        Log.d(TAG, "已设置初始带宽 1/4/12 Mbps")
+                        peerConnection?.setBitrate(1_000_000, 4_000_000, maxBitrateCap)
+                        Log.d(TAG, "已设置初始带宽 1/4/${maxBitrateCap / 1_000_000} Mbps")
                     } catch (t: Throwable) {
                         Log.w(TAG, "setBitrate 失败: ${t.message}")
                     }
@@ -1742,13 +1743,19 @@ class WebRTCPeer(
     private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
     private var lastCaptureSwitchMs = 0L
-    private val captureSwitchCooldownMs = 8000L
+    // v1.249: captureSwitchCooldownMs 已改为按设备分流的 get() 属性（见上方 highMotionFpsCap 附近）
     // v1.246 实验：高动态内容（视频播放）采集帧率上限。30fps 采集与 30fps 内容帧
     // 存在相位差导致系统性丢帧，提到 48fps 减少丢帧。仅档位0（网络良好）生效；
     // 设为 30 即可一键回退到旧行为。
     // v1.248: 低端老设备维持 30fps——硬编扛不住 48fps（CHANGELOG v1.231/v1.234/v1.235
     // 记载过低端机提帧率会帧率塌陷、观感更卡）。
     private val highMotionFpsCap: Int get() = if (isLowEndDevice) 30 else 48
+    // v1.249: 低端机码率上限同步下调——硬编在高码率下更易触发热降频（v1.231 帧率
+    // 塌陷的成因之一）。低端机顶档 6M，中高端保持 12M。
+    private val maxBitrateCap: Int get() = if (isLowEndDevice) 6_000_000 else 12_000_000
+    // v1.249: 低端机采集格式切换冷却期延长——v1.234 记载低端机持续降档会反复触发
+    // changeCaptureFormat，负反馈循环加剧掉帧，需更长冷却抑制震荡。
+    private val captureSwitchCooldownMs: Long get() = if (isLowEndDevice) 12_000L else 8_000L
     // v1.247: 观看方手动帧率选择（0=未覆盖，走自适应；>0=档位0下覆盖自适应值）。
     // 弱网档位（>=1）下始终让位于弱网降档，避免手动值把帧率顶回高位导致卡顿。
     @Volatile private var manualFpsOverride = 0
@@ -2053,7 +2060,8 @@ class WebRTCPeer(
                 recoverTimer = 0
             }
         }
-        val cap = adaptBitrateCaps[curAdaptLevel]
+        // v1.249: 低端机顶档截到 maxBitrateCap，避免硬编在高码率下热降频
+        val cap = minOf(adaptBitrateCaps[curAdaptLevel], maxBitrateCap)
         // 摄像头通话轨随档位同步自适应（码率/帧率上限），弱网时降低人脸画面数据量
         applyCameraAdaptation()
         // 仅档位变化时调码率/策略，避免周期重置影响拥塞控制收敛
