@@ -521,3 +521,79 @@ Entries discovered by the Agent during task execution should follow this format:
   - 分支改动同时涉及相册 App（MainActivity/RelayClient/UpdateChecker），相册 App 需同步递增重打（16→17/1.195）。
   - v1.229(232) 产物：allarch md5=3c2ec23de79ae1c868500d34bf51600d（24.6MB）、arm64 md5=7a48772bec2c5cf63e043f4fa3683e0b（17MB）；AlbumViewer v1.195(17) md5=aa08b0dea34a465cbeff413e9997580f（2.4MB）。commit d97e0d7(merge)+04267e6(fix) 已推送。
   - CHANGELOG 冲突解决模式：HEAD 保留已有版本条目，分支的「未发布」条目改写为本次新版本号后合并进主 App 区块顶部。
+
+## 诊断上报链路排障要点（2026-09-06）
+[Project Knowledge Summary]
+- Date: 2026-09-06
+- Context: Discovered by Agent while 排查真机共享卡顿（fractionLost 修复与蜂窝弱网优化发版期间 diag.log 始终为空）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 诊断上报链路：App 端 reportDiagnostic()/crash handler 经 OkHttp POST 到信令服务器 /diag、/crash，header x-diag-token，服务器落盘 /workspace/server/diag/diag.log 与 crash/ 目录（crash 在 crashes/）。
+  - **token 三处一致才通**：local.properties 的 screenshare.diag.token（编译进 BuildConfig.DIAG_TOKEN）= 服务器 supervise 启动参数 DIAG_TOKEN（/tmp/opencode/supervise-server.sh）。服务器另有 DIAG_TOKEN_OLD 过渡接受旧值。2026-09-06 发现 App 端 token 与服务器新旧值都不匹配导致全部 403（diag.log 为空根因），v1.242(245) 已同步修复；环境重置或轮换 token 后需重新比对三处。
+  - 排障时先 curl 本地模拟：`curl -X POST -H "x-diag-token: <token>" --data test http://127.0.0.1:8095/diag`，落盘即链路通；diag.log 为空先查 token 匹配再查 App 触发条件（host 全屏 + 软编/cpu瓶颈/丢包≥3%/RTT≥500ms + 值变化去重）。
+  - 服务器侧实时排障数据源：/tmp/server-8095.log（信令会话+SDP 候选，可看出 host 是蜂窝还是 WiFi）、relay 日志（term_1787248810013_3.log，在线设备表 RMX3350 真我/OPD2511 一加平板/V2361A vivo）、supervise-daemon.log（重启历史）。
+
+## v1.243 发版与服务器限流加固（2026-09-06）
+[Project Knowledge Summary]
+- Date: 2026-09-06
+- Context: Discovered by Agent while 手工采纳 origin/fix/rate-limit（f789c34）有效改动发版 v1.243
+- Category: Workflow & Collaboration
+- Instructions:
+  - v1.243(246) 产物：allarch md5=1531ddaa91623d785cebd34157d93d12（24.6MB）、arm64 md5=110bf724e48e418856d498bbae9e1b1a（17.8MB）；AlbumViewer 未改动不重打。commit c8b2ce0 已推送。WebRTCPeer 改动=viewer 初始码率 12M→9M/1M→600k(setBitrate 0.6/3.5/9M)+adaptBitrateCaps 整体下移 {9,6,4,2.8,1.8,1.2,0.8M}+严重掉帧(<60%目标)/cpu/观看端反馈立即降档+自适应 setBitrate 下限 min(500k,cap)；主连接初始带宽保持 12M 不动（分支也只改 viewer 连接）。
+  - server.js 采纳分支安全改动：AUTH 限流 30→20 次/分、pls-join「喊TA」单独限流 6 次/分（plsJoinAttempts Map）、XFF 信任改 TRUST_PROXY=1 显式开关。**REQUIRE_TOKEN 保持默认关**（分支默认强制 token 是破坏性变更：App SignalClient 与 Web index.html 的 join 均不带 token，直接合并全线「加入口令无效」）；pls-join 清理的嵌套 bug 已改为平行 for 清理。
+  - **supervise-server.sh 是启动时一次性读入内存的 while 循环，改脚本后不重启 supervise 守护进程不生效**：改 8095 行加 TRUST_PROXY=1 后必须 background_terminal_kill 旧 supervise 终端 + 新建 supervise 终端，且先 kill 当前 8095 进程让新 supervise 用新参数拉起（否则端口活着不会重启，进程仍是旧 env/旧代码）。验证：`tr '\0' '\n' < /proc/<pid>/environ | rg TRUST_PROXY`。
+  - 限流冒烟测试（node -e + ws）：host create 后另一连接 join 拿 viewer 角色（join-pending 即已 role=viewer），连发 8 次 pls-join → host 收 come-on 6 次、第 7 次起 viewer 收「提醒过于频繁」即限流生效；host 角色发 pls-join 会被「共享方无需发起提醒」先拦截，测不到限流。
+  - 分支合并策略沉淀：分支相对 main 的净改动只有 WebRTCPeer 参数 + server.js 安全项，其余（GlowButtonView→Button 布局回退、CHANGELOG/版本号倒退、index.html 删 playoutDelayHint）是作者基线落后的脏改动，合并时保留 main，不做 git merge 直接手工采纳。版本号/CHANGELOG 由本次版本覆盖。
+   - 下载服务器 8090 version.json 基于 APK mtime 自动重算（versionCode/versionName/md5），无需重启；但 release-config.json 的 changelog 字段只在启动与 publish 接口时 loadConfig，v1.236 起 git 手工发版均未再更新该文件（version.json changelog 停留在 v1.235 文案），如需要可改文件+重启 8090（supervise 会自动拉起）。
+
+## v1.244 相册上传支持视频（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户需求「增加上传视频现在只能上传照片」，经 feature-design 流程（spec=.monkeycode/specs/album-upload-video/，commit d1e47ae）实现发版
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.244(247) 产物：allarch md5=a5fe96f6d147cb8cbfdfeefbaf5db039（24.6MB）、arm64 md5=7fd9af5282bedd65900e9b1b19a87b5b（17.8MB）；commit b3e4460 已推送。AlbumViewer 未改动不重打。
+  - 实现：AlbumUploader.uploadAlbum 照片并发上传完成后串行补传视频（复用 uploadVideoWithProgress，720p/2Mbps 转码）；视频条目 index 从公开常量 AlbumUploader.VIDEO_INDEX_BASE(1000000)+1 起，ScreenSyncService 后台同步改引用同一常量（原私有 VIDEO_INDEX_BASE 已删）；仅视频无照片可传（skipped==total 判定加 && videoIds.isEmpty()）；空相册=照片+视频均空，MainActivity 文案「相册没有照片或视频」；单视频失败跳过；无 READ_MEDIA_VIDEO 权限时 queryAllVideoIds 返回空自动退化仅照片（共享中不弹权限框）。
+  - 视频上传取消语义：uploadVideoWithProgress 无 cancel 参数（保持签名），取消在视频边界生效（循环开头 break → 循环后 throw 已取消 → catch bestEffortFinish）。
+  - 构建脚本模板已复制为 /tmp/opencode/build_v1244.sh（对齐临时文件名 align_*_247.apk），后续 v1.245 复制改版本号即可。
+  - 真机待验证：视频条目可播放、转码期间共享不卡、取消及时停止。
+
+## v1.199 相册App重构（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户要求「重构相册app把链接还有链接码删了」，经询问确认链接码与设备码入口全部删除
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.199(21) 产物：AlbumViewer-signed.apk md5=f4e8d48d469d9bb7fa686e504f19b168（2.4MB）；commit be1c8dd 已推送。
+  - 重构内容：删除首页链接粘贴/32位链接码输入框（et_link+btn_open）与连接设备（8位设备码）触发同步入口（et_device_code+btn_connect_device）；删除 openInput/openAlbum/showInputView/openDeviceAlbum/connectDevice/onRelayAck/showConnectStatus/refreshStatus 及 RelayClient 中继、currentToken/albumStatus/viewingDevice 字段；启动直接 loadAggregatedAlbum()（聚合相册，5s 轮询刷新）；清理 AlbumApi 死代码 getStatus/getAlbumsByDevice/getDevices/AlbumStatus/AlbumDevice。
+  - 布局调整：activity_main.xml 精简为仅 include layout_album；tv_title（三连击发版面板入口）移至 layout_album 顶栏替代 btn_back；btn_check_update（输入页）删除保留 btn_check_update_album。
+  - 注意：RelayClient.kt 与 GlowButtonView.kt 已成死代码但文件保留（遵循 no-delete 规则未删文件）；GlowButtonView 仅被已删按钮使用。如后续清理可直接删除这两个文件。（更新：2026-09-07 用户授权后已删除两文件，commit 3600797；R8 本已剔除其 dex，release 产物 md5 不变）
+- AlbumViewer 签名与主 App 同 key（/workspace/signing/release.keystore pass:screenshare123），产物覆盖根目录 AlbumViewer-signed.apk；albumviewer 模块是独立 include，构建命令 ./gradlew :albumviewer:assembleRelease。
+
+## v1.200 相册App重构后优化（2026-09-07）
+
+[Project Knowledge Summary]
+- Date: 2026-09-07
+- Context: 用户要求「审查一下还有什么要优化的」，对 v1.199 重构后的相册 App 做代码审查与优化
+- Category: Build Methods & Workflow & Collaboration
+- Instructions:
+  - v1.200(22) 产物：AlbumViewer-signed.apk md5=899e8ba00d672d3de5582ce798076398；commit 9643906 已推送；8090 albumviewer-version.json 已自动同步 22/1.200。
+  - 优化内容：①轮询生命周期感知——onStart 启动 startPolling、onStop 取消 refreshJob（原来退后台仍每 5s 请求，耗电耗流量）；②单协程 while(isActive) 循环替代递归自取消模式，网络失败自动重试（原来 photos==null 即停止轮询需手动刷新），已有数据时静默重试避免闪屏；③修复空相册时 rvGrid 与 tvEmpty 各 weight=1 各占半屏的问题，改为可见性互斥（empty 时 rvGrid GONE/tvEmpty VISIBLE）；④视频长按菜单区分「保存视频/删除视频」，新增 saveVideo/saveVideoToGallery（MediaStore.Video + DIRECTORY_MOVIES，原来对视频误存缩略图 jpg）；⑤清理死代码 setEmpty()、GridAdapter.albumKey、未使用的 FrameLayout import。
+  - 坑：Kotlin 字符串模板 `"个$what吗"` 会把中文字符并入标识符解析为 `what吗` 导致 Unresolved reference，必须写成 `${what}吗`。含中文后缀的模板变量一律加花括号。
+  - 审查方法：通读 MainActivity + 布局 + AlbumApi，重点查生命周期、失败重试、布局权重、视频/照片文案与保存路径、死代码。
+
+## v1.245 修复相册上传视频权限漏检（2026-09-11）
+
+[Project Knowledge Summary]
+- Date: 2026-09-11
+- Context: 用户反馈 v1.244 后「视频还是没有上传」，排查发现上传侧权限链路只查 READ_MEDIA_IMAGES
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **根因**：MainActivity.onAlbumRequested 的 upload 分支在 Android 13+ 只检查/申请 READ_MEDIA_IMAGES，从未确保 READ_MEDIA_VIDEO。用户升级后视频权限未授权（或启动弹框被拒）时，onAlbumRequested 见图片已授权即直接 startAlbumUpload，queryAllVideoIds 返回空 → 视频静默不上传。
+  - 修复三处：①onAlbumRequested 同时收集缺失的 READ_MEDIA_IMAGES + READ_MEDIA_VIDEO（<33 为 READ_EXTERNAL_STORAGE）并一次申请；②onRequestPermissionsResult 的 PERM_REQUEST_ALBUM 分支改为用 checkSelfPermission 分别判定图片/视频（原 grantResults[0] 只反映第一项）；③onAlbumPermissionResult 改双布尔签名，至少一项授权即上传，缺视频权限时 Toast 明示「本次仅上传照片」。
+  - AlbumUploader.queryAllVideoIds 加 try-catch：无权限/异常时返回空列表而非抛出中止整批（query 无权限在部分机型抛 SecurityException，会走 startAlbumUpload 的 Thread catch 报「相册上传失败」）。
+  - 服务端 videos 持久化与聚合展示无问题：db.js 有 videos 列（JSON 数组），app.js /api/albums 带 videos，web.js isVideo 判定正确；排除「传了看不到」路径。
+  - v1.245(248) 产物：allarch md5=994195eab8cf0d5eb32f72fec4baa8a3（24.6MB）、arm64 md5=d76bffb02780f87f6c48a723ed2b48dc（17.8MB）；8090 version.json 已自动同步 248/1.245。commit b46e514。构建脚本 /tmp/opencode/build_v1245.sh。
+  - 待真机验证：仅授权图片时提示「仅上传照片」；补授视频权限后视频上传成功、观看端可播放。

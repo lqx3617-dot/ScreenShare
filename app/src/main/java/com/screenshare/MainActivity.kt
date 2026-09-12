@@ -1343,14 +1343,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             openSystemGallery()
             return
         }
-        // upload：相册权限，Android 13+ 用 READ_MEDIA_IMAGES，低版本用 READ_EXTERNAL_STORAGE
-        val perm = if (android.os.Build.VERSION.SDK_INT >= 33) {
-            Manifest.permission.READ_MEDIA_IMAGES
+        // upload：Android 13+ 图片与视频权限分离，二者都必须申请——只查 READ_MEDIA_IMAGES
+        // 会在用户仅授权图片时让 queryAllVideoIds 静默返回空，导致视频始终不上传
+        val needed = mutableListOf<String>()
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED)
+                needed.add(Manifest.permission.READ_MEDIA_IMAGES)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED)
+                needed.add(Manifest.permission.READ_MEDIA_VIDEO)
         } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
+                needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(perm), PERM_REQUEST_ALBUM)
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), PERM_REQUEST_ALBUM)
             return
         }
         startAlbumUpload()
@@ -1504,14 +1510,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }.start()
     }
 
-    /** 权限结果分发：相册权限授权成功则继续上传（结果经控制通道回发观看方） */
-    private fun onAlbumPermissionResult(granted: Boolean) {
-        if (granted) {
-            startAlbumUpload()
-        } else {
+    /** 权限结果分发：至少拿到图片或视频其一即继续上传；视频缺失时明确提示仅上传照片（避免静默失败） */
+    private fun onAlbumPermissionResult(imagesGranted: Boolean, videoGranted: Boolean) {
+        if (!imagesGranted && !videoGranted) {
             peer?.sendControl("""{"type":"album-result","error":"共享方未授权相册权限"}""")
-            Toast.makeText(this, "未授权相册权限，无法上传照片", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "未授权相册权限，无法上传照片/视频", Toast.LENGTH_LONG).show()
+            return
         }
+        if (!videoGranted) {
+            Toast.makeText(this, "未授权视频权限，本次仅上传照片", Toast.LENGTH_LONG).show()
+        }
+        startAlbumUpload()
     }
 
     /** 相册上传主流程：共享方后台静默执行（不弹任何界面，不打断共享），完成/失败经控制通道回发观看方 */
@@ -1555,7 +1564,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             } catch (t: Throwable) {
                 val msg = t.message ?: "未知错误"
                 runOnUiThread {
-                    val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片" else "相册上传失败: $msg"
+                    val err = if (t is AlbumUploader.EmptyAlbumException) "相册没有照片或视频" else "相册上传失败: $msg"
                     p?.sendControl("""{"type":"album-result","error":"$err"}""")
                 }
             }
@@ -1738,8 +1747,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 Toast.makeText(this, "未授权麦克风权限，无法开启语音", Toast.LENGTH_SHORT).show()
             }
         } else if (requestCode == PERM_REQUEST_ALBUM) {
-            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
-            onAlbumPermissionResult(granted)
+            // 重新按系统实际授权状态判定：本次可能同时申请了图片+视频两项，
+            // grantResults[0] 只反映第一项，不能代表视频是否授权
+            val imagesGranted = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+            } else {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+            }
+            val videoGranted = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED
+            } else {
+                imagesGranted
+            }
+            onAlbumPermissionResult(imagesGranted, videoGranted)
         } else if (requestCode == PERM_REQUEST_CAMERA) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
             if (granted) {

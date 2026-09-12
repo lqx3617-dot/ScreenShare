@@ -50,25 +50,27 @@ const DIAG = process.env.DIAG === "1";
 const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
 // 密钥轮换过渡期旧 token（2026-08-26 轮换）：旧版 App 崩溃上报仍接受，双端更新后应移除
 const DIAG_TOKEN_OLD = process.env.DIAG_TOKEN_OLD || "";
-// 生产环境默认强制房间 token；仅显式 REQUIRE_TOKEN=0 才为旧客户端关闭。
-const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN !== "0";
+// 兼容方案：设置 REQUIRE_TOKEN=1 才强制房间 token 认证，默认关闭保持旧客户端可用
+const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
 // 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
 const HEARTBEAT_TIMEOUT = 45 * 1000;
 // 所有 ws 连接（用于心跳扫描）
 const allClients = new Set();
 
-  // 轻量限流：同一 IP 每分钟最多 create/join/room-status 30 次，防 4 位会议号枚举爆破。
+  // 轻量限流：同一 IP 每分钟最多 create/join/room-status 20 次，防 4 位会议号枚举爆破。
   // 不引入额外口令，不改变客户端使用流程。
   const AUTH_WINDOW_MS = 60 * 1000;
   const AUTH_MAX_ATTEMPTS = 20;
+  // 「喊TA」(pls-join) 单独限流 6 次/分，防提醒轰炸
   const PLS_JOIN_MAX_ATTEMPTS = 6;
-  const plsJoinAttempts = new Map();
   const authAttempts = new Map();
+  const plsJoinAttempts = new Map();
 
   function remoteIp(obj) {
     if (!obj) return "unknown";
     // 反向代理后优先取 X-Forwarded-For 首段真实客户端 IP，避免所有请求都归到
-    // 代理地址导致多设备共享限流配额（依赖反代覆写 XFF 头，仅内网反代可直连本端口）。
+    // 代理地址导致多设备共享限流配额。仅 TRUST_PROXY=1（明确运行在可信反代后）
+    // 才信任 XFF 头，默认取 socket 地址，防伪造 XFF 头绕过限流。
     const headers = obj._headers || obj.headers;
     if (process.env.TRUST_PROXY === "1" && headers) {
       const xff = String(headers["x-forwarded-for"] || "");
@@ -106,9 +108,9 @@ const allClients = new Set();
     const now = Date.now();
     for (const [ip, entry] of authAttempts) {
       if (now >= entry.resetAt) authAttempts.delete(ip);
-      for (const [ip, entry] of plsJoinAttempts) {
-        if (now >= entry.resetAt) plsJoinAttempts.delete(ip);
-      }
+    }
+    for (const [ip, entry] of plsJoinAttempts) {
+      if (now >= entry.resetAt) plsJoinAttempts.delete(ip);
     }
   }, 60 * 1000).unref();
 
@@ -415,7 +417,7 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "共享方无需发起提醒" });
           return;
         }
-        if (!allowPlsJoin(remoteIp(request))) {
+        if (!allowPlsJoin(remoteIp(ws))) {
           send(ws, { type: "error", message: "提醒过于频繁，请稍后再试" });
           return;
         }

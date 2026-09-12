@@ -59,9 +59,6 @@ class ScreenSyncService : Service() {
         /** 当前正在上传的会话 token 持久化 key（断点续传） */
         const val PREFS_SESSION_TOKEN = "album_sync_session_token"
 
-        /** 视频 index 独立基数：与照片 index（1..N）隔离，避免冲突 */
-        private const val VIDEO_INDEX_BASE = 1000000
-
         @Volatile
         var deviceCode: String = ""
 
@@ -452,7 +449,7 @@ class ScreenSyncService : Service() {
                 Log.i(TAG, "待上传视频 ${pendingVideos.size} 个（已同步 ${syncedVideoIds.size}）")
                 for ((i, vid) in pendingVideos.withIndex()) {
                     if (serviceDestroyed.get()) break
-                    val index = VIDEO_INDEX_BASE + syncedVideoIds.size + i + 1
+                    val index = AlbumUploader.VIDEO_INDEX_BASE + syncedVideoIds.size + i + 1
                     val ok = AlbumUploader.uploadVideoWithProgress(
                         this, BuildConfig.ALBUM_URL, token, vid, index
                     ) { p ->

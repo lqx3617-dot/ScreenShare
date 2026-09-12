@@ -1,8 +1,6 @@
 package com.screenshare.albumviewer
 
 import android.app.Dialog
-import android.content.ClipboardManager
-import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -15,7 +13,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.RadioGroup
@@ -40,8 +37,6 @@ import coil.Coil
 import coil.ImageLoader
 import okhttp3.OkHttpClient
 import java.io.File
-import java.io.FileOutputStream
-import java.util.regex.Pattern
 
 class MainActivity : AppCompatActivity() {
 
@@ -49,23 +44,11 @@ class MainActivity : AppCompatActivity() {
     private val api by lazy { AlbumApi(this) }
     private val publishApi by lazy { PublishApi(this) }
 
-    private lateinit var etLink: EditText
-    private lateinit var tvError: TextView
-    private lateinit var layoutAlbum: View
     private lateinit var tvStatus: TextView
     private lateinit var rvGrid: RecyclerView
     private lateinit var tvEmpty: TextView
-    private lateinit var etDeviceCode: EditText
-    private lateinit var tvConnectStatus: TextView
-
-    private var currentToken: String? = null
-    private var albumStatus: AlbumStatus? = null
     private var refreshJob: Job? = null
     private val adapter = GridAdapter()
-    private val relayClient = RelayClient(onAck = { error -> onRelayAck(error) })
-    private var viewingDevice: String? = null
-
-    private val TOKEN_REGEX = Pattern.compile("([0-9a-f]{32})")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,37 +70,11 @@ class MainActivity : AppCompatActivity() {
                 .build()
         )
 
-        etLink = findViewById(R.id.et_link)
-        tvError = findViewById(R.id.tv_error)
-        layoutAlbum = findViewById(R.id.layout_album)
         tvStatus = findViewById(R.id.tv_status)
         rvGrid = findViewById(R.id.rv_grid)
         tvEmpty = findViewById(R.id.tv_empty)
-        etDeviceCode = findViewById(R.id.et_device_code)
-        tvConnectStatus = findViewById(R.id.tv_connect_status)
 
-        // 从剪贴板自动填充链接
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.primaryClip?.takeIf { it.itemCount > 0 }?.let { clip ->
-            val text = clip.getItemAt(0).coerceToText(this).toString()
-            if (text.contains("album") || TOKEN_REGEX.matcher(text).find()) {
-                etLink.setText(text.trim())
-            }
-        }
-
-        findViewById<GlowButtonView>(R.id.btn_open).apply {
-            setLabel("打开相册")
-            setOnClickListener { openInput() }
-        }
-
-        findViewById<GlowButtonView>(R.id.btn_connect_device).apply {
-            setLabel("连接设备 · 触发同步")
-            setOnClickListener { connectDevice() }
-        }
-
-        findViewById<View>(R.id.btn_check_update).setOnClickListener { UpdateChecker.check(this, manual = true) }
         findViewById<View>(R.id.btn_check_update_album).setOnClickListener { UpdateChecker.check(this, manual = true) }
-
         findViewById<View>(R.id.btn_dedup).setOnClickListener { onDedupClicked() }
 
         rvGrid.layoutManager = GridLayoutManager(this, 3)
@@ -125,23 +82,8 @@ class MainActivity : AppCompatActivity() {
         adapter.onThumbClick = { index -> onThumbClick(index) }
         adapter.onThumbLongClick = { index -> showPhotoMenu(index) }
 
-        findViewById<View>(R.id.btn_back).setOnClickListener {
-            showInputView()
-        }
         findViewById<View>(R.id.btn_refresh).setOnClickListener {
-            if (currentToken != null) {
-                refreshStatus(forceReload = true)
-            } else {
-                loadAggregatedAlbum(forceReload = true)
-            }
-        }
-
-        // 首次启动如果有 token 参数（从分享链接打开），直接打开
-        intent?.data?.toString()?.let { uri ->
-            val m = TOKEN_REGEX.matcher(uri)
-            if (m.find()) {
-                etLink.setText(m.group(1))
-            }
+            startPolling()
         }
 
         // 隐藏发版入口：顶部标题 2 秒内连点 3 次打开发布面板
@@ -149,16 +91,18 @@ class MainActivity : AppCompatActivity() {
 
         // 云更新：启动检查相册 APP 新版本（静默，节流 12h）
         UpdateChecker.check(this)
+    }
 
-        // 从分享链接冷启动打开指定相册；否则直接加载聚合相册（无需链接查看全部照片）
-        val linkToken = intent?.data?.toString()?.let { uri ->
-            TOKEN_REGEX.matcher(uri).let { if (it.find()) it.group(1) else null }
-        }
-        if (linkToken != null) {
-            openAlbum(linkToken)
-        } else {
-            loadAggregatedAlbum()
-        }
+    override fun onStart() {
+        super.onStart()
+        // 打开即浏览聚合相册（无需链接/链接码/设备码）；回到前台自动恢复轮询
+        startPolling()
+    }
+
+    override fun onStop() {
+        refreshJob?.cancel()
+        refreshJob = null
+        super.onStop()
     }
 
     private var titleTapCount = 0
@@ -267,79 +211,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun openInput() {
-        val text = etLink.text?.toString()?.trim().orEmpty()
-        val m = TOKEN_REGEX.matcher(text)
-        if (!m.find()) {
-            showError("链接无效：请粘贴完整链接或 32 位链接码")
-            return
-        }
-        val token = m.group(1)
-        hideError()
-        openAlbum(token)
-    }
-
-    private fun showError(msg: String) {
-        tvError.text = msg
-        tvError.visibility = View.VISIBLE
-    }
-
-    private fun hideError() {
-        tvError.visibility = View.GONE
-    }
-
-    private fun openAlbum(token: String) {
-        currentToken = token
-        layoutAlbum.visibility = View.VISIBLE
-        tvStatus.text = "连接中…"
-        adapter.setEmpty()
-        refreshStatus(forceReload = true)
-    }
-
-    private fun showInputView() {
-        layoutAlbum.visibility = View.GONE
-        refreshJob?.cancel()
-        adapter.setEmpty()
-        currentToken = null
-        viewingDevice = null
-    }
-
-    /**
-     * 远程相册同步：输入设备码 → 中继发送 start → 触发共享方上传 → 轮询该设备相册。
-     */
-    private fun connectDevice() {
-        val code = etDeviceCode.text?.toString()?.trim().orEmpty()
-        val normalized = code.replace(Regex("[^0-9A-Za-z]"), "").uppercase()
-        if (normalized.length != 8) {
-            showConnectStatus("设备码应为 8 位（如 6E25 21BF）", isError = true)
-            return
-        }
-        val device = normalized.chunked(4).joinToString(" ")
-        hideError()
-        viewingDevice = device
-        showConnectStatus("正在连接设备 $device，发送同步指令…")
-        relayClient.sendSyncStart(device)
-    }
-
-    private fun onRelayAck(error: String?) {
-        val device = viewingDevice ?: return
-        if (error != null) {
-            showConnectStatus(error)
-            return
-        }
-        showConnectStatus("已触发 $device 同步，正在等待照片上传…")
-        // 打开该设备的相册视图并轮询（上传是后台持续过程，照片陆续出现）
-        openDeviceAlbum(device)
-    }
-
-    private fun showConnectStatus(msg: String, isError: Boolean = false) {
-        tvConnectStatus.text = msg
-        tvConnectStatus.setTextColor(
-            if (isError) getColor(R.color.primary_red) else getColor(R.color.text_secondary)
-        )
-        tvConnectStatus.visibility = View.VISIBLE
-    }
-
     /** 重复照片清理：调服务器去重接口（全局 md5 查重，保留较清晰一份），删除后刷新视图 */
     private fun onDedupClicked() {
         val dlg = Dialog(this, R.style.Theme_ScreenShare_Dialog)
@@ -380,96 +251,37 @@ class MainActivity : AppCompatActivity() {
                 btnCancel.isEnabled = true
                 btnOk.text = "完成"
                 // 刷新当前视图（去重后照片数变化）
-                if (currentToken != null) {
-                    refreshStatus(forceReload = true)
-                } else if (viewingDevice != null) {
-                    refreshJob?.cancel()
-                    refreshJob = scope.launch { openDeviceAlbum(viewingDevice!!) }
-                } else {
-                    loadAggregatedAlbum(forceReload = true)
-                }
+                startPolling()
                 btnOk.setOnClickListener { dlg.dismiss() }
             }
         }
         dlg.show()
     }
 
-    /** 按设备查看：显示该设备所有会话的照片，持续轮询自动刷新 */
-    private fun openDeviceAlbum(device: String) {        currentToken = null
-        viewingDevice = device
-        layoutAlbum.visibility = View.VISIBLE
-        adapter.setEmpty()
-        refreshJob?.cancel()
-        refreshJob = scope.launch {
-            val photos = api.getAlbumsByDevice(device)
-            if (photos != null) {
-                adapter.setAll(photos)
-                tvStatus.text = "设备 $device · 共 ${photos.size} 张"
-                tvEmpty.visibility = if (photos.isEmpty()) View.VISIBLE else View.GONE
-                tvEmpty.text = "正在等待共享方上传照片…"
-                refreshJob = launch {
-                    delay(5000)
-                    openDeviceAlbum(device)
-                }
-            } else {
-                tvStatus.text = "无法连接服务器"
-                tvEmpty.visibility = View.VISIBLE
-                tvEmpty.text = "网络异常，请检查网络后重试"
-            }
-        }
-    }
-
     /**
-     * 聚合相册：无需链接直接查看全部会话照片，上传中每 5s 自动轮询刷新。
+     * 聚合相册：打开即浏览全部会话照片（无需链接/链接码/设备码）。
+     * 单协程循环轮询每 5s 刷新；网络失败自动重试；onStop 取消、onStart 恢复。
      */
-    private fun loadAggregatedAlbum(forceReload: Boolean = false) {
-        layoutAlbum.visibility = View.VISIBLE
-        currentToken = null
+    private fun startPolling() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
-            val photos = api.getAllAlbums()
-            if (photos != null) {
-                adapter.setAll(photos)
-                tvStatus.text = "全部相册 · 共 ${photos.size} 张"
-                tvEmpty.visibility = if (photos.isEmpty()) View.VISIBLE else View.GONE
-                tvEmpty.text = "还没有照片，共享方上传后会自动归拢到这里"
-                // 持续轮询：新照片上传后自动刷新
-                refreshJob = launch {
-                    delay(5000)
-                    loadAggregatedAlbum()
+            while (isActive) {
+                val photos = api.getAllAlbums()
+                if (photos != null) {
+                    adapter.setAll(photos)
+                    tvStatus.text = "全部相册 · 共 ${photos.size} 张"
+                    val empty = photos.isEmpty()
+                    tvEmpty.visibility = if (empty) View.VISIBLE else View.GONE
+                    rvGrid.visibility = if (empty) View.GONE else View.VISIBLE
+                    tvEmpty.text = "还没有照片，共享方上传后会自动归拢到这里"
+                } else if (adapter.photos.isEmpty()) {
+                    // 无缓存数据时才遮屏提示；已有数据则静默重试，避免列表闪烁
+                    tvStatus.text = "无法连接服务器，重试中…"
+                    tvEmpty.visibility = View.VISIBLE
+                    rvGrid.visibility = View.GONE
+                    tvEmpty.text = "网络异常，正在自动重试…"
                 }
-            } else {
-                tvStatus.text = "无法连接服务器"
-                tvEmpty.visibility = View.VISIBLE
-                tvEmpty.text = "网络异常，请检查网络后重试"
-            }
-        }
-    }
-
-    private fun refreshStatus(forceReload: Boolean = false) {
-        val token = currentToken ?: return
-        refreshJob?.cancel()
-        refreshJob = scope.launch {
-            val st = api.getStatus(token)
-            if (st != null) {
-                albumStatus = st
-                if (forceReload || adapter.photos.isEmpty() || st.received != adapter.photos.size) {
-                    adapter.setCount(st.received, token)
-                }
-                tvStatus.text = "共 ${st.total} 张 · 已接收 ${st.received}${if (st.done < st.total) " · 上传中…" else ""}"
-                tvEmpty.visibility = if (st.received == 0) View.VISIBLE else View.GONE
-                tvEmpty.text = if (st.done < st.total) "暂无照片，等待共享方上传…" else "该相册暂无照片"
-                // 持续轮询直到上传完成
-                if (st.done < st.total) {
-                    refreshJob = launch {
-                        delay(2000)
-                        refreshStatus(forceReload)
-                    }
-                }
-            } else {
-                tvStatus.text = "无法连接服务器"
-                tvEmpty.visibility = View.VISIBLE
-                tvEmpty.text = "网络异常，请检查网络后重试"
+                delay(5000)
             }
         }
     }
@@ -523,11 +335,7 @@ class MainActivity : AppCompatActivity() {
         val tvTip = content.findViewById<TextView>(R.id.tv_orig_tip)
         val tvIdx = content.findViewById<TextView>(R.id.tv_idx)
 
-        tvIdx.text = if (currentToken != null) {
-            "$index / ${albumStatus?.total ?: 0}"
-        } else {
-            "${position + 1} / ${adapter.photos.size}"
-        }
+        tvIdx.text = "${position + 1} / ${adapter.photos.size}"
 
         // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
         pb.visibility = View.VISIBLE
@@ -596,39 +404,33 @@ class MainActivity : AppCompatActivity() {
         return sample
     }
 
-    /** 长按照片弹出菜单：保存原图 / 删除 */
+    /** 长按条目弹出菜单：保存 / 删除（视频与照片文案区分） */
     private fun showPhotoMenu(position: Int) {
         val photo = adapter.photoAt(position) ?: return
-        val items = arrayOf("保存到相册", "删除照片")
+        val items = if (photo.isVideo) arrayOf("保存视频", "删除视频") else arrayOf("保存到相册", "删除照片")
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("第 ${photo.index} 张")
+            .setTitle(if (photo.isVideo) "第 ${photo.index} 个视频" else "第 ${photo.index} 张照片")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> saveImage(position)
-                    1 -> confirmDeletePhoto(position, photo)
+                    0 -> if (photo.isVideo) saveVideo(photo) else saveImage(position)
+                    1 -> confirmDeletePhoto(photo)
                 }
             }
             .show()
     }
 
-    /** 删除确认：调服务器删除单张照片，成功后从列表移除并刷新 */
-    private fun confirmDeletePhoto(position: Int, photo: AlbumPhoto) {
+    /** 删除确认：调服务器删除单张照片/视频，成功后从列表移除并刷新 */
+    private fun confirmDeletePhoto(photo: AlbumPhoto) {
+        val what = if (photo.isVideo) "视频" else "照片"
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("删除照片")
-            .setMessage("确定删除第 ${photo.index} 张照片吗？\n将从服务器永久删除，不可恢复。")
+            .setTitle("删除${what}")
+            .setMessage("确定删除第 ${photo.index} 个${what}吗？\n将从服务器永久删除，不可恢复。")
             .setPositiveButton("删除") { _, _ ->
                 scope.launch {
                     val ok = api.deletePhoto(photo.token, photo.index)
                     if (ok) {
                         Toast.makeText(this@MainActivity, "已删除", Toast.LENGTH_SHORT).show()
-                        if (currentToken != null) {
-                            refreshStatus(forceReload = true)
-                        } else if (viewingDevice != null) {
-                            refreshJob?.cancel()
-                            refreshJob = scope.launch { openDeviceAlbum(viewingDevice!!) }
-                        } else {
-                            loadAggregatedAlbum(forceReload = true)
-                        }
+                        startPolling()
                     } else {
                         Toast.makeText(this@MainActivity, "删除失败，请检查网络", Toast.LENGTH_SHORT).show()
                     }
@@ -660,6 +462,58 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    /** 下载并保存视频到系统相册（Movies） */
+    private fun saveVideo(photo: AlbumPhoto) {
+        Toast.makeText(this, "正在下载视频…", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val data = api.httpGetBytes(api.videoUrl(photo.token, photo.index))
+            if (data != null) {
+                val name = "album_${photo.token.take(8)}_${photo.index}.mp4"
+                val ok = saveVideoToGallery(name, data)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (ok) "已保存视频到相册" else "保存失败",
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                Toast.makeText(this@MainActivity, "下载失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun saveVideoToGallery(fileName: String, bytes: ByteArray): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = android.content.ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/相册查看")
+                }
+                val resolver = contentResolver
+                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+                true
+            } else {
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "相册查看"
+                )
+                if (!dir.exists()) dir.mkdirs()
+                File(dir, fileName).writeBytes(bytes)
+                sendBroadcast(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE,
+                        Uri.fromFile(File(dir, fileName))
+                    )
+                )
+                true
+            }
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -708,18 +562,6 @@ class MainActivity : AppCompatActivity() {
         var onThumbClick: ((Int) -> Unit)? = null
         var onThumbLongClick: ((Int) -> Unit)? = null
         private val baseUrl = BuildConfig.ALBUM_URL.trimEnd('/')
-        private val albumKey = BuildConfig.ALBUM_KEY
-
-        fun setEmpty() {
-            photos = emptyList()
-            notifyDataSetChanged()
-        }
-
-        fun setCount(count: Int, token: String) {
-            // 大相册一次建几百上千个对象会卡首帧；这里只建占位列表，index 按需即 1..count
-            this.photos = List(count) { i -> AlbumPhoto(token, i + 1) }
-            notifyDataSetChanged()
-        }
 
         fun setAll(list: List<AlbumPhoto>) {
             val old = this.photos

@@ -33,10 +33,13 @@ object AlbumUploader {
     private const val THUMB_QUALITY = 60
     private const val ORIGINAL_DIM = 1280
     private const val ORIGINAL_QUALITY = 75
+    // 视频条目 index 基数：视频从 1000001 起，与照片 index（1..N）隔离避免冲突
+    // （ScreenSyncService 后台同步与 uploadAlbum 会议内上传共用同一约定）
+    const val VIDEO_INDEX_BASE = 1_000_000
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    /** 相册为空或读取失败时抛出该异常，UI 层据此提示 */
-    class EmptyAlbumException : Exception("相册没有照片")
+    /** 相册为空（照片与视频均无）或读取失败时抛出该异常，UI 层据此提示 */
+    class EmptyAlbumException : Exception("相册没有照片或视频")
 
     /** 上传进度回调；cancel 置 true 可中止后续上传 */
     interface Listener {
@@ -77,17 +80,22 @@ object AlbumUploader {
         return uris
     }
 
-    /** 查询全部视频 id（倒序，供远程相册同步视频扫描） */
+    /** 查询全部视频 id（倒序，供远程相册同步视频扫描）；无 READ_MEDIA_VIDEO 权限时返回空而非抛异常中止整批 */
     fun queryAllVideoIds(context: Context): List<Long> {
         val ids = ArrayList<Long>()
-        val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(MediaStore.Video.Media._ID)
-        val sortOrder = "${MediaStore.Video.Media._ID} DESC"
-        context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-            while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+        return try {
+            val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val projection = arrayOf(MediaStore.Video.Media._ID)
+            val sortOrder = "${MediaStore.Video.Media._ID} DESC"
+            context.contentResolver.query(collection, projection, null, null, sortOrder)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                while (cursor.moveToNext()) ids.add(cursor.getLong(idCol))
+            }
+            ids
+        } catch (t: Throwable) {
+            Log.w(TAG, "查询视频失败（可能未授权 READ_MEDIA_VIDEO）: ${t.message}")
+            emptyList()
         }
-        return ids
     }
 
     /** 提取视频第一帧作为缩略图（base64 JPEG，供网格展示） */
@@ -473,8 +481,11 @@ object AlbumUploader {
      * 在调用方线程执行，进度回调应回主线程。
      */
     fun uploadAlbum(context: Context, baseUrl: String, listener: Listener, cancel: () -> Boolean = { false }) {
+        // v1.244: 视频随相册上传——照片并发上传完成后串行补传视频（转码 720p/2Mbps，与后台同步同管道）。
+        // 无视频权限时 queryAllVideoIds 自然返回空列表，自动退化为仅照片（不新增权限弹窗打断共享）
         val uris = queryAllImages(context)
-        if (uris.isEmpty()) throw EmptyAlbumException()
+        val videoIds = queryAllVideoIds(context)
+        if (uris.isEmpty() && videoIds.isEmpty()) throw EmptyAlbumException()
 
         val token = createSession(baseUrl)
         listener.onSessionCreated(token)
@@ -510,7 +521,23 @@ object AlbumUploader {
             pool.awaitTermination(30, TimeUnit.MINUTES)
             if (cancel()) throw java.io.IOException("已取消")
             failed.get()?.let { throw it }
-            if (skipped.get() == total) throw EmptyAlbumException()
+            // 全部照片解码失败且无视频可传才是真「空相册」；有视频时继续仅视频上传
+            if (skipped.get() == total && videoIds.isEmpty()) throw EmptyAlbumException()
+
+            // 视频阶段：照片完成后逐个串行处理（转码耗 CPU，串行避免与照片并发抢资源）。
+            // index 从 VIDEO_INDEX_BASE+1 起，与照片 1..N 隔离；单视频任一步失败跳过继续
+            for ((i, vid) in videoIds.withIndex()) {
+                if (cancel()) break
+                val index = VIDEO_INDEX_BASE + i + 1
+                val ok = try {
+                    uploadVideoWithProgress(context, baseUrl, token, vid, index) { }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "视频 id=$vid 上传异常: ${t.message}")
+                    false
+                }
+                if (!ok) Log.w(TAG, "视频 id=$vid 上传失败，跳过")
+            }
+            if (cancel()) throw java.io.IOException("已取消")
         } catch (t: Throwable) {
             pool.shutdownNow()
             bestEffortFinish(baseUrl, token)

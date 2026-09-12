@@ -509,6 +509,8 @@ class WebRTCPeer(
                 conn.videoSender = rtp
                 val params = rtp.parameters
                 params.encodings?.firstOrNull()?.let { enc ->
+                    // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
+                    // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
                     enc.maxBitrateBps = 9_000_000
                     enc.minBitrateBps = 600_000
                     enc.maxFramerate = 30
@@ -519,7 +521,7 @@ class WebRTCPeer(
                     params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
                 } catch (t: Throwable) {}
                 rtp.parameters = params
-                // 初始带宽 4M 起步（同主连接），画面更快清晰；弱网由拥塞控制兜底降档
+                // 初始带宽 3.5M 起步，弱网由拥塞控制兜底降档
                 try {
                     pc.setBitrate(600_000, 3_500_000, 9_000_000)
                     Log.d(TAG, "viewer#$viewerId 初始带宽 0.6/3.5/9 Mbps")
@@ -1685,8 +1687,9 @@ class WebRTCPeer(
     // collectStatsFor 统计线程读、主线程写，需 @Volatile 保证跨线程可见性
     @Volatile private var curAdaptLevel = 0
     @Volatile private var recoverTimer = 0
-    // v1.241: 扩到 7 档——蜂窝上行普遍仅 1~2Mbps，原最低档 2.5M 仍超带宽，编码器无降档余地时
-    // 帧率被拥塞控制硬压到个位数；最低档压到 1M 配合 360p@15 保画面连续
+    // v1.241: 扩到 7 档——蜂窝上行普遍仅 1~2Mbps，编码器无降档余地时帧率被拥塞控制硬压到个位数
+    // v1.243: 整体下移（9M 起步/800k 底档）与初始 9Mbps 一致，蜂窝链路 1M 档比 800k 档更平滑，
+    // 避免网络状态机恢复时重新放宽到旧的 12Mbps 高位
     private val adaptBitrateCaps = intArrayOf(9_000_000, 6_000_000, 4_000_000, 2_800_000, 1_800_000, 1_200_000, 800_000)
     // 对端音频电平 0~32768（collectStatsFor 从 inbound audio 统计更新，供对讲状态指示）
     @Volatile private var remoteAudioLevel = 0.0
@@ -1796,7 +1799,8 @@ class WebRTCPeer(
         val isEncOk = !viewerStallActive && !cpuBottleneck &&
             (encodedFps >= target * 0.85 || (encodedFps <= 0 && encNoStatSamples >= 8))
         if (!encLoadDown) {
-            // 严重掉帧立即降档；轻度持续掉帧连续两次确认，避免统计瞬时波动误触发。
+            // v1.243: 严重掉帧（编码帧率<目标60%）/cpu瓶颈/观看端反馈立即降档；
+            // 轻度持续掉帧仍需 2 次采样确认，避免统计瞬时波动误触发
             if (isEncLag) {
                 encLoadSamples++
                 encRecoverSamples = 0
@@ -1847,8 +1851,8 @@ class WebRTCPeer(
     private fun applyEncoderLoadProfile(down: Boolean) {
         val targetProfile = if (down) 1 else 0
         val effective = maxOf(captureProfileForLevel(curAdaptLevel), targetProfile)
-        // 编码瓶颈时优先保连续性：30fps 动态画面在部分设备上会因硬编/热降频持续掉帧。
-        // 主动降到 24fps 通常比“设置 30fps 但实际只能编码 12~18fps”更平滑；网络恢复后再按基础档位回升。
+        // 编码瓶颈时除降分辨率外同步降采集帧率（30→24）。播放视频等高动态画面单靠降分辨率
+        // 仍可能让 30fps 编不动，观看端一帧一帧跳；恢复时回弱网档位对应的基础帧率。
         val baseFps = captureFpsForLevel(curAdaptLevel)
         val targetFps = if (down) minOf(baseFps, 24) else baseFps
         // degradationPreference：编码瓶颈时保帧率降分辨率（动态画面流畅优先）
@@ -1863,7 +1867,7 @@ class WebRTCPeer(
                 params.degradationPreference = degradation
                 params.encodings?.firstOrNull()?.maxFramerate = targetFps
                 rtp.parameters = params
-                Log.d(TAG, "编码负载自适应: ${if (down) "降分辨率保${targetFps}fps" else "回升高清@$targetFps"} 策略=$degradation")
+                Log.d(TAG, "编码负载自适应: ${if (down) "降720p@24" else "回升1080p@$targetFps"} 策略=$degradation")
             }
             // V4：1 对 1 模式视频实际承载在 viewer 连接，同步设置其 sender 的降级策略与帧率上限
             viewerConnections.values.forEach { conn ->
@@ -2011,6 +2015,8 @@ class WebRTCPeer(
         if (lastAdaptBitrateCap != cap) {
             lastAdaptBitrateCap = cap
             try {
+                // v1.243: 下限随档位下调（min(500k, cap)），深档（800k 底档）时 min 不再硬卡 1M，
+                // 避免 min>max 的不一致区间干扰拥塞控制收敛
                 pc.setBitrate(minOf(500_000, cap), (cap * 0.7).toInt(), cap)
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
@@ -2025,11 +2031,13 @@ class WebRTCPeer(
                 val params = sender.parameters
                 params.degradationPreference = degradation
                 sender.parameters = params
-                Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms 实发${actualBitrateBps / 1000}k 档位${curAdaptLevel} 码率上限${cap / 1000000}M 策略=$degradation")
+                val capTxt = if (cap >= 1_000_000) "${cap / 1_000_000}M" else "${cap / 1000}k"
+                Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms 实发${actualBitrateBps / 1000}k 档位${curAdaptLevel} 码率上限$capTxt 策略=$degradation")
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应切分辨率策略失败: ${t.message}")
             }
-            // 采集侧降分辨率：码率上限与初始 9Mbps 保持一致，避免网络状态机重新放宽到旧的 12Mbps。
+            // V3.1: 采集侧降分辨率——弱网档位>=2 降720p、>=3 降480p，减轻采集+编码双端负载；
+            // 恢复档位0 回升 1080p（v1.243: 顶档码率上限 9M）
             // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
             // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
             val weakProfile = captureProfileForLevel(curAdaptLevel)
