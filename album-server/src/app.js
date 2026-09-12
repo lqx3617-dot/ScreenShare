@@ -108,10 +108,9 @@ function isJpeg(buf) {
 }
 
 // ==================== 访问鉴权中间件 ====================
-// /api/*（App 用 OkHttp/Coil，可带自定义 header）：密钥仅经 header `x-album-key` 传递，
+// /api/*（App 用 OkHttp/Coil，可带自定义 header）：写操作仅经 header `x-album-key` 传递，
 // 废弃 query ?key=（避免密钥进 URL 日志/Referer 泄露）。
-// 网页 /all、/<token>/、/<token>/<pad>.jpg（浏览器 <img> 无法带自定义 header）：
-// 保留 query+header 双通道，否则网页缩略图全部 401。
+// 只读 GET（网页 <img>/<video>/fetch 与浏览器直接播放无法带自定义 header）：保留 query+header 双通道。
 function auth(req, res, next) {
   if (!ALBUM_KEY) return next();
   const fromHeader = String(req.headers["x-album-key"] || "");
@@ -119,8 +118,10 @@ function auth(req, res, next) {
   // 过渡期：旧版 App 携带的轮换前密钥仍放行（ALBUM_KEY_OLD 未设置时立即失效）
   if (ALBUM_KEY_OLD && fromHeader === ALBUM_KEY_OLD) return next();
   const isApi = req.path.startsWith("/api/");
-  if (!isApi && String(req.query.key || "") === ALBUM_KEY) return next();
-  if (!isApi && ALBUM_KEY_OLD && String(req.query.key || "") === ALBUM_KEY_OLD) return next();
+  // 只读 GET 放行 query key；写操作（POST）仍仅 header，防密钥经 URL 泄露后被用于上传/删除
+  const queryAllowed = !isApi || req.method === "GET";
+  if (queryAllowed && String(req.query.key || "") === ALBUM_KEY) return next();
+  if (queryAllowed && ALBUM_KEY_OLD && String(req.query.key || "") === ALBUM_KEY_OLD) return next();
   return res.status(401).type("text/plain").send("unauthorized");
 }
 app.use(auth);
@@ -169,6 +170,20 @@ function loadSession(token) {
 function json(res, code, obj) {
   res.status(code).json(obj);
 }
+
+/**
+ * 启动时把旧版 meta.json 会话懒迁移入库：只需执行一次。
+ * 早期 /api/albums 每次请求都全盘 readdir + 逐会话查库，聚合页/相册 App 每 5s 轮询时
+ * 会做 O(会话数) 次文件系统与 DB 操作，改为启动迁移一次后消除该开销。
+ */
+function migrateLegacySessions() {
+  try {
+    for (const name of fs.readdirSync(ALBUM_ROOT)) {
+      if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
+    }
+  } catch (e) {}
+}
+migrateLegacySessions();
 
 // ==================== POST /api/upload ====================
 // 按 action 分流：create 严格限流，upload/original/finish 宽松（批量上传不被阻断）
@@ -405,7 +420,6 @@ app.get("/api/pending", (req, res) => {
 });
 
 // ==================== 聚合相册：全部会话照片归拢 ====================
-// ==================== 聚合相册：全部会话照片归拢 ====================
 
 /**
  * 照片重复检测与删除：
@@ -529,12 +543,7 @@ app.get("/api/devices", (req, res) => {
 
 /** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
 app.get("/api/albums", (req, res) => {
-  // 扫描磁盘目录，把旧版 meta.json 会话懒迁移入库，确保历史照片也归拢进聚合视图
-  try {
-    for (const name of fs.readdirSync(ALBUM_ROOT)) {
-      if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
-    }
-  } catch (e) {}
+  // 旧版 meta.json 会话已在启动时迁移入库（migrateLegacySessions），此处无需再扫盘
   const deviceFilter = String(req.query.device || "").trim().replace(/\s+/g, "");
   const albums = db
     .listAll()
@@ -556,6 +565,9 @@ app.get("/api/albums", (req, res) => {
 /** 聚合相册网页：无需链接即可查看全部照片（主 App 内 WebView 打开） */
 app.get("/all", (req, res) => {
   res.set("Content-Type", "text/html; charset=utf-8");
+  // 禁止缓存：页面内嵌的视频/图片 URL 与鉴权逻辑随版本变化，WebView 命中旧 HTML 会导致播放失败
+  res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.set("Pragma", "no-cache");
   // 网页需把 key 传给页面（页面内 <img> 无法带 header），header 与 query 双通道
   const key = String(req.query.key || req.headers["x-album-key"] || "");
   res.send(renderAllAlbumPage(key));
@@ -574,6 +586,9 @@ app.use((req, res, next) => {
   if (!session) return res.status(404).type("text/plain").send("not found");
   if (!file) {
     res.set("Content-Type", "text/html; charset=utf-8");
+    // 禁止缓存：页面内嵌的视频/图片 URL 与鉴权逻辑随版本变化，浏览器/WebView 命中旧 HTML 会导致播放失败
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.set("Pragma", "no-cache");
     // 网页内 <img> 加载缩略图无法带 header，key 经 query 传给页面（Header 通道保留）
     const key = String(req.query.key || req.headers["x-album-key"] || "");
     return res.send(renderAlbumPage(session, key));

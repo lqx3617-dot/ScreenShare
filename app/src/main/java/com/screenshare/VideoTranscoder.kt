@@ -95,8 +95,10 @@ object VideoTranscoder {
         val encoderSurface = encoder.createInputSurface()
 
         val renderer = SurfaceRender(outW, outH, encoderSurface)
+        val decoderInputSurface = renderer.inputSurface
+            ?: throw java.io.IOException("视频渲染器初始化失败，无法转码")
         val decoder = MediaCodec.createDecoderByType(vFmt.getString(MediaFormat.KEY_MIME)!!)
-        decoder.configure(vFmt, renderer.inputSurface, null, 0)
+        decoder.configure(vFmt, decoderInputSurface, null, 0)
 
         // 音频链（buffer 模式）
         var audioDecoder: MediaCodec? = null
@@ -217,9 +219,11 @@ object VideoTranscoder {
                 val outIdx = decoder.dequeueOutputBuffer(info, TIMEOUT_US)
                 when {
                     outIdx >= 0 -> {
-                        if (info.size > 0) renderer.render(info.presentationTimeUs)
                         if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) vDecoderEos = true
+                        // 必须先把解码帧释放到 SurfaceTexture（render=true），updateTexImage 才能取到这一帧；
+                        // 顺序颠倒会导致纹理永远慢一帧且首帧为黑
                         decoder.releaseOutputBuffer(outIdx, true)
+                        if (info.size > 0) renderer.render(info.presentationTimeUs)
                         if (durationUs > 0) onProgress((info.presentationTimeUs.toFloat() / durationUs).coerceIn(0f, 1f))
                     }
                     outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
@@ -469,16 +473,23 @@ object VideoTranscoder {
         private var program = 0
         private var texId = 0
         private var initOk = false
-        private val surfaceTexture = SurfaceTexture(0)
+        private var surfaceTexture: SurfaceTexture? = null
         private val texMatrix = FloatArray(16)
 
-        val inputSurface: Surface = Surface(surfaceTexture)
+        var inputSurface: Surface? = null
+            private set
 
         init {
             try {
-                surfaceTexture.setDefaultBufferSize(outW, outH)
                 initEgl(encoderInputSurface)
+                // 必须先建好 EGL 上下文并生成 texId，再用该纹理名构造 SurfaceTexture。
+                // 若用 0（自动生成）在“当前无 GL 上下文”时构造，SurfaceTexture 会另生成
+                // 一个内部纹理，着色器采样的 texId 永远拿不到解码帧 → 输出整段全黑。
                 initGl()
+                val st = SurfaceTexture(texId)
+                st.setDefaultBufferSize(outW, outH)
+                surfaceTexture = st
+                inputSurface = Surface(st)
                 initOk = true
             } catch (t: Throwable) {
                 Log.w(TAG, "SurfaceRender 初始化失败: ${t.message}")
@@ -589,9 +600,10 @@ object VideoTranscoder {
         /** 渲染一帧到 encoder surface（每解码一帧调用一次） */
         fun render(ptsUs: Long) {
             if (!initOk) return
+            val st = surfaceTexture ?: return
             try {
-                surfaceTexture.updateTexImage()
-                surfaceTexture.getTransformMatrix(texMatrix)
+                st.updateTexImage()
+                st.getTransformMatrix(texMatrix)
 
                 GLES20.glUseProgram(program)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
@@ -632,8 +644,8 @@ object VideoTranscoder {
             try { if (eglSurface != null) EGL14.eglDestroySurface(eglDisplay, eglSurface) } catch (t: Throwable) {}
             try { if (eglContext != null) EGL14.eglDestroyContext(eglDisplay, eglContext) } catch (t: Throwable) {}
             try { if (eglDisplay != null) EGL14.eglTerminate(eglDisplay) } catch (t: Throwable) {}
-            try { inputSurface.release() } catch (t: Throwable) {}
-            try { surfaceTexture.release() } catch (t: Throwable) {}
+            try { inputSurface?.release() } catch (t: Throwable) {}
+            try { surfaceTexture?.release() } catch (t: Throwable) {}
         }
     }
 }

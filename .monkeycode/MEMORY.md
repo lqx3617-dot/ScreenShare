@@ -597,3 +597,45 @@ Entries discovered by the Agent during task execution should follow this format:
   - 服务端 videos 持久化与聚合展示无问题：db.js 有 videos 列（JSON 数组），app.js /api/albums 带 videos，web.js isVideo 判定正确；排除「传了看不到」路径。
   - v1.245(248) 产物：allarch md5=994195eab8cf0d5eb32f72fec4baa8a3（24.6MB）、arm64 md5=d76bffb02780f87f6c48a723ed2b48dc（17.8MB）；8090 version.json 已自动同步 248/1.245。commit b46e514。构建脚本 /tmp/opencode/build_v1245.sh。
   - 待真机验证：仅授权图片时提示「仅上传照片」；补授视频权限后视频上传成功、观看端可播放。
+
+## v1.201 修复相册视频无法播放的鉴权问题（2026-09-11）
+
+[Project Knowledge Summary]
+- Date: 2026-09-11
+- Context: 用户反馈 v1.245 后视频已上传成功（DB/files 均在）但仍「看不到视频」，定位到观看端播放鉴权
+- Category: Troubleshooting & Debugging & Operations & Deployment
+- Instructions:
+  - **根因**：相册服务端对 `/api/*` 只认 `x-album-key` header。照片缩略图/原图走 Coil/OkHttp（可带 header）故正常；视频用 Android 平台 `VideoView`（MediaPlayer）播放，**不经过 OkHttp/Coil 拦截器**，请求 `/api/video` 无 header → 401；网页 `<video>` 同理无法带自定义 header。
+  - 修复一（客户端 albumviewer）：`vv.setVideoURI(uri, headers)` 显式携带 `mapOf("x-album-key" to BuildConfig.ALBUM_KEY)`，不再用无 header 的 `setVideoURI(uri)`。
+  - 修复二（服务端 src/app.js 鉴权中间件）：**只读 GET 放行 query `?key=`，写操作（POST）仍仅 header**——兼顾浏览器无法带 header 的只读场景（`<img>/<video>/fetch`）与「密钥经 URL 泄露后不能被用于上传/删除」的安全边界。实测：GET video/albums/status 带 key=200、无 key=401、POST 带 query key=401、POST 带 header=200。
+  - 修复三（网页 src/web.js）：视频/原图 URL 已含 `?token=..&index=..`，追加 key 必须用新的 `KQ()`（`&key=`）而非复用 `K()`（`?key=`），否则拼成 `index=5?key=xxx` 被解析错仍 401。两处渲染函数（单会话页 / 聚合 /all 页）都要改。
+  - v1.201(23) 产物：AlbumViewer-signed.apk md5=d81b25bfffd5e0dd02f0afc5428b73cb（2.4MB）；8090 albumviewer-version.json 已自动同步 23/1.201；构建脚本 /tmp/opencode/build_album_v1201.sh。commit 84e8fff（推送时 GitHub 网络中断，待网络恢复后 push）。
+  - 服务端改动需重启 8096 进程生效（kill 旧 node pid，supervise 15s 内自动拉起）；本次未改主 App，主 App 内置 WebView 观看端因服务端修复而一并恢复。
+  - 待真机验证：相册 App 点视频可播放；网页 `/all` 点视频可播放。
+
+## v1.202 相册 App 播放/保存体验优化 + 服务端聚合接口提速（2026-09-11）
+
+[Project Knowledge Summary]
+- Date: 2026-09-11
+- Context: 相册视频播放鉴权修复后继续优化观看端体验与健壮性
+- Category: Troubleshooting & Debugging & Operations & Deployment
+- Instructions:
+  - 大文件（视频）保存必须流式落盘：原 `httpGetBytes` 用 `resp.body?.bytes()` 把整个视频读进内存，几十 MB 会 OOM 且受 OkHttp readTimeout（20s）约束。新增 `AlbumApi.downloadToFile(url, dest)` 用 `byteStream().copyTo()` 流式写临时文件，再拷贝进 MediaStore（readTimeout 约束的是相邻块间隔而非总时长，流式可持续下载大文件）。
+  - 平台 VideoView 的 `setOnPreparedListener` 里应直接 `start()`，勿依赖 `setOnVideoSizeChangedListener` 触发播放（部分视频不触发该回调会一直不播）。
+  - 相册 App v1.202(24) 改动：视频对话框新增 `dialog_video.xml`（VideoView + ProgressBar 缓冲指示 + 关闭按钮 + 错误提示）、`setOnInfoListener` 按 MEDIA_INFO_BUFFERING_START/END、VIDEO_RENDERING_START 切换转圈；保存照片用「fetchOriginal 是否返回」显式区分原图/预览图（原用 `data.size>10000` 猜测不可靠）；保存写文件移到 `Dispatchers.IO`；状态栏显示视频数；抽取 `Dialog.applyFullScreen()` 扩展消除 4 处重复窗口设置。产物 md5=1283c0f0cfc4deb4f9f60d331ec24ee1，8090 albumviewer-version.json 已同步 24/1.202。
+  - 服务端 app.js：`/api/albums` 原先每次请求都 `readdirSync(ALBUM_ROOT)` + 逐会话 `loadSession`（仅为迁移旧 meta.json），而聚合页/相册 App 每 5s 轮询，开销随会话数线性增长；改为 `migrateLegacySessions()` 启动时执行一次。改动后重启 8096 验证 `/api/albums` 200。
+  - commit a432fab（连同 84e8fff、4ee148f 因 GitHub 网络中断待推送）。
+  - **网页/主 App 内置相册「视频播放不了」根因（v1.202 后补丁）**：web.js 中 `<video id="ovvideo">` 是 `#ov` 容器子元素，而 `#ov` 绑定 `onclick="closeView()"`，点击视频控件（播放/进度条）事件冒泡到容器 → 遮罩立即关闭、视频不可操作（WebView 自动播放被拦时按播放键就消失）。修复：`<video ... onclick="event.stopPropagation()">`。另一坑：聚合页原用 `location.reload()` 刷新，WebView 的 `loadUrl(url, headers)` 附加请求头不会随 JS `location.reload()` 重发 → 重载后无 x-album-key → 页面 key 为空 → 图片/视频全 401；改为 `loadAlbums()` 局部刷新。HTML 响应加 `Cache-Control: no-cache` 防命中旧脚本。
+  - 排查结论备查：服务端 `/api/video`（header/query key/Range）与公网反代均实测 200/206；视频文件结构完整（ftyp+mdat+moov）、编码 H.264(avc1)+AAC(mp4a)，文件/网络均无问题，问题在客户端播放交互。commit 71dccc7。
+
+## v1.246 上传视频整段全黑根因（转码 SurfaceTexture 纹理）（2026-09-12）
+
+[Project Knowledge Summary]
+- Date: 2026-09-12
+- Context: 用户反馈相册查看 App 打开视频「有播放控件但画面全黑」，服务端/网络/编码均已排除
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **判黑方法（服务端侧，无需真机）**：用 ffmpeg `blackdetect=d=0.1:pix_th=0.10` 判断视频内容是否整段黑帧，用 `ffprobe -show_entries stream=profile,width,height,nb_frames,duration` 看编码。本次 6 个样本 `black_duration≈总时长`、多个时刻 YAVG≈16 → 内容本身全黑，问题在上传侧转码，与播放器/鉴权/网络无关。
+  - **根因（app/src/main/java/com/screenshare/VideoTranscoder.kt 的 SurfaceRender）**：①`SurfaceTexture` 用纹理名 0 在 EGL 上下文创建之前（字段初始化阶段）构造，会在「无当前 GL 上下文」时另生成内部纹理，着色器采样的 `texId` 永远拿不到解码帧 → 每帧全黑；必须先 `initEgl()` + `initGl()`（生成 texId），再 `SurfaceTexture(texId)`。②解码帧渲染顺序颠倒：应先 `decoder.releaseOutputBuffer(outIdx, true)` 再 `renderer.render(...)`（其内 `updateTexImage`），否则纹理慢一帧、首帧黑。
+  - v1.246(249) 产物：ScreenShare-allarch-signed.apk md5=6ccdb148709207a2bd929bf19ec51a0b、arm64 md5=50ff41b631d8c72b46302e391371c5ea；构建脚本 /tmp/opencode/build_v1246.sh。commit acca326（已 push）。
+  - 注意：修复前已上传的黑视频不会自动恢复，需用修复版 App 重新上传相册才会生成正常视频。
