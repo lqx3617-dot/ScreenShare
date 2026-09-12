@@ -50,8 +50,8 @@ const DIAG = process.env.DIAG === "1";
 const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
 // 密钥轮换过渡期旧 token（2026-08-26 轮换）：旧版 App 崩溃上报仍接受，双端更新后应移除
 const DIAG_TOKEN_OLD = process.env.DIAG_TOKEN_OLD || "";
-// 兼容方案：设置 REQUIRE_TOKEN=1 才强制房间 token 认证，默认关闭保持旧客户端可用
-const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
+// 默认强制房间 token 认证；仅在明确需要兼容旧客户端时设 REQUIRE_TOKEN=0 关闭
+const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN !== "0";
 // 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
 const HEARTBEAT_TIMEOUT = 45 * 1000;
 // 所有 ws 连接（用于心跳扫描）
@@ -89,7 +89,7 @@ const allClients = new Set();
       return true;
     }
     entry.count += 1;
-    return entry.count <= AUTH_MAX_ATTEMPTS;
+    return entry.count < AUTH_MAX_ATTEMPTS;
   }
 
   function allowPlsJoin(ip) {
@@ -100,7 +100,7 @@ const allClients = new Set();
       return true;
     }
     entry.count += 1;
-    return entry.count <= PLS_JOIN_MAX_ATTEMPTS;
+    return entry.count < PLS_JOIN_MAX_ATTEMPTS;
   }
 
   // 每分钟清理过期限流记录，避免长期运行内存堆积
