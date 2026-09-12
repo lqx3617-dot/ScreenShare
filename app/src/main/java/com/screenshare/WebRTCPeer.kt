@@ -1248,19 +1248,26 @@ class WebRTCPeer(
     }
 
     /**
-     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
-     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
-     * 依据 ActivityManager.isLowRamDevice 与 largeMemoryClass 双重判断。
+     * 低端老设备统一判断（v1.248）：依据 ActivityManager.isLowRamDevice 与
+     * largeMemoryClass 双重判断，结果惰性缓存（避免反复调 getSystemService）。
+     * 低端机的硬编能力有限，CHANGELOG v1.231/v1.234/v1.235 均记载过提帧率/提档位
+     * 会导致「帧率塌陷、整体观感更卡」，因此帧率上限与起始档位都要按此分流。
      */
-    private fun initialCaptureProfile(): Int {
-        return try {
+    private val isLowEndDevice: Boolean by lazy {
+        try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            if (am.isLowRamDevice || am.largeMemoryClass <= 256) 1 else 0
+            am.isLowRamDevice || am.largeMemoryClass <= 256
         } catch (t: Throwable) {
-            Log.w(TAG, "设备能力探测失败，默认1080p: ${t.message}")
-            0
+            Log.w(TAG, "设备能力探测失败，按中高端设备处理: ${t.message}")
+            false
         }
     }
+
+    /**
+     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
+     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
+     */
+    private fun initialCaptureProfile(): Int = if (isLowEndDevice) 1 else 0
 
     /**
      * 共享方：切换采集/编码帧率（观看方下发指令触发）。
@@ -1739,7 +1746,9 @@ class WebRTCPeer(
     // v1.246 实验：高动态内容（视频播放）采集帧率上限。30fps 采集与 30fps 内容帧
     // 存在相位差导致系统性丢帧，提到 48fps 减少丢帧。仅档位0（网络良好）生效；
     // 设为 30 即可一键回退到旧行为。
-    private val highMotionFpsCap = 48
+    // v1.248: 低端老设备维持 30fps——硬编扛不住 48fps（CHANGELOG v1.231/v1.234/v1.235
+    // 记载过低端机提帧率会帧率塌陷、观感更卡）。
+    private val highMotionFpsCap: Int get() = if (isLowEndDevice) 30 else 48
     // v1.247: 观看方手动帧率选择（0=未覆盖，走自适应；>0=档位0下覆盖自适应值）。
     // 弱网档位（>=1）下始终让位于弱网降档，避免手动值把帧率顶回高位导致卡顿。
     @Volatile private var manualFpsOverride = 0
