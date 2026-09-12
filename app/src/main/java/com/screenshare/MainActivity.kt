@@ -174,8 +174,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 会议号弹窗（连接建立后自动关闭，避免遮挡后续界面）
     private var meetingCodeDialog: Dialog? = null
 
-    // 观看方帧率切换（60/30 帧）
-    private var currentFps = 60
+    // v1.247 观看方帧率切换：高帧率(48fps) / 标准(30fps)。
+    // 原实现为 60/30 且链路实际上限仅 30，按钮从未生效；现与 WebRTCPeer 的
+    // highMotionFpsCap(48) 对齐，弱网档位下手动值仍让位于自适应降档。
+    private var currentFps = 48
 
     // 麦克风（会议内双向对讲）：false=已开启且未静音，true=已开启但静音
     private var micMuted = false
@@ -699,16 +701,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
-    /** 观看方点击切换 60/30 帧，经控制通道通知共享方 */
+    /** 观看方点击切换 高帧率(48)/标准(30) 帧，经控制通道通知共享方 */
     private fun onFpsToggleClicked() {
-        currentFps = if (currentFps == 60) 30 else 60
-        binding.btnFpsToggle.text = "${currentFps}帧"
+        currentFps = if (currentFps > 30) 30 else 48
+        binding.btnFpsToggle.text = if (currentFps > 30) "高帧率" else "标准"
         val msg = org.json.JSONObject()
             .put("type", "fps")
             .put("value", currentFps)
             .toString()
         peer?.sendControl(msg)
-        Toast.makeText(this, "已切换为 ${currentFps} 帧", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, if (currentFps > 30) "已切换为高帧率模式" else "已切换为标准帧率", Toast.LENGTH_SHORT).show()
     }
 
     /** 观看方点击切换 完整显示/铺满 模式，实时生效 */
@@ -3954,7 +3956,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llCtrlStatus.visibility = View.GONE
         isControlMode = false
         ctrlDownSent = false
-        currentFps = 60
+        currentFps = 48
         micMuted = false
         videoCallOn = false
         binding.btnCamera.visibility = View.GONE
