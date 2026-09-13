@@ -89,7 +89,7 @@ const allClients = new Set();
       return true;
     }
     entry.count += 1;
-    return entry.count <= AUTH_MAX_ATTEMPTS;
+    return entry.count < AUTH_MAX_ATTEMPTS;
   }
 
   function allowPlsJoin(ip) {
@@ -100,7 +100,7 @@ const allClients = new Set();
       return true;
     }
     entry.count += 1;
-    return entry.count <= PLS_JOIN_MAX_ATTEMPTS;
+    return entry.count < PLS_JOIN_MAX_ATTEMPTS;
   }
 
   // 每分钟清理过期限流记录，避免长期运行内存堆积

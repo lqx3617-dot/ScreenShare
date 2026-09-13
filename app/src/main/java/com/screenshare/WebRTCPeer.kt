@@ -511,9 +511,11 @@ class WebRTCPeer(
                 params.encodings?.firstOrNull()?.let { enc ->
                     // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
                     // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
-                    enc.maxBitrateBps = 9_000_000
+                    // v1.249: 低端机进一步截到 6M（maxBitrateCap）
+                    enc.maxBitrateBps = minOf(9_000_000, maxBitrateCap)
                     enc.minBitrateBps = 600_000
-                    enc.maxFramerate = 30
+                    // v1.246: 与 host 侧 highMotionFpsCap 保持一致
+                    enc.maxFramerate = highMotionFpsCap
                     enc.networkPriority = 4
                     enc.bitratePriority = 4.0
                 }
@@ -1247,23 +1249,53 @@ class WebRTCPeer(
     }
 
     /**
-     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
-     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
-     * 依据 ActivityManager.isLowRamDevice 与 largeMemoryClass 双重判断。
+     * 低端老设备统一判断（v1.248）：依据 ActivityManager.isLowRamDevice 与
+     * largeMemoryClass 双重判断，结果惰性缓存（避免反复调 getSystemService）。
+     * 低端机的硬编能力有限，CHANGELOG v1.231/v1.234/v1.235 均记载过提帧率/提档位
+     * 会导致「帧率塌陷、整体观感更卡」，因此帧率上限与起始档位都要按此分流。
      */
-    private fun initialCaptureProfile(): Int {
-        return try {
+    private val isLowEndDevice: Boolean by lazy {
+        try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            if (am.isLowRamDevice || am.largeMemoryClass <= 256) 1 else 0
+            am.isLowRamDevice || am.largeMemoryClass <= 256
         } catch (t: Throwable) {
-            Log.w(TAG, "设备能力探测失败，默认1080p: ${t.message}")
-            0
+            Log.w(TAG, "设备能力探测失败，按中高端设备处理: ${t.message}")
+            false
         }
     }
 
-    /** 共享方：切换采集/编码帧率（观看方下发指令触发） */
+    /**
+     * 设备自适应起始采集档位：低端老设备开局直接 720p，不让其硬冲 1080p 硬编。
+     * 旗舰/中端设备仍 1080p 起步保持清晰度；后续编码瓶颈自适应会继续降档。
+     */
+    private fun initialCaptureProfile(): Int = if (isLowEndDevice) 1 else 0
+
+    /**
+     * 共享方：切换采集/编码帧率（观看方下发指令触发）。
+     * v1.247: 不再直接改动 captureFps，而是记录 manualFpsOverride 交给自适应逻辑统一裁决：
+     * - 档位0（网络良好）：手动值覆盖 captureFpsForLevel 的默认值
+     * - 档位>=1（弱网）：忽略手动值，仍走弱网降档曲线保连续性
+     * 这样既让按钮真正生效，又不会与弱网自适应互相打架反复重启采集器。
+     */
     fun setFramerate(fps: Int) {
         if (disposed) return
+        val target = when {
+            fps <= 0 -> 0                       // 0 = 清除手动覆盖，回到自适应
+            fps <= 30 -> 30                     // 「标准」档
+            else -> highMotionFpsCap            // 「高帧率」档（48）
+        }
+        manualFpsOverride = target
+        val wantFps = if (curAdaptLevel <= 0) {
+            if (target > 0) target else captureFpsForLevel(0)
+        } else {
+            captureFpsForLevel(curAdaptLevel)
+        }
+        applyCaptureFps(wantFps, "手动切换")
+    }
+
+    /** 统一的采集帧率落地：同步采集器与编码器上限（避免两处值不一致） */
+    private fun applyCaptureFps(fps: Int, tag: String) {
+        if (fps <= 0 || fps == captureFps) return
         val capturer = videoCapturer ?: return
         try {
             // 保持当前采集档位尺寸（弱网降质期间切帧率不应恢复 1080p）
@@ -1275,7 +1307,7 @@ class WebRTCPeer(
                 params.encodings?.firstOrNull()?.maxFramerate = fps
                 sender.parameters = params
             }
-            AppLogger.capture("帧率已切换为 ${fps}fps (${capW}x${capH})")
+            AppLogger.capture("$tag: 帧率 ${fps}fps (${capW}x${capH})")
         } catch (t: Throwable) {
             Log.e(TAG, "切换帧率失败: ${t.message}")
         }
@@ -1307,9 +1339,9 @@ class WebRTCPeer(
             // 旗舰/中端设备仍 1080p 起步保持清晰度，后续编码瓶颈自适应会继续降档。
             val initialProfile = initialCaptureProfile()
             val (capW, capH) = captureSizeForLevel(initialProfile)
-            // 采集帧率 30fps：实测 60fps 下硬件编码器处理每帧排队更久，端到端延迟反而更高；
-            // 30fps 帧间隔 33ms，编码器负载低、延迟更小（屏幕共享流畅度也足够）
-            captureFps = 30
+            // 采集帧率：v1.246 实验提高到 highMotionFpsCap(48)，缓解播放视频时
+            // 与 30fps 内容帧的相位差丢帧；实测若延迟/发热变差可改回 30。
+            captureFps = highMotionFpsCap
             lastCaptureProfile = initialProfile
             reportProgress("③c 启动采集 ${capW}x${capH}@${captureFps}（设备档位$initialProfile）...")
             capturer.startCapture(capW, capH, captureFps)
@@ -1329,10 +1361,12 @@ class WebRTCPeer(
                     val params = rtp.parameters
                     params.encodings?.firstOrNull()?.let { enc ->
                         // 打开应用等画面剧烈变化场景，码率瞬间需求大；上限过高会导致瞬时拥塞丢包。
-                        // 12M 上限 + 初始 2.5M：WiFi 保持高清，弱网/低端机降低卡顿与发热。
-                        enc.maxBitrateBps = 12_000_000
+                        // v1.249: 上限按设备分流——低端机 6M 防硬编热降频，中高端 12M 保持高清。
+                        enc.maxBitrateBps = maxBitrateCap
                         enc.minBitrateBps = 1_000_000
-                        enc.maxFramerate = 30
+                        // v1.246: 编码器帧率上限与采集一致（highMotionFpsCap），
+                        // 避免编码上限 30 卡住 48fps 采集
+                        enc.maxFramerate = highMotionFpsCap
                         // 低延迟：屏幕共享视频流高优先级，避免拥塞控制过度平滑/抑制导致延迟升高
                         enc.networkPriority = 4
                         enc.bitratePriority = 4.0
@@ -1347,8 +1381,8 @@ class WebRTCPeer(
                     // 初始带宽 4M 起步：低于 5M 峰值避免启动瞬间拥塞，高于 2.5M 让画面更快清晰
                     //（1080p30 屏幕共享 2.5M 起步爬坡期画面模糊，弱网由拥塞控制 + 弱网自适应兜底降档）
                     try {
-                        peerConnection?.setBitrate(1_000_000, 4_000_000, 12_000_000)
-                        Log.d(TAG, "已设置初始带宽 1/4/12 Mbps")
+                        peerConnection?.setBitrate(1_000_000, 4_000_000, maxBitrateCap)
+                        Log.d(TAG, "已设置初始带宽 1/4/${maxBitrateCap / 1_000_000} Mbps")
                     } catch (t: Throwable) {
                         Log.w(TAG, "setBitrate 失败: ${t.message}")
                     }
@@ -1709,7 +1743,22 @@ class WebRTCPeer(
     private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
     private var lastCaptureSwitchMs = 0L
-    private val captureSwitchCooldownMs = 8000L
+    // v1.249: captureSwitchCooldownMs 已改为按设备分流的 get() 属性（见上方 highMotionFpsCap 附近）
+    // v1.246 实验：高动态内容（视频播放）采集帧率上限。30fps 采集与 30fps 内容帧
+    // 存在相位差导致系统性丢帧，提到 48fps 减少丢帧。仅档位0（网络良好）生效；
+    // 设为 30 即可一键回退到旧行为。
+    // v1.248: 低端老设备维持 30fps——硬编扛不住 48fps（CHANGELOG v1.231/v1.234/v1.235
+    // 记载过低端机提帧率会帧率塌陷、观感更卡）。
+    private val highMotionFpsCap: Int get() = if (isLowEndDevice) 30 else 48
+    // v1.249: 低端机码率上限同步下调——硬编在高码率下更易触发热降频（v1.231 帧率
+    // 塌陷的成因之一）。低端机顶档 6M，中高端保持 12M。
+    private val maxBitrateCap: Int get() = if (isLowEndDevice) 6_000_000 else 12_000_000
+    // v1.249: 低端机采集格式切换冷却期延长——v1.234 记载低端机持续降档会反复触发
+    // changeCaptureFormat，负反馈循环加剧掉帧，需更长冷却抑制震荡。
+    private val captureSwitchCooldownMs: Long get() = if (isLowEndDevice) 12_000L else 8_000L
+    // v1.247: 观看方手动帧率选择（0=未覆盖，走自适应；>0=档位0下覆盖自适应值）。
+    // 弱网档位（>=1）下始终让位于弱网降档，避免手动值把帧率顶回高位导致卡顿。
+    @Volatile private var manualFpsOverride = 0
 
     /**
      * V3.1: 按弱网档位选择采集分辨率档位。
@@ -1751,6 +1800,8 @@ class WebRTCPeer(
      * 30fps 下每帧数据量大且拥塞控制收敛慢，积压易导致接收端掉帧卡顿。
      * 弱网加重时同步降帧率（30→28→24→20），配合降码率/降分辨率进一步减轻链路负载，
      * 播放端观感反而更连续；档位恢复后回到 30fps。
+     * v1.246: 档位0（网络良好）改用 highMotionFpsCap=48，缓解播放视频时与
+     * 30fps 内容帧的相位差丢帧；弱网档位不变（带宽不足时提帧率只会更糟）。
      */
     private fun captureFpsForLevel(level: Int): Int {
         return when {
@@ -1759,7 +1810,8 @@ class WebRTCPeer(
             level >= 4 -> 20
             level >= 3 -> 24
             level >= 2 -> 28
-            else -> 30
+            // v1.247: 档位0 优先观看方手动值（未手动则用 highMotionFpsCap=48）
+            else -> if (manualFpsOverride > 0) manualFpsOverride else highMotionFpsCap
         }
     }
 
@@ -2008,7 +2060,8 @@ class WebRTCPeer(
                 recoverTimer = 0
             }
         }
-        val cap = adaptBitrateCaps[curAdaptLevel]
+        // v1.249: 低端机顶档截到 maxBitrateCap，避免硬编在高码率下热降频
+        val cap = minOf(adaptBitrateCaps[curAdaptLevel], maxBitrateCap)
         // 摄像头通话轨随档位同步自适应（码率/帧率上限），弱网时降低人脸画面数据量
         applyCameraAdaptation()
         // 仅档位变化时调码率/策略，避免周期重置影响拥塞控制收敛
@@ -2124,6 +2177,7 @@ class WebRTCPeer(
         encNoStatSamples = 0
         viewerStallActive = false
         lastCaptureFps = 30
+        manualFpsOverride = 0
         lastCameraBitrateCap = 0
         lastCameraFpsCap = 0
     }
