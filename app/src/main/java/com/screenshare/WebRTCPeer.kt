@@ -1604,8 +1604,14 @@ class WebRTCPeer(
                         // 诊断：当前选中的候选对路径（host/srflx/relay + 地址），用于定位 P2P 直连失败问题
                         var selPath = ""
                         var pathType = "" // 仅用于诊断去重：host/srflx/relay 组合，不含 IP
+                        // v1.248: 选中的候选对 id（transport.selectedCandidatePairId）；
+                        // 以及 nominated 兜底值（旧 SDK 不报 selectedCandidatePairId 时使用）
+                        var selectedPairId = ""
+                        var fbRtt = -1.0
+                        var fbSelPath = ""
+                        var fbPathType = ""
                         val stats = report.statsMap
-                        // 第一遍：索引各 candidate 的 id -> 地址与类型（本地/远端）
+                        // 第一遍：索引各 candidate 的 id -> 地址与类型（本地/远端）；并取选中候选对 id
                         val candAddr = HashMap<String, String>()
                         for ((_, s) in stats) {
                             val members = s.members ?: continue
@@ -1614,6 +1620,9 @@ class WebRTCPeer(
                                 val port = (members["port"] as? Number)?.toInt() ?: 0
                                 val ctype = (members["candidateType"] as? String) ?: "?"
                                 candAddr[s.id] = "$ctype $ip:$port"
+                            } else if (s.type == "transport") {
+                                val sel = members["selectedCandidatePairId"] as? String
+                                if (!sel.isNullOrEmpty()) selectedPairId = sel
                             }
                         }
                         for ((_, s) in stats) {
@@ -1661,22 +1670,38 @@ class WebRTCPeer(
                                 "candidate-pair" -> {
                                     val members = s.members
                                     if (members != null) {
-                                        val active = members["nominated"]
-                                        if (active == true || active?.toString() == "true") {
-                                            val r = (members["currentRoundTripTime"] as? Number)?.toDouble()
+                                        val nominated = members["nominated"] == true || members["nominated"]?.toString() == "true"
+                                        val state = (members["state"] as? String) ?: ""
+                                        val r = (members["currentRoundTripTime"] as? Number)?.toDouble()
+                                        // 记录选中路径：local:host 192.168.x → remote:relay 1.2.x（local→remote 方向）
+                                        val loc = (members["localCandidateId"] as? String) ?: ""
+                                        val rem = (members["remoteCandidateId"] as? String) ?: ""
+                                        val locStr = candAddr[loc] ?: "?"
+                                        val remStr = candAddr[rem] ?: "?"
+                                        val p = "$locStr → $remStr"
+                                        val pt = locStr.substringBefore(" ") + "→" + remStr.substringBefore(" ")
+                                        // v1.248: 只采纳真正生效的候选对。旧逻辑对任意 nominated=true 的对
+                                        // last-wins，ICE 重连/多次提名后可能命中历史遗留对，读到过期或偏高
+                                        // 的 RTT（实测 LAN 直连却报 713ms），触发 rttLevel 误降档把码率压死。
+                                        // 优先 transport.selectedCandidatePairId；缺失时退回 nominated 且 succeeded。
+                                        if (selectedPairId.isNotEmpty() && s.id == selectedPairId) {
                                             if (r != null && r > 0) rtt = r * 1000.0
-                                            // 记录选中路径：local:host 192.168.x → remote:relay 1.2.x（local→remote 方向）
-                                            val loc = (members["localCandidateId"] as? String) ?: ""
-                                            val rem = (members["remoteCandidateId"] as? String) ?: ""
-                                            val locStr = candAddr[loc] ?: "?"
-                                            val remStr = candAddr[rem] ?: "?"
-                                            selPath = "${locStr} → ${remStr}"
-                                            pathType = locStr.substringBefore(" ") + "→" + remStr.substringBefore(" ")
+                                            selPath = p
+                                            pathType = pt
+                                        } else if (nominated && (state == "succeeded" || state.isEmpty())) {
+                                            if (fbRtt <= 0 && r != null && r > 0) fbRtt = r * 1000.0
+                                            if (fbSelPath.isEmpty()) { fbSelPath = p; fbPathType = pt }
                                         }
                                     }
                                 }
                                 else -> {}
                             }
+                        }
+                        // v1.248: 无有效 selectedCandidatePairId 时退回 nominated+succeeded 的对
+                        if (rtt <= 0 && fbRtt > 0) {
+                            rtt = fbRtt
+                            selPath = fbSelPath
+                            pathType = fbPathType
                         }
                         // bytesReceived/bytesSent 为累计值，由调用方结合采样间隔换算码率
                         result = org.json.JSONObject().apply {
@@ -1736,6 +1761,10 @@ class WebRTCPeer(
     private var lastAdaptBitrateCap = 0
     // v1.241: 实际发送码率 EMA 平滑值（带宽匹配档位用；EMA 无界递增风险：码率上限 12M，Double 无溢出）
     private var bwSmooth = 0.0
+    // v1.248: 最近一次下发给编码器的目标码率（setBitrate 的 desired 值）。用于区分
+    // 「链路受限」与「内容静止/编码输出少」——仅当实测码率远低于该目标且伴随拥塞迹象时
+    // 才按实测带宽降档，避免自我降档死循环（低档→低目标→实测更低→继续降档）。
+    private var lastEncoderTargetBps = 0
     // V3.1: 动态采集分辨率
     private var captureFps = 30
     private var lastCaptureProfile = 0
@@ -1967,11 +1996,11 @@ class WebRTCPeer(
      * @param outLostCum remote-inbound-rtp packetsLost 累计值
      * @param rttMs candidate-pair 当前往返时延（毫秒），RTT 高时主动降档保流畅
      */
-    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int) {
+    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String) {
         val pc = peerConnection ?: return
         if (disposed) return
         val sender = videoSender ?: return
-        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps)
+        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit)
     }
 
     /**
@@ -1979,11 +2008,11 @@ class WebRTCPeer(
      * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
      * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
      */
-    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int) {
+    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String) {
         if (disposed) return
         val conn = viewerConnections[viewerId] ?: return
         val sender = conn.videoSender ?: return
-        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps)
+        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit)
     }
 
     /** 弱网自适应公共实现：档位状态机 + 码率/降级策略 + 采集分辨率调整（主连接与 viewer 连接共用） */
@@ -1995,7 +2024,8 @@ class WebRTCPeer(
         outSentCum: Long,
         outLostCum: Long,
         rttMs: Int,
-        actualBitrateBps: Int
+        actualBitrateBps: Int,
+        qualityLimit: String
     ) {
         // 丢包率：优先用 fractionLost（远端 RTCP 直接回报，实时准确）；未上报时用增量累计做差兜底
         var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
@@ -2027,21 +2057,35 @@ class WebRTCPeer(
             rttMs >= 200 -> 1
             else -> 0
         }
-        // v1.241: 带宽匹配档位——拥塞控制后的实际发送码率直接反映链路可用带宽。
-        // 实际码率持续低于当前档位需求（如蜂窝上行 1M 而档位上限 4M）时，编码器无降档余地、
-        // 帧率被硬压；按实际带宽从高到低选第一个码率上限 ≤ 实际带宽×1.6 的档位参与取大，
+        // v1.241: 带宽匹配档位——链路带宽不足时（如蜂窝上行 1M 而档位上限 4M），编码器无降档余地、
+        // 帧率被硬压；按实测带宽从高到低选第一个码率上限 ≤ 实测带宽×1.6 的档位参与取大，
         // 让采集分辨率/帧率主动降到与链路匹配，帧率优先保连续。带宽波动由"降档立即、回升 6s/档"兜底。
+        // v1.248 修正：实测码率受内容/编码影响，不能直接等同链路带宽（见下方 linkShortfall 判定）。
         var bwLevel = 0
         if (actualBitrateBps > 0) {
             // EMA 平滑（α=0.5）：蜂窝带宽 1.5s 窗口波动大，防瞬时毛刺误降档
             bwSmooth = if (bwSmooth <= 0) actualBitrateBps.toDouble()
             else bwSmooth * 0.5 + actualBitrateBps * 0.5
-            // 默认最高档兜底（带宽低于最低档阈值 1M/1.6≈625kbps 时仍深降，不停留在高档）
-            bwLevel = adaptBitrateCaps.size - 1
-            for (i in adaptBitrateCaps.indices) {
-                if (adaptBitrateCaps[i] <= bwSmooth * 1.6) {
-                    bwLevel = i
-                    break
+            // v1.248: 只在「链路确实交付不出我们下发的目标码率」且伴随拥塞迹象时才按实测码率降档。
+            // 旧逻辑直接拿实测码率当带宽估计，会与档位形成死循环——档位越低→下发目标越低→实测
+            // 越低→判定带宽越差→继续降档，最终自锁在最低档（实测画面卡成 2fps 即此因：LAN 直连
+            // 无带宽瓶颈，但老设备编码输出少被误判成链路受限）。以「目标码率」为参照可区分：
+            // 实测≈目标 说明链路能满足需求（码率低是内容/编码所致），实测远低于目标才是链路受限。
+            val targetBps = if (lastEncoderTargetBps > 0) lastEncoderTargetBps else bwSmooth.toInt()
+            val linkShortfall = actualBitrateBps < targetBps * 0.55
+            // 是否真的被链路带宽限制：优先用编码器自报的 qualityLimitationReason（bandwidth=编码想发
+            // 更多却发不出，是链路受限的权威信号）；机型不报该字段时退回丢包/RTT 拥塞迹象兜底。
+            val bwLimited = qualityLimit.equals("bandwidth", ignoreCase = true)
+            val congestion = sendLossPct >= 1.0 || rttMs >= 250
+            val bwEvidence = if (qualityLimit.isNotEmpty()) bwLimited else congestion
+            if (linkShortfall && bwEvidence) {
+                // 默认最高档兜底（带宽低于最低档阈值 1M/1.6≈625kbps 时仍深降，不停留在高档）
+                bwLevel = adaptBitrateCaps.size - 1
+                for (i in adaptBitrateCaps.indices) {
+                    if (adaptBitrateCaps[i] <= bwSmooth * 1.6) {
+                        bwLevel = i
+                        break
+                    }
                 }
             }
         }
@@ -2071,6 +2115,8 @@ class WebRTCPeer(
                 // v1.243: 下限随档位下调（min(500k, cap)），深档（800k 底档）时 min 不再硬卡 1M，
                 // 避免 min>max 的不一致区间干扰拥塞控制收敛
                 pc.setBitrate(minOf(500_000, cap), (cap * 0.7).toInt(), cap)
+                // v1.248: 记录当前下发的目标码率，作为带宽匹配的参照基准（见 bwLevel）
+                lastEncoderTargetBps = (cap * 0.7).toInt()
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
             }
@@ -2171,6 +2217,7 @@ class WebRTCPeer(
         lastOutLostCum = 0L
         lastAdaptBitrateCap = 0
         bwSmooth = 0.0
+        lastEncoderTargetBps = 0
         encLoadDown = false
         encLoadSamples = 0
         encRecoverSamples = 0

@@ -639,3 +639,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - **根因（app/src/main/java/com/screenshare/VideoTranscoder.kt 的 SurfaceRender）**：①`SurfaceTexture` 用纹理名 0 在 EGL 上下文创建之前（字段初始化阶段）构造，会在「无当前 GL 上下文」时另生成内部纹理，着色器采样的 `texId` 永远拿不到解码帧 → 每帧全黑；必须先 `initEgl()` + `initGl()`（生成 texId），再 `SurfaceTexture(texId)`。②解码帧渲染顺序颠倒：应先 `decoder.releaseOutputBuffer(outIdx, true)` 再 `renderer.render(...)`（其内 `updateTexImage`），否则纹理慢一帧、首帧黑。
   - v1.246(249) 产物：ScreenShare-allarch-signed.apk md5=6ccdb148709207a2bd929bf19ec51a0b、arm64 md5=50ff41b631d8c72b46302e391371c5ea；构建脚本 /tmp/opencode/build_v1246.sh。commit acca326（已 push）。
   - 注意：修复前已上传的黑视频不会自动恢复，需用修复版 App 重新上传相册才会生成正常视频。
+
+## v1.248 老设备共享卡顿（自适应自我降档死循环 + 候选对 RTT）+ 运行日志导出（2026-09-14）
+
+[Project Knowledge Summary]
+- Date: 2026-09-14
+- Context: 老设备共享播放视频实测 FPS 2 / Bitrate 0.8M / Delay 713ms，路径为 LAN 直连（host 192.168.5.x）
+- Category: Troubleshooting & Debugging & Operations & Deployment
+- Instructions:
+  - **自适应「带宽匹配降档」自我降档死循环（WebRTCPeer.applyNetworkAdaptation）**：旧逻辑把 `actualBitrateBps`（实测发送码率）当作链路带宽估计，而实测值又被档位上限压着 → 档位越低→`setBitrate` 目标越低→实测越低→判定带宽越差→继续降档，一旦内容短暂静止或编码输出变少就自锁最低档 800k（Bitrate 显示恰好等于 `adaptBitrateCaps[6]` 即此症）。修复：只在「实测 < 下发目标×0.55（linkShortfall）且 qualityLimitationReason=bandwidth（机型不报该字段时退回 loss≥1% 或 rtt≥250ms）」时才按实测降档；实测≈目标判为内容/编码所致不降档。参照基准 `lastEncoderTargetBps` 在 `setBitrate(cap*0.7)` 时记录。
+  - **候选对 RTT 取值**：`candidate-pair` 统计旧逻辑对所有 `nominated=true` 的对 last-wins，ICE 重连/多次提名后会命中历史遗留对读到过期偏高的 RTT（本次 LAN 直连误报 713ms）→ rttLevel=4 误降档。修复：优先取 `transport.selectedCandidatePairId` 指向的对，缺失时退回 nominated 且 `state=succeeded` 的对（collectStatsFor）。
+  - **运行日志落盘 + 导出**：AppLogger 现除 logcat 外写入 `filesDir/logs/screenshare.log`（超 1MB 截断保留后半段），`AppLogger.init(context)` 在 MainActivity.onCreate 调用；「更多」面板新增「导出日志」按钮，经 FileProvider（`file_paths.xml` 加 `<files-path name="logs" path="logs/"/>`）用 ACTION_SEND 分享，现场排查无需抓 logcat。
+  - v1.248(251) 产物：ScreenShare-allarch-signed.apk md5=de9b84590662a4e7e37e236acd00f1dc、arm64 md5=57ddd21e0ff2ec8f0c84452a2b301f7a；构建脚本 /tmp/opencode/build_v1248.sh；8090 version.json 已自动同步 251/1.248。
+  - 仍待真机确认：老设备共享播放视频是否流畅；下次让用户用「导出日志」回传 WEBRTC/NETWORK/CAPTURE 日志确认降档档位与 RTT。

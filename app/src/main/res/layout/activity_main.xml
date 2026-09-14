@@ -436,6 +436,22 @@
                 android:background="@drawable/bg_fullscreen_btn" />
 
             <TextView
+                android:id="@+id/btnExportLog"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="导出日志"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_fullscreen_btn" />
+
+            <TextView
                 android:id="@+id/tvTitleBrand"
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
