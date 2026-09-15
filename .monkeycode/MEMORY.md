@@ -667,3 +667,18 @@ Entries discovered by the Agent during task execution should follow this format:
   - **修复**：`handleViewerJoined` 建连成功后 `if (adaptiveHandler == null) startAdaptiveLoop()`，不再依赖 `onConnected`。另修一个潜在坑：viewer 若先于采集启动加入（`screenCaptureReady=false`），`createViewerConnection` 时 `localVideoTrack` 为空 → `conn.videoSender` 永久为 null（无视频且自适应空转）；现将挂轨逻辑抽成 `attachScreenTrack(viewerId, conn)`，并在 `startScreenCapture` 末尾调 `attachScreenTrackToViewers()` 补挂到已创建连接。
   - v1.250(253) 产物：allarch md5=fc59a38096fc5ff3705170b4061dd84c、arm64 md5=1d91ff5fc2b2975c3120400426d9ac84；构建脚本 /tmp/opencode/build_v1250.sh；8090 version.json 已自动同步 253/1.250；commit a15c0af。
   - 复测预期：共享方日志应出现周期 `NETWORK viewer#N 档位X 上限Xk 目标Xk 实发Xk 丢包X% rtt=Xms 瓶颈=...`（约 1.5s 一行）。
+
+## v1.251 共享方自适应震荡与开局卡顿收敛（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.250 启用 host 自适应后，用户反馈「开局播放视频很卡，2~3 分钟后不卡但仍有延迟」，导出日志显示档位 0↔6 周期震荡、RTT 在 5ms 与 2000-3000ms 间成块跳变
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **现象**：`NETWORK` 行显示档位每几十秒在 0（9M）与 6（800k）间往返；开局 00:20:33 实发 11213k（超 9M 上限）→ 1.5s 后丢包 65.6%/rtt 1543ms → 崩到档位 6。档位 800k 时实发仍达 1800~2600k。稳定区在档位 2（4M）附近（rtt 4~31ms）。
+  - **根因①编码器上限未跟随档位**：`applyNetworkAdaptation` 只调 `pc.setBitrate(min,target,max)`（拥塞控制目标），从未改 `sender.parameters.encodings[].maxBitrateBps`，编码器一直按初始 9M 出帧；弱网降档后编码器仍输出高码率 → 发送队列积压 → 实测超档、RTT 秒级。修复：cap 变化时同步 `enc.maxBitrateBps = cap`、`enc.minBitrateBps = min(500k, cap)`。
+  - **根因②恢复无记忆**：拥塞信号一消失就每 6s 回升一档直到 9M，随即再拥塞 → 周期震荡。修复：新增 `minAdaptLevel`（降档发生时记录被降档位，恢复不得越过其下一档），仅当连续 60s 无降档事件才逐级松弛（`congestionForgetMs`）。
+  - **根因③开局冲动**：`curAdaptLevel` 初值 0（9M）+ 起始采集 1080p@48，弱 WiFi 开局瞬间打满空口。修复：初值改 2（4M），`startScreenCapture` 起始采集改用 `captureProfileForLevel(curAdaptLevel)`/`captureFpsForLevel(curAdaptLevel)`（→720p@28），避免两次抖动；网络好约 12s 内回升 1080p。`initialCaptureProfile()` 已删除。
+  - 共享方 `NETWORK` 行新增 `路径=`（来自 `collectStatsFor` 的 `lastStatsPathType`），用于识别是否走 relay 中继（relay 会显著抬高 RTT）。
+  - v1.251(254) 产物：allarch md5=1a5dddac6a9068c2a11c73fbf9b4ab14、arm64 md5=3dc9a9c28dad99a1d0b4f1bab083445c；构建脚本 /tmp/opencode/build_v1251.sh；8090 version.json 已自动同步 254/1.251；commit 6c1012d。
+  - 关键统计 JSON 字段（collectStatsFor）：`inFps/outFps/rtt/inBytes/outBytes/outW/outH/lost/lostTotal/nack/inDropped/inDecoded/outLost/outSent/outLossPct/encImpl/qualityLimit/path/pathType`。`fractionLost` 本 SDK 上报 0~255 字节值，>1 时需 /256 还原（已修）。
