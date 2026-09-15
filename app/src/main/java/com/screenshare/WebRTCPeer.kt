@@ -500,38 +500,9 @@ class WebRTCPeer(
         val pc = factory.createPeerConnection(config, observer) ?: return null
         val conn = ViewerConnection(pc)
         viewerConnections[viewerId] = conn
-        // 挂载共享视频轨道（host 采集已启动才有轨道）
-        localVideoTrack?.let { track ->
-            val rtp = pc.addTrack(track)
-            if (rtp == null) {
-                Log.e(TAG, "viewer#$viewerId addTrack 失败")
-            } else {
-                conn.videoSender = rtp
-                val params = rtp.parameters
-                params.encodings?.firstOrNull()?.let { enc ->
-                    // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
-                    // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
-                    // v1.249: 低端机进一步截到 6M（maxBitrateCap）
-                    enc.maxBitrateBps = minOf(9_000_000, maxBitrateCap)
-                    enc.minBitrateBps = 600_000
-                    // v1.246: 与 host 侧 highMotionFpsCap 保持一致
-                    enc.maxFramerate = highMotionFpsCap
-                    enc.networkPriority = 4
-                    enc.bitratePriority = 4.0
-                }
-                try {
-                    params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-                } catch (t: Throwable) {}
-                rtp.parameters = params
-                // 初始带宽 3.5M 起步，弱网由拥塞控制兜底降档
-                try {
-                    pc.setBitrate(600_000, 3_500_000, 9_000_000)
-                    Log.d(TAG, "viewer#$viewerId 初始带宽 0.6/3.5/9 Mbps")
-                } catch (t: Throwable) {
-                    Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
-                }
-            }
-        }
+        // 挂载共享视频轨道（host 采集已启动才有轨道；若本连接先于采集就绪创建，
+        // 则由 startScreenCapture 末尾的 attachScreenTrackToViewers 补挂，避免该连接全程无视频/无法自适应）
+        attachScreenTrack(viewerId, conn)
         // 麦克风已开启时，新 viewer 连接同步挂载麦克风音频轨（V4 下必须挂到 viewer 连接才能协商到对端）
         localAudioTrack?.let { mic ->
             val ms = pc.addTrack(mic)
@@ -556,6 +527,54 @@ class WebRTCPeer(
         // 否则 viewer 端 onDataChannel 收不到通道，控制通道与系统音频均不可用。
         createViewerDataChannels(viewerId)
         return pc
+    }
+
+    /**
+     * 把共享视频轨挂到指定 viewer 连接并设置初始码率/退让策略。
+     * 采集就绪前创建的连接（localVideoTrack 为空）会跳过，由 [attachScreenTrackToViewers] 在采集就绪后补挂。
+     */
+    private fun attachScreenTrack(viewerId: Int, conn: ViewerConnection) {
+        val track = localVideoTrack ?: return
+        val rtp = conn.pc.addTrack(track)
+        if (rtp == null) {
+            Log.e(TAG, "viewer#$viewerId addTrack 失败")
+            return
+        }
+        conn.videoSender = rtp
+        val params = rtp.parameters
+        params.encodings?.firstOrNull()?.let { enc ->
+            // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
+            // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
+            // v1.249: 低端机进一步截到 6M（maxBitrateCap）
+            enc.maxBitrateBps = minOf(9_000_000, maxBitrateCap)
+            enc.minBitrateBps = 600_000
+            // v1.246: 与 host 侧 highMotionFpsCap 保持一致
+            enc.maxFramerate = highMotionFpsCap
+            enc.networkPriority = 4
+            enc.bitratePriority = 4.0
+        }
+        try {
+            params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        } catch (t: Throwable) {}
+        rtp.parameters = params
+        // 初始带宽 3.5M 起步，弱网由拥塞控制兜底降档
+        try {
+            conn.pc.setBitrate(600_000, 3_500_000, 9_000_000)
+            Log.d(TAG, "viewer#$viewerId 初始带宽 0.6/3.5/9 Mbps")
+        } catch (t: Throwable) {
+            Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
+        }
+    }
+
+    /**
+     * 采集就绪后补挂共享视频轨：viewer 可能先于采集启动加入（handleViewerJoined 立即建连），
+     * 此时 localVideoTrack 尚为空，若不补挂该连接将全程无视频，且 videoSender 为空导致弱网自适应空转。
+     */
+    fun attachScreenTrackToViewers() {
+        if (disposed) return
+        viewerConnections.forEach { (vid, conn) ->
+            if (conn.videoSender == null) attachScreenTrack(vid, conn)
+        }
     }
 
     /** host 端：为 viewer 连接创建控制 + 系统音频 DataChannel（offerer 侧，viewer 端 onDataChannel 接收） */
@@ -1390,6 +1409,9 @@ class WebRTCPeer(
             } ?: run {
                 Log.e(TAG, "localVideoTrack 为空，未添加视频轨道")
             }
+
+            // 采集就绪：补挂视频轨到先于采集启动就加入的 viewer 连接（否则这些连接无视频且无法弱网自适应）
+            attachScreenTrackToViewers()
 
             // 系统音频改走 DataChannel（SystemAudioBridge），不再添加麦克风音频轨道
             Log.d(TAG, "屏幕采集已启动: ${capW}x${capH}@${captureFps}fps (码率上限12M)")

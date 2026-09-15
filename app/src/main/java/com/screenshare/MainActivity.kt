@@ -2455,6 +2455,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("⚠️ 与对方建立连接失败")
             return
         }
+        // host 端主连接 ICE 永不 CONNECTED（onConnected 不触发），弱网/编码自适应循环必须在此显式启动，
+        // 否则共享方全程停留在初始码率，弱网下 RTT 排队延迟持续累积、观看端卡顿（v1.250 修复）
+        if (adaptiveHandler == null) startAdaptiveLoop()
         // 采集已就绪则立即发 Offer（Trickle ICE，候选随后增量）
         if (screenCaptureReady) {
             p.createOfferFor(viewerId)
