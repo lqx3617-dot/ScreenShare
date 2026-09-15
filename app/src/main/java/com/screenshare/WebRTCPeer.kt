@@ -1691,16 +1691,24 @@ class WebRTCPeer(
                                 "remote-inbound-rtp" -> {
                                     // 接收方经 RTCP 回报的丢包：packetsLost 累计值 + fractionLost 比例
                                     outLost += (s.members["packetsLost"] as? Number)?.toLong() ?: 0L
-                                    val frac = (s.members["fractionLost"] as? Number)?.toDouble()
-                                    if (frac != null && frac >= 0) {
-                                        // fractionLost 语义修正：本 SDK 上报的是 RTCP 8bit 原始字节
-                                        //（0~255，每单位≈1/256），而 W3C 规范为 0~1 比例。此前直接
-                                        // ×100 会把 ~1% 的轻微丢包误判成 285.7% 重度丢包，触发弱网
-                                        // 自适应把码率一路压死（实测老设备 WiFi 轻微丢包→画面又糊又卡、
-                                        // 延迟越积越远）。>1 时按字节值换算回真实比例再取百分数，并夹紧
-                                        // 到 0~100 兜底防脏值。
-                                        val ratio = if (frac <= 1.0) frac else frac / 256.0
-                                        outLossPct = (ratio * 100.0).coerceIn(0.0, 100.0)
+                                    // v1.253: fractionLost 只采纳视频流回报。本 SDK 会为音频/RTX 的
+                                    // SSRC 也各给一条 remote-inbound-rtp，旧逻辑对全部条目 last-wins，
+                                    // 会读到音频/RTX 的 8bit fractionLost。日志实测出现「rtt=25ms、
+                                    // 丢包 89.5%/95.7%」这种自相矛盾的读数，直接触发 lossLevel=6 深降档。
+                                    val rmKind = (s.members["mediaType"] as? String)
+                                        ?: (s.members["kind"] as? String) ?: ""
+                                    if (rmKind.isEmpty() || rmKind == "video") {
+                                        val frac = (s.members["fractionLost"] as? Number)?.toDouble()
+                                        if (frac != null && frac >= 0) {
+                                            // fractionLost 语义修正：本 SDK 上报的是 RTCP 8bit 原始字节
+                                            //（0~255，每单位≈1/256），而 W3C 规范为 0~1 比例。此前直接
+                                            // ×100 会把 ~1% 的轻微丢包误判成 285.7% 重度丢包，触发弱网
+                                            // 自适应把码率一路压死（实测老设备 WiFi 轻微丢包→画面又糊又卡、
+                                            // 延迟越积越远）。>1 时按字节值换算回真实比例再取百分数，并夹紧
+                                            // 到 0~100 兜底防脏值。
+                                            val ratio = if (frac <= 1.0) frac else frac / 256.0
+                                            outLossPct = (ratio * 100.0).coerceIn(0.0, 100.0)
+                                        }
                                     }
                                 }
                                 "candidate-pair" -> {
@@ -1799,7 +1807,9 @@ class WebRTCPeer(
     // 防止「回升到 9M → 再次拥塞 → 崩到 800k」的周期震荡；长时间无拥塞后逐级松弛。
     private var minAdaptLevel = 0
     private var lastCongestionMs = 0L
-    private val congestionForgetMs = 60_000L
+    // v1.253: 60s 过长——档位被恢复上限锁住时画质长时间停在最差档。20s 无拥塞即逐级放宽，
+    // 既保留"不立刻冲回高码率"的抑制，又让链路转好时能较快恢复清晰度。
+    private val congestionForgetMs = 20_000L
     // v1.251: 最近一次统计到的候选对路径类型（host→srflx / relay→relay 等），写入 NETWORK 日志辅助定位
     @Volatile private var lastStatsPathType = ""
     // v1.241: 扩到 7 档——蜂窝上行普遍仅 1~2Mbps，编码器无降档余地时帧率被拥塞控制硬压到个位数
@@ -1841,6 +1851,9 @@ class WebRTCPeer(
     // v1.249: 低端机采集格式切换冷却期延长——v1.234 记载低端机持续降档会反复触发
     // changeCaptureFormat，负反馈循环加剧掉帧，需更长冷却抑制震荡。
     private val captureSwitchCooldownMs: Long get() = if (isLowEndDevice) 12_000L else 8_000L
+    // v1.253: 降分辨率最短间隔。原先降档不受冷却约束，档位在 0↔6 间震荡时采集格式每 1.5s
+    // 被重建一次（1080p→360p→720p…），每次都会重启采集器并触发关键帧，画面表现为持续卡顿。
+    private val captureDowngradeCooldownMs = 5_000L
     // v1.247: 观看方手动帧率选择（0=未覆盖，走自适应；>0=档位0下覆盖自适应值）。
     // 弱网档位（>=1）下始终让位于弱网降档，避免手动值把帧率顶回高位导致卡顿。
     @Volatile private var manualFpsOverride = 0
@@ -2022,7 +2035,9 @@ class WebRTCPeer(
             val now = System.currentTimeMillis()
             val isDowngrade = effective > lastCaptureProfile || targetFps < captureFps
             val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
-            if (isDowngrade || cooldownOk) {
+            val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
+            // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
+            if ((isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
                 lastCaptureProfile = effective
                 lastCaptureFps = targetFps
                 captureFps = targetFps
@@ -2146,10 +2161,17 @@ class WebRTCPeer(
             }
         }
         val level = maxOf(lossLevel, rttLevel, bwLevel)
+        // v1.253: 仍处于（或重于）当前档位的拥塞时刷新遗忘计时器。否则持续丢包/高 RTT
+        // 期间 minAdaptLevel 会被误判为"已平静"而逐级放开，回升后再次拥塞形成长期震荡。
+        if (level > 0 && level >= curAdaptLevel) {
+            lastCongestionMs = System.currentTimeMillis()
+        }
         if (level > curAdaptLevel) {
-            // 弱网加重：记录发生拥塞的质量档位（降档前），恢复上限收紧到其下一档，
-            // 再直接降到目标档位（v1.251）
-            minAdaptLevel = maxOf(minAdaptLevel, curAdaptLevel + 1)
+            // v1.253: 记录"拥塞发生前正在工作的档位"作为恢复上限。v1.251 用 curAdaptLevel+1，
+            // 当仅降一档（如 5→6）时上限=6，恢复判定 6-1>=6 恒为假 → 档位 6 被锁死直到
+            // congestionForget（60s）到期；日志实测 319x640@15 持续 47~60s，即"画质特别差"主因。
+            // 0 档（9M）过于激进，任何一次拥塞后不再盲目回到 0，最低记到 1（6M）。
+            minAdaptLevel = maxOf(minAdaptLevel, curAdaptLevel.coerceAtLeast(1))
             lastCongestionMs = System.currentTimeMillis()
             curAdaptLevel = level
             recoverTimer = 0
@@ -2165,7 +2187,7 @@ class WebRTCPeer(
                 recoverTimer = 0
             }
         }
-        // v1.251: 长时间（60s）无拥塞降档事件后，逐级放开恢复上限，重新具备试探更高质量的余地
+        // v1.251/v1.253: 无拥塞降档事件持续 20s 后逐级放开恢复上限，重新具备试探更高质量的余地
         if (minAdaptLevel > 0 &&
             System.currentTimeMillis() - lastCongestionMs >= congestionForgetMs) {
             minAdaptLevel--
@@ -2181,7 +2203,10 @@ class WebRTCPeer(
             try {
                 // v1.243: 下限随档位下调（min(500k, cap)），深档（800k 底档）时 min 不再硬卡 1M，
                 // 避免 min>max 的不一致区间干扰拥塞控制收敛
-                pc.setBitrate(minOf(500_000, cap), (cap * 0.7).toInt(), cap)
+                // v1.253: 下限进一步降到 150k。日志显示深档时 BWE 被 min=500k 托住，而链路
+                // 瞬时可能只有 300~450k，队列无法排空（rtt 稳定停在 1.5~1.8s、丢包却为 0）。
+                // 放开下限让拥塞控制能真正降到链路实际容量，先消掉积压延迟再谈清晰度。
+                pc.setBitrate(minOf(150_000, cap), (cap * 0.7).toInt(), cap)
                 // v1.248: 记录当前下发的目标码率，作为带宽匹配的参照基准（见 bwLevel）
                 lastEncoderTargetBps = (cap * 0.7).toInt()
             } catch (t: Throwable) {
@@ -2201,7 +2226,8 @@ class WebRTCPeer(
                 // → 实测码率长期高于档位上限、RTT 被撑到 1.5~3s、丢包 60%+。现让编码器本身遵守 cap。
                 params.encodings?.firstOrNull()?.let { enc ->
                     enc.maxBitrateBps = cap
-                    enc.minBitrateBps = minOf(500_000, cap)
+                    // v1.253: 与 pc.setBitrate 下限一致，放开到 150k 便于弱链路排空积压
+                    enc.minBitrateBps = minOf(150_000, cap)
                 }
                 sender.parameters = params
                 val capTxt = if (cap >= 1_000_000) "${cap / 1_000_000}M" else "${cap / 1000}k"
@@ -2222,7 +2248,9 @@ class WebRTCPeer(
                 val now = System.currentTimeMillis()
                 val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
                 val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
-                if (isDowngrade || cooldownOk) {
+                val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
+                // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
+                if ((isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
                     lastCaptureProfile = targetProfile
                     lastCaptureFps = targetFps
                     captureFps = targetFps
