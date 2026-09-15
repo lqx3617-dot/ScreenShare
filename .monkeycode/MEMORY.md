@@ -654,3 +654,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.249(252) 诊断增强（配合上述卡顿排查）：全屏统计循环原先 `if (!isFullscreen) return`（MainActivity:3378），普通使用下导出的日志缺少 NETWORK/WEBRTC 数据。现把关键统计改为始终落盘——`WebRTCPeer.applyNetworkAdaptation` 每次采样记录「档位/上限/目标/实发/丢包/rtt/瓶颈」，观看方 `startViewerStatsLoop` 每 2s 记录「收帧率/分辨率/rtt/掉帧率/路径」。产物 md5：allarch=c8610af7ec71c3a6a16391be1c267c4e、arm64=99cc6c135188ac5855c9b6d420f404fd；脚本 /tmp/opencode/build_v1249.sh。
   - 已确认共享方机型=realme RMX3350(Android12)，非低端判定（6/8G RAM → largeMemoryClass>256 → isLowEndDevice=false），故开局采集 959x1920@48；曾因观看端反馈掉帧降到 639x1280@24 档位1。
   - 下次复现步骤：两端都更新到最新版 → 共享方正常使用（无需全屏）→ 复现延迟高 → 「导出日志」上传，日志中 `NETWORK viewer ...`/`NETWORK viewer#N 档位...` 两行即可对照。
+
+## v1.250 host 端自适应循环从未启动（共享方卡顿真正根因）（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.248/v1.249 已修两处自适应根因，但共享方导出日志仍无 `NETWORK ...` 统计行，卡顿未改善
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **根因**：`MainActivity.startAdaptiveLoop()`（弱网/编码自适应的唯一驱动）唯一调用点是 `onConnected()`（行 ~2555）。但 host 端 `onConnected()` 从不触发——主连接仅作采集底座、ICE 永不 CONNECTED（V4 设计，见行 ~1896 注释），而 `WebRTCPeer.createViewerConnection` 的 per-viewer `onIceConnectionChange` CONNECTED 分支只打日志 + `requestKeyFrame()`，**未回调 `listener.onConnected()`**。结果：共享方自适应全程不运行，停留在初始码率（1/4/12M），RTT 升高/无线排队时不会降码率或降分辨率 → 延迟持续累积。此前 v1.240~v1.249 的所有自适应改进在 host 端实际从未生效（v1.248 日志里那次降档来自观看端 stream-stall 反馈 `setViewerStall` → 直接 `applyEncoderLoadProfile`，与循环无关，故时间戳紧邻 18ms）。
+  - **排查手法**：host 导出日志只出现 `viewer#N connection created/ICE/connected` 与 `CAPTURE`，无 `NETWORK`；在 `applyNetworkAdaptation` 末尾的无条件 log 仍不出现 → 证明函数未被调用（而非被提前 return）。判断「某段逻辑是否执行」优先看无条件日志是否出现。
+  - **修复**：`handleViewerJoined` 建连成功后 `if (adaptiveHandler == null) startAdaptiveLoop()`，不再依赖 `onConnected`。另修一个潜在坑：viewer 若先于采集启动加入（`screenCaptureReady=false`），`createViewerConnection` 时 `localVideoTrack` 为空 → `conn.videoSender` 永久为 null（无视频且自适应空转）；现将挂轨逻辑抽成 `attachScreenTrack(viewerId, conn)`，并在 `startScreenCapture` 末尾调 `attachScreenTrackToViewers()` 补挂到已创建连接。
+  - v1.250(253) 产物：allarch md5=fc59a38096fc5ff3705170b4061dd84c、arm64 md5=1d91ff5fc2b2975c3120400426d9ac84；构建脚本 /tmp/opencode/build_v1250.sh；8090 version.json 已自动同步 253/1.250；commit a15c0af。
+  - 复测预期：共享方日志应出现周期 `NETWORK viewer#N 档位X 上限Xk 目标Xk 实发Xk 丢包X% rtt=Xms 瓶颈=...`（约 1.5s 一行）。
