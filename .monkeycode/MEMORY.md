@@ -682,3 +682,17 @@ Entries discovered by the Agent during task execution should follow this format:
   - 共享方 `NETWORK` 行新增 `路径=`（来自 `collectStatsFor` 的 `lastStatsPathType`），用于识别是否走 relay 中继（relay 会显著抬高 RTT）。
   - v1.251(254) 产物：allarch md5=1a5dddac6a9068c2a11c73fbf9b4ab14、arm64 md5=3dc9a9c28dad99a1d0b4f1bab083445c；构建脚本 /tmp/opencode/build_v1251.sh；8090 version.json 已自动同步 254/1.251；commit 6c1012d。
   - 关键统计 JSON 字段（collectStatsFor）：`inFps/outFps/rtt/inBytes/outBytes/outW/outH/lost/lostTotal/nack/inDropped/inDecoded/outLost/outSent/outLossPct/encImpl/qualityLimit/path/pathType`。`fractionLost` 本 SDK 上报 0~255 字节值，>1 时需 /256 还原（已修）。
+
+## v1.252 观看端抖动缓冲/解码延迟诊断（可定位「RTT 正常仍延迟」）（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.251 后网络 RTT 已正常（稳定区 4~31ms），但用户观感仍有延迟，现有日志只有网络 RTT，不含接收管线的缓冲/解码耗时
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **为何要加**：viewer 的 `rtt` 只是网络往返，玻璃到玻璃延迟还包括「抖动缓冲等待 + 解码耗时」。RTT 正常但画面延迟时，旧日志无从判断延迟落在哪一段。
+  - **新增采集字段（collectStatsFor 的 inbound-rtp，仅 `mediaType==video`）**：`jitterBufferDelay`（秒，累计）、`jitterBufferEmittedCount`（累计帧数）、`jitterBufferMinimumDelay`（秒，累计）、`totalDecodeTime`（秒，累计）、`framesDecoded`（累计）、`freezeCount`、`totalFreezesDuration`（秒）。**这些全是累计值，必须连同分母一起采集**才能换算均值，不能直接当瞬时值用。注意音频流缓冲语义不同，已按 video 过滤。
+  - **换算与日志**：`缓冲 ms = jitterBufferDelay / jitterBufferEmittedCount × 1000`、`解码 ms = totalDecodeTime / framesDecoded × 1000`、`管线 ms = 缓冲 + 解码`。viewer `NETWORK` 行现为 `viewer 收帧Xfps WxH rtt=Xms 掉帧X% 缓冲=Xms(最小Xms) 解码=Xms 管线=Xms 冻结N(Xs) path=...`；浮层在 `缓冲>=80ms` 时追加「· 缓冲Xms」。
+  - **读法**：`管线` 远大于 `rtt` 且 rtt 正常 → 延迟来自接收侧缓冲/解码（调抖动缓冲或降解码负载），而非链路；`冻结` 次数上升 → 解码/渲染卡顿；`最小` 接近 `缓冲` → 缓冲深度贴近内容自适应下限，属正常。
+  - **验证 APK 是否真的包含新字符串（本环境坑）**：`strings` 对中文（MUTF-8）判定为非可打印，检索恒为 0；应改用 `grep -ac "管线=" <解包目录>/classes*.dex`。单文件校验 arm64 构建反而只有 3s（Kotlin 编译复用，仅重打包），属正常。
+  - v1.252(255) 产物：allarch md5=241bfdea7f256ff9c6765b333632c510、arm64 md5=533d5644fd3d3f8e16db91c5f041e824；构建脚本 /tmp/opencode/build_v1252.sh。
