@@ -2170,6 +2170,12 @@ class WebRTCPeer(
                 }
             }
         }
+        // v1.249: 每次自适应采样落盘一行摘要（不再受全屏限制），现场导出日志即可看到
+        // 档位/实测码率/RTT/丢包/编码瓶颈，无需用户进入全屏复现。
+        AppLogger.network(
+            "$tag 档位${curAdaptLevel} 上限${cap / 1000}k 目标${lastEncoderTargetBps / 1000}k " +
+                "实发${actualBitrateBps / 1000}k 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms 瓶颈=${qualityLimit.ifEmpty { "-" }}"
+        )
     }
 
     /**

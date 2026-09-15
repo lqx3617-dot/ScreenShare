@@ -3665,6 +3665,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val dropText = if (lastDropPct >= 5.0) " · 掉帧${"%.0f".format(lastDropPct)}%" else ""
                         val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
                         val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
+                        // v1.249: 观看方统计落盘（不依赖全屏），导出日志可对照两端 RTT/收帧率/掉帧
+                        AppLogger.network(
+                            "viewer 收帧${fps}fps ${w}x$h rtt=${rtt}ms 掉帧${"%.0f".format(lastDropPct)}% path=${selPath.ifEmpty { "-" }}"
+                        )
                         val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$dropText$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
