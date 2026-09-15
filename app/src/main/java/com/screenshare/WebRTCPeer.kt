@@ -1610,6 +1610,15 @@ class WebRTCPeer(
                         // framesDecoded 为成功解码的累计帧数；两者做差分可算出采样窗口内的掉帧率
                         var inDropped = 0L
                         var inDecoded = 0L
+                        // v1.252: 观看端接收延迟构成。抖动缓冲/解码耗时在 SDK 中均为累计值，
+                        // 必须连同分母（已发射帧数/已解码帧数）一起采集，才能换算成均值 ms。
+                        var jbDelay = 0.0        // jitterBufferDelay（秒，累计）
+                        var jbEmitted = 0.0      // jitterBufferEmittedCount（累计帧数）
+                        var jbMinDelay = 0.0     // jitterBufferMinimumDelay（秒，累计）
+                        var decodeTime = 0.0     // totalDecodeTime（秒，累计）
+                        var decFrames = 0.0      // framesDecoded（累计，作为解码耗时分母）
+                        var freezeCount = 0L     // freezeCount（累计冻结次数）
+                        var freezeDuration = 0.0 // totalFreezesDuration（秒，累计冻结时长）
                         // 共享方视角的发送丢包：SDK144 中 outbound-rtp 无 packetsLost 字段，
                         // 必须从 remote-inbound-rtp（RTCP receiver report 回传）读取
                         var outSent = 0L
@@ -1653,6 +1662,17 @@ class WebRTCPeer(
                                     nackCount += (s.members["nackCount"] as? Number)?.toLong() ?: 0L
                                     inDropped += (s.members["framesDropped"] as? Number)?.toLong() ?: 0L
                                     inDecoded += (s.members["framesDecoded"] as? Number)?.toLong() ?: 0L
+                                    // v1.252: 抖动缓冲与解码耗时仅统计视频流（音频流缓冲语义不同，混入会失真）
+                                    val inMedia = (s.members["mediaType"] as? String) ?: ""
+                                    if (inMedia.isEmpty() || inMedia == "video") {
+                                        jbDelay += (s.members["jitterBufferDelay"] as? Number)?.toDouble() ?: 0.0
+                                        jbEmitted += (s.members["jitterBufferEmittedCount"] as? Number)?.toDouble() ?: 0.0
+                                        jbMinDelay += (s.members["jitterBufferMinimumDelay"] as? Number)?.toDouble() ?: 0.0
+                                        decodeTime += (s.members["totalDecodeTime"] as? Number)?.toDouble() ?: 0.0
+                                        decFrames += (s.members["framesDecoded"] as? Number)?.toDouble() ?: 0.0
+                                        freezeCount += (s.members["freezeCount"] as? Number)?.toLong() ?: 0L
+                                        freezeDuration += (s.members["totalFreezesDuration"] as? Number)?.toDouble() ?: 0.0
+                                    }
                                     // 对端音频电平（inbound audio，0~32768 反映对方说话音量）
                                     if ((s.members["mediaType"] as? String) == "audio") {
                                         val lv = (s.members["audioLevel"] as? Number)?.toDouble()
@@ -1737,6 +1757,14 @@ class WebRTCPeer(
                             put("nack", nackCount)
                             put("inDropped", inDropped)
                             put("inDecoded", inDecoded)
+                            // v1.252: 观看端延迟构成（累计值，调用方自行换算均值）
+                            put("jbDelay", jbDelay)
+                            put("jbEmitted", jbEmitted)
+                            put("jbMinDelay", jbMinDelay)
+                            put("decodeTime", decodeTime)
+                            put("decFrames", decFrames)
+                            put("freezeCount", freezeCount)
+                            put("freezeDuration", freezeDuration)
                             put("outLost", outLost)
                             put("outSent", outSent)
                             put("outLossPct", outLossPct)

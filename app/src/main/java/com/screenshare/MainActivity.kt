@@ -3617,6 +3617,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val w = json.optInt("inW", 0)
                         val h = json.optInt("inH", 0)
                         val selPath = json.optString("path", "")
+                        // v1.252: 观看端延迟构成——抖动缓冲/解码耗时换算成均值 ms（累计值除以累计帧数）
+                        val jbDelay = json.optDouble("jbDelay", 0.0)
+                        val jbEmitted = json.optDouble("jbEmitted", 0.0)
+                        val jbMinDelay = json.optDouble("jbMinDelay", 0.0)
+                        val decodeTime = json.optDouble("decodeTime", 0.0)
+                        val decFrames = json.optDouble("decFrames", 0.0)
+                        val freezeCount = json.optLong("freezeCount", 0L)
+                        val freezeDuration = json.optDouble("freezeDuration", 0.0)
+                        val jbMs = if (jbEmitted > 0) jbDelay / jbEmitted * 1000.0 else -1.0
+                        val jbMinMs = if (jbEmitted > 0) jbMinDelay / jbEmitted * 1000.0 else -1.0
+                        val decMs = if (decFrames > 0) decodeTime / decFrames * 1000.0 else -1.0
                         // ---- 掉帧率检测（v1.223）：窗口内 dropped/(dropped+decoded) ----
                         val dropped = json.optLong("inDropped", 0L)
                         val decoded = json.optLong("inDecoded", 0L)
@@ -3666,13 +3677,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         }
                         // 掉帧率明显时展示，便于用户理解卡顿来源
                         val dropText = if (lastDropPct >= 5.0) " · 掉帧${"%.0f".format(lastDropPct)}%" else ""
+                        // v1.252: 抖动缓冲偏高时在浮层提示，便于区分"网络 RTT 正常但画面仍延迟"
+                        val jbTextUi = if (jbMs >= 80.0) " · 缓冲${"%.0f".format(jbMs)}ms" else ""
                         val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
                         val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
                         // v1.249: 观看方统计落盘（不依赖全屏），导出日志可对照两端 RTT/收帧率/掉帧
+                        // v1.252: 追加抖动缓冲/解码耗时/管线延迟/冻结次数，定位"RTT 正常仍延迟"的来源
+                        val jbText = if (jbMs >= 0.0) "${"%.0f".format(jbMs)}ms(最小${"%.0f".format(jbMinMs)}ms)" else "-"
+                        val decText = if (decMs >= 0.0) "${"%.0f".format(decMs)}ms" else "-"
+                        val pipeMs = if (jbMs >= 0.0 && decMs >= 0.0) jbMs + decMs else -1.0
+                        val pipeText = if (pipeMs >= 0.0) "${"%.0f".format(pipeMs)}ms" else "-"
                         AppLogger.network(
-                            "viewer 收帧${fps}fps ${w}x$h rtt=${rtt}ms 掉帧${"%.0f".format(lastDropPct)}% path=${selPath.ifEmpty { "-" }}"
+                            "viewer 收帧${fps}fps ${w}x$h rtt=${rtt}ms 掉帧${"%.0f".format(lastDropPct)}% " +
+                                 "缓冲=$jbText 解码=$decText 管线=$pipeText 冻结=${freezeCount}(${"%.1f".format(freezeDuration)}s) path=${selPath.ifEmpty { "-" }}"
                         )
-                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$dropText$pathText$hint"
+                        val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$dropText$jbTextUi$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
                                 binding.tvScanResult.text = text
