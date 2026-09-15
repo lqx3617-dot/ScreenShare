@@ -2031,7 +2031,8 @@ class WebRTCPeer(
         } catch (t: Throwable) {
             Log.w(TAG, "编码负载切策略失败: ${t.message}")
         }
-        if (effective != lastCaptureProfile || targetFps != captureFps) {
+        val profileChanged = effective != lastCaptureProfile
+        if (profileChanged || targetFps != captureFps) {
             val now = System.currentTimeMillis()
             val isDowngrade = effective > lastCaptureProfile || targetFps < captureFps
             val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
@@ -2043,11 +2044,14 @@ class WebRTCPeer(
                 captureFps = targetFps
                 lastCaptureSwitchMs = now
                 try {
-                    val capturer = videoCapturer
-                    if (capturer != null) {
-                        val (capW, capH) = captureSizeForLevel(effective)
-                        capturer.changeCaptureFormat(capW, capH, targetFps)
-                        AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${targetFps} 档位$effective")
+                    // v1.254: 仅帧率变化不重启采集器（同 applyNetworkAdaptation）
+                    if (profileChanged) {
+                        val capturer = videoCapturer
+                        if (capturer != null) {
+                            val (capW, capH) = captureSizeForLevel(effective)
+                            capturer.changeCaptureFormat(capW, capH, targetFps)
+                            AppLogger.capture("编码负载分辨率: ${capW}x${capH}@${targetFps} 档位$effective")
+                        }
                     }
                 } catch (t: Throwable) {
                     Log.w(TAG, "编码负载降分辨率失败: ${t.message}")
@@ -2067,11 +2071,11 @@ class WebRTCPeer(
      * @param outLostCum remote-inbound-rtp packetsLost 累计值
      * @param rttMs candidate-pair 当前往返时延（毫秒），RTT 高时主动降档保流畅
      */
-    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String) {
+    fun adaptToNetwork(fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String, encodedFps: Int) {
         val pc = peerConnection ?: return
         if (disposed) return
         val sender = videoSender ?: return
-        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit)
+        applyNetworkAdaptation(pc, sender, "主连接", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit, encodedFps)
     }
 
     /**
@@ -2079,11 +2083,11 @@ class WebRTCPeer(
      * 与 adaptToNetwork 共用档位状态机，但作用于该 viewer 的 pc 与 videoSender，
      * 让 host 的 1 对 1 连接也能在弱网时自动降码率/降分辨率保流畅。
      */
-    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String) {
+    fun adaptViewerNetwork(viewerId: Int, fractionLossPct: Double, outSentCum: Long, outLostCum: Long, rttMs: Int, actualBitrateBps: Int, qualityLimit: String, encodedFps: Int) {
         if (disposed) return
         val conn = viewerConnections[viewerId] ?: return
         val sender = conn.videoSender ?: return
-        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit)
+        applyNetworkAdaptation(conn.pc, sender, "viewer#$viewerId", fractionLossPct, outSentCum, outLostCum, rttMs, actualBitrateBps, qualityLimit, encodedFps)
     }
 
     /** 弱网自适应公共实现：档位状态机 + 码率/降级策略 + 采集分辨率调整（主连接与 viewer 连接共用） */
@@ -2096,7 +2100,8 @@ class WebRTCPeer(
         outLostCum: Long,
         rttMs: Int,
         actualBitrateBps: Int,
-        qualityLimit: String
+        qualityLimit: String,
+        encodedFps: Int
     ) {
         // 丢包率：优先用 fractionLost（远端 RTCP 直接回报，实时准确）；未上报时用增量累计做差兜底
         var sendLossPct = if (fractionLossPct >= 0) fractionLossPct else 0.0
@@ -2121,13 +2126,20 @@ class WebRTCPeer(
         // RTT 档位（异地/TURN 中继/蜂窝共享场景）：RTT 高即使丢包低也可能排队延迟，主动限制码率上限，
         // 避免拥塞控制在高 RTT 下收敛慢、码率估计偏高导致画面积压卡顿。
         // v1.241: 扩深档——蜂窝链路 600ms+ 常见，深档位（480p@20/360p@18）保帧率优先于清晰度
+        // v1.255: rtt>=900 视为链路崩塌（实测 realme WiFi 周期性掉到 ~0-150kbps），
+        // 直接降到最深档 6，比"先 5 后 6"少一个采样周期的 1200k 上限。
         val rttLevel = when {
-            rttMs >= 900 -> 5
+            rttMs >= 900 -> 6
             rttMs >= 600 -> 4
             rttMs >= 350 -> 2
             rttMs >= 200 -> 1
             else -> 0
         }
+        // v1.255: 崩塌标志——rtt 跳变到 900ms+ 时采集格式切换绕过冷却立即执行（见下方切换块）。
+        // 本机编码器中途改 maxBitrateBps 不生效，必须 changeCaptureFormat 重配才遵守新码率；
+        // 若切换被 5s 冷却阻塞，1080p 采集器会以 2-4Mbps（单关键帧 300-800KB）灌入死链路，
+        // 队列堆积数 MB → rtt 顶在 2.3s 长达 14s、观看端 0 帧（v1.254 实测）。
+        val collapse = rttMs >= 900
         // v1.241: 带宽匹配档位——链路带宽不足时（如蜂窝上行 1M 而档位上限 4M），编码器无降档余地、
         // 帧率被硬压；按实测带宽从高到低选第一个码率上限 ≤ 实测带宽×1.6 的档位参与取大，
         // 让采集分辨率/帧率主动降到与链路匹配，帧率优先保连续。带宽波动由"降档立即、回升 6s/档"兜底。
@@ -2205,8 +2217,10 @@ class WebRTCPeer(
                 // 避免 min>max 的不一致区间干扰拥塞控制收敛
                 // v1.253: 下限进一步降到 150k。日志显示深档时 BWE 被 min=500k 托住，而链路
                 // 瞬时可能只有 300~450k，队列无法排空（rtt 稳定停在 1.5~1.8s、丢包却为 0）。
-                // 放开下限让拥塞控制能真正降到链路实际容量，先消掉积压延迟再谈清晰度。
-                pc.setBitrate(minOf(150_000, cap), (cap * 0.7).toInt(), cap)
+                // v1.254: 再降到 60k。v1.253 实测链路容量约 147kbps（rtt 以 ~2.5kbps 的净堆积
+                // 速率缓慢爬升，正好是 150k 下限与 147k 链路的差值），min=150k 仍把 BWE 托在
+                // 链路之上 → 队列只增不减、rtt 长期 1~2s。下限必须低于链路最差状态才能排空积压。
+                pc.setBitrate(minOf(60_000, cap), (cap * 0.7).toInt(), cap)
                 // v1.248: 记录当前下发的目标码率，作为带宽匹配的参照基准（见 bwLevel）
                 lastEncoderTargetBps = (cap * 0.7).toInt()
             } catch (t: Throwable) {
@@ -2226,8 +2240,9 @@ class WebRTCPeer(
                 // → 实测码率长期高于档位上限、RTT 被撑到 1.5~3s、丢包 60%+。现让编码器本身遵守 cap。
                 params.encodings?.firstOrNull()?.let { enc ->
                     enc.maxBitrateBps = cap
-                    // v1.253: 与 pc.setBitrate 下限一致，放开到 150k 便于弱链路排空积压
-                    enc.minBitrateBps = minOf(150_000, cap)
+                    // v1.254: 与 pc.setBitrate 下限一致，放开到 60k 才能在 ~147kbps 的
+                    // 极弱链路上排空积压（见下限说明）
+                    enc.minBitrateBps = minOf(60_000, cap)
                 }
                 sender.parameters = params
                 val capTxt = if (cap >= 1_000_000) "${cap / 1_000_000}M" else "${cap / 1000}k"
@@ -2244,23 +2259,31 @@ class WebRTCPeer(
             // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
             // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
             val targetFps = captureFpsForLevel(curAdaptLevel)
-            if (targetProfile != lastCaptureProfile || targetFps != captureFps) {
+            val profileChanged = targetProfile != lastCaptureProfile
+            if (profileChanged || targetFps != captureFps) {
                 val now = System.currentTimeMillis()
                 val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
                 val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
                 val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
                 // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
-                if ((isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
+                // v1.255: 崩塌（rtt>=900）时绕过冷却立即降采集格式。冷却本意是抑制 4↔5↔6
+                // 单档抖动，但崩塌时每多等 1.5s 就多灌 ~5MB 进死链路，代价完全不对称。
+                if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
                     lastCaptureProfile = targetProfile
                     lastCaptureFps = targetFps
                     captureFps = targetFps
                     lastCaptureSwitchMs = now
                     try {
-                        val capturer = videoCapturer
-                        if (capturer != null) {
-                            val (capW, capH) = captureSizeForLevel(targetProfile)
-                            capturer.changeCaptureFormat(capW, capH, targetFps)
-                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
+                        // v1.254: 仅帧率变化时只改编码器上限、不重启采集器；只有分辨率档位
+                        // 变化才走 changeCaptureFormat。后者每次都会重建采集管线并触发关键帧，
+                        // 是弱网档位在 4↔5↔6 间抖动时画面一卡一卡的直接来源。
+                        if (profileChanged) {
+                            val capturer = videoCapturer
+                            if (capturer != null) {
+                                val (capW, capH) = captureSizeForLevel(targetProfile)
+                                capturer.changeCaptureFormat(capW, capH, targetFps)
+                                AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
+                            }
                         }
                         // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
                         val params = sender.parameters
@@ -2274,9 +2297,16 @@ class WebRTCPeer(
         }
         // v1.249: 每次自适应采样落盘一行摘要（不再受全屏限制），现场导出日志即可看到
         // 档位/实测码率/RTT/丢包/编码瓶颈，无需用户进入全屏复现。
+        // v1.254: 追加编码器实际输出帧率与"内容受限"标记。实发码率远低于目标码率时，
+        // 低码率来自画面静止/编码器输出少（内容受限），而非链路带宽——此时降档只会
+        // 反复重建采集格式，无法降低实发，是"画质差却仍卡"的判别依据。
+        val contentLimited = actualBitrateBps > 0 && lastEncoderTargetBps > 0 &&
+            actualBitrateBps < lastEncoderTargetBps * 0.6
         AppLogger.network(
             "$tag 档位${curAdaptLevel} 上限${cap / 1000}k 目标${lastEncoderTargetBps / 1000}k " +
-                "实发${actualBitrateBps / 1000}k 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms " +
+                "实发${actualBitrateBps / 1000}k 编码${encodedFps}fps" +
+                (if (contentLimited) " 内容受限" else "") +
+                " 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms " +
                 "瓶颈=${qualityLimit.ifEmpty { "-" }} 路径=${lastStatsPathType.ifEmpty { "-" }}"
         )
     }

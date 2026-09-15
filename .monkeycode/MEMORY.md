@@ -712,3 +712,20 @@ Entries discovered by the Agent during task execution should follow this format:
   - **判读要点**：`丢包` 与 `rtt` 必须互相印证——「低 rtt + 高丢包」几乎必是统计串流错误；「低实发 + 高 rtt + 丢包 0%」是链路容量低于当前下限、队列排不空；「档位长期不动但 rtt/丢包已正常」是控制记忆/恢复逻辑锁死，而非链路仍差。
   - v1.253(256) 产物：allarch md5=fdf40669e2759a02c3d37372d15a11c2、arm64 md5=af18a41798ac492dfa6c5075efb90b0a；构建脚本 /tmp/opencode/build_v1253.sh；commit 88207f6。
   - 待补：用户日志只有共享方（`NETWORK viewer#N`），无观看方 `NETWORK viewer 收帧... 缓冲/解码/管线` 行，无法确认延迟是否还含接收端抖动缓冲；下次复测需同时导出观看方日志。
+
+## v1.254 崩塌期采集切换被冷却阻塞 → 过冲堆积 14s 黑屏（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: 用户首次同时导出共享方（realme RMX3350）与观看方（oppo OPD2511）日志，v1.254 会话 01:42:24~01:45:22，反馈仍"延迟高卡顿"
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **观看端延迟构成（关键新数据）**：观看端 `缓冲` 全程 11~360ms、`解码` 2~7ms，即接收侧管线不是瓶颈；`冻结` 累计 21~34 次（47~53s）。两端 `rtt` 都来自 `candidate-pair.currentRoundTripTime`（ICE STUN 探测，与 RTP 共用同一 socket/5 元组），故**发送队列堆积会同时抬高两端 RTT 读数**——RTT 高 ≈ 发送方自身队列深。
+  - **崩塌的周期性与诱因**：每次会话都是开局 2.6~6.9Mbps 良好约 10~15s 后链路突然掉到 ~0-150kbps（rtt 一个采样周期内 6ms→2382ms），随后 40s 慢 degrade，再自愈。v1.253 峰值 2.6M 崩、v1.254 峰值 6.9M 崩，**崩塌时机与峰值码率无关 → 判定为 realme WiFi 周期性事件（扫描/省电/热降频），属环境问题，只能快速收敛不能预防**。
+  - **v1.254 回归根因**：崩塌时档位 0→5，`captureDowngradeCooldownMs=5s` 因上次切到 1080p 仅过 4.5s 而**阻塞采集格式切换 2s**。本机编码器中途改 `enc.maxBitrateBps` 不生效，必须 `changeCaptureFormat` 重配才遵守新码率 → 1080p@48 采集器以 2~4Mbps（单关键帧 300~800KB，`编码` 仅 0~2fps）灌入 ~0kbps 死链路，驱动/AP 队列堆积数 MB → rtt 顶在 2300ms 长达 14s、观看端 `收帧 0fps` 持续 14s。**对照 v1.253 同一崩塌：上次切换距今 6.1s（过冷却），采集立即切到 319x640，实发 884k 受控、rtt 约 10s 恢复。**
+  - **修复（v1.255）**：①`rtt>=900` 直接降到最深档 6（原为先 5 后 6，少一个采样周期的 1200k 上限）；②新增 `collapse = rttMs >= 900` 标志，崩塌时采集格式切换**绕过冷却立即执行**——冷却本意抑制 4↔5↔6 单档抖动，但崩塌时每多等 1.5s 就多灌 ~5MB 进死链路，代价完全不对称。
+  - **v1.254 其他已验证改动（保留）**：`enc.minBitrateBps`/`pc.setBitrate` 下限 150k→60k；仅帧率变化（档位 4↔5↔6 的 5↔6）不重启采集器、只改 `enc.maxFramerate`；NETWORK 行追加 `编码${outFps}fps` 与 `内容受限`（`实发 < 目标*0.6`）标记。
+  - **判读要点**：`实发 >> 档位上限` 且 `编码 fps 极低` 且 `丢包极高` → 采集格式未跟随降档导致的过冲 + 队列排空期；`实发 45~142k + 丢包 0% + rtt 缓慢爬升` → 链路容量已降到 ~40kbps，低于内容自然码率，此时降档无用（已最深），属不可救药区。
+  - v1.254(257) 产物：allarch md5=025793641cd7aa7b724a62fda51598ca、arm64 md5=c53484c99f6849464a3fd382987e7c88；构建脚本 /tmp/opencode/build_v1254.sh；共享方日志 `.monkeycode-tmp-files/81bb3071-screenshare-1.log`（v1.254 段 2359~2425）、观看方 `.monkeycode-tmp-files/dd976121-screenshare观看方-2.log`（2512~2598）。
+  - v1.255(258) 产物：allarch md5=a9b2577cd9a76b415deb3bf6addc82c9、arm64 md5=c1c2f3e2a5c9c7833264e7836941fada；构建脚本 /tmp/opencode/build_v1255.sh。**复测要点**：重点看崩塌窗口（rtt 首次 ≥900ms 之后 3~5 个采样）实发是否回落到档位上限附近、高 RTT 是否从 14s 压到 2~4s。
+

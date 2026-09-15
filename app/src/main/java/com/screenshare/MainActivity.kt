@@ -3566,9 +3566,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                 lastAdaptOutMs = nowMs
                             }
                             if (vid > 0) {
-                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit)
+                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit, outFps)
                             } else {
-                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit)
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit, outFps)
                             }
                             peer?.adaptToEncoderLoad(outFps, qualityLimit)
                         }
