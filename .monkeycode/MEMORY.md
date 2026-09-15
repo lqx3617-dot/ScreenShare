@@ -696,3 +696,19 @@ Entries discovered by the Agent during task execution should follow this format:
   - **读法**：`管线` 远大于 `rtt` 且 rtt 正常 → 延迟来自接收侧缓冲/解码（调抖动缓冲或降解码负载），而非链路；`冻结` 次数上升 → 解码/渲染卡顿；`最小` 接近 `缓冲` → 缓冲深度贴近内容自适应下限，属正常。
   - **验证 APK 是否真的包含新字符串（本环境坑）**：`strings` 对中文（MUTF-8）判定为非可打印，检索恒为 0；应改用 `grep -ac "管线=" <解包目录>/classes*.dex`。单文件校验 arm64 构建反而只有 3s（Kotlin 编译复用，仅重打包），属正常。
   - v1.252(255) 产物：allarch md5=241bfdea7f256ff9c6765b333632c510、arm64 md5=533d5644fd3d3f8e16db91c5f041e824；构建脚本 /tmp/opencode/build_v1252.sh。
+
+## v1.253 老设备共享「画质长期最差 + 持续卡顿」根因（档位锁死 + 假丢包）（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.252 用户复测，主机 realme RMX3350 导出日志（v1.252 会话 00:44~00:49），反馈"画质特别差、特别卡、延迟高"
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **现象（脚本可复现的判读）**：档位 0↔6 反复往返；`实发` 常在档位上限之下（链路非持续饱和）；`rtt` 在 4~18ms 与 1500~4300ms 间成块跳变且 `丢包=0%`；最刺眼的是 **档位 6（800k/319x640@15）在 rtt 已回落到 4~18ms、丢包 0% 后仍持续 47~60s 不动**（00:45:04~00:45:27、00:48:29~00:49:27），即"画质特别差"的直接来源。
+  - **根因①恢复上限锁死（画质差）**：v1.251 的 `minAdaptLevel = max(minAdaptLevel, curAdaptLevel + 1)` 中 `curAdaptLevel` 是**降档前**的档位。仅降一档时（5→6）上限=6，而恢复判定 `curAdaptLevel - 1 >= minAdaptLevel` 即 `5 >= 6` 恒假 → 永远回不去，只能等 `congestionForgetMs`(60s) 递减一次上限。改为记「拥塞前正在工作的档位」`curAdaptLevel.coerceAtLeast(1)`，并把遗忘期降到 20s；另加「level 仍 >= 当前档位时刷新遗忘计时器」防止持续拥塞期间上限被误放开。
+  - **根因②假丢包（抖动来源）**：`remote-inbound-rtp` 每个 SSRC（视频/音频/RTX）各一条，旧逻辑对全部条目 last-wins 取 `fractionLost`，会读到音频/RTX 的 8bit 值。日志出现「rtt=25ms 却丢包 89.5%/95.7%」的自相矛盾读数，直接触发 `lossLevel=6` 深降档。改为只采纳 `mediaType/kind == video`（缺失时才不过滤）。
+  - **根因③队列排不空（延迟高）**：`pc.setBitrate` 与 `enc.minBitrateBps` 下限 500k。深档时 BWE 被 500k 托住，而链路瞬时可能只有 300~450k → 队列稳定积压，rtt 长期停在 1.5~1.8s 却丢包 0%。下限放开到 150k，让拥塞控制能降到链路实际容量，先消延迟再谈清晰度。
+  - **根因④采集格式反复重建（卡顿）**：采集切换原有冷却只约束"回升"，降质是立即执行。档位 0↔6 抖动时采集格式每 1.5s 重建一次（日志 00:45:03.017 → 00:45:04.546 两次切换），每次重启采集器并触发关键帧。新增 `captureDowngradeCooldownMs=5s` 约束降质方向。
+  - **判读要点**：`丢包` 与 `rtt` 必须互相印证——「低 rtt + 高丢包」几乎必是统计串流错误；「低实发 + 高 rtt + 丢包 0%」是链路容量低于当前下限、队列排不空；「档位长期不动但 rtt/丢包已正常」是控制记忆/恢复逻辑锁死，而非链路仍差。
+  - v1.253(256) 产物：allarch md5=fdf40669e2759a02c3d37372d15a11c2、arm64 md5=af18a41798ac492dfa6c5075efb90b0a；构建脚本 /tmp/opencode/build_v1253.sh；commit 88207f6。
+  - 待补：用户日志只有共享方（`NETWORK viewer#N`），无观看方 `NETWORK viewer 收帧... 缓冲/解码/管线` 行，无法确认延迟是否还含接收端抖动缓冲；下次复测需同时导出观看方日志。
