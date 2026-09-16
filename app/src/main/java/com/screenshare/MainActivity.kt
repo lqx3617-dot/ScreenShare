@@ -99,6 +99,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var hostSessionActive = false
     // 主动离开会议标记：避免 cleanupPeer 触发 onDisconnected 时重复跳转连接页
     @Volatile private var leavingMeeting = false
+    // 连接彻底失败（重连超限）：onConnectionFailed 置位后 onDisconnected 走结束流程
+    @Volatile private var connectionTerminated = false
+    // 临时断开进入重连态：ICE 自恢复期间保留画面，不退出会议
+    @Volatile private var reconnecting = false
 
     // ======================== v1.259: 双音量 + 说话闪避 ========================
     // 剧情音/对讲音音量 0~100 与闪避开关，持久化到 audio_settings；仅本端生效
@@ -2008,6 +2012,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun startSessionCore() {
         if (sessionCoreStarted) return
         sessionCoreStarted = true
+        // v1.261: 新连接开始，清除上次会议的终止/重连标记
+        connectionTerminated = false
+        reconnecting = false
         // 启用 WebRTC 原生日志，便于诊断采集/信令问题
         ScreenCapturerFactory.enableDiagnosticLogging()
         val p = WebRTCPeer(this, eglBaseContext!!, this)
@@ -2419,6 +2426,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 updateUI("正在建立连接...")
                 val isNewPeer = peer == null
                 if (isNewPeer) {
+                    // v1.261: 新连接开始，清除上次会议的终止/重连标记
+                    connectionTerminated = false
+                    reconnecting = false
                     val p = WebRTCPeer(this, eglBaseContext!!, this)
                     peer = p
                     if (p.createPeerConnection() == null) {
@@ -2702,6 +2712,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     override fun onConnected() {        runOnUiThread {
+            // v1.261: 从重连态恢复——无感继续会议，提示"连接已恢复"
+            if (reconnecting) {
+                reconnecting = false
+                updateUI("连接已恢复")
+            }
             // 连接建立即启动独立弱网/编码自适应（与全屏状态无关），保证非全屏观看动态画面不卡
             startAdaptiveLoop()
             updateUI("✅ 已连接！屏幕共享进行中...")
@@ -2738,28 +2753,43 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDisconnected() {
         runOnUiThread {
+            // 彻底失败（重连超限）或主动离开：结束会议返回连接页
+            if (connectionTerminated || leavingMeeting || isFinishing || isDestroyed) {
+                stopAdaptiveLoop()
+                stopViewerStatsLoop()
+                stopDuckLoop()
+                updateUI("连接已断开")
+                stopStatusBreathing()
+                SystemAudioBridge.stopPlayback()
+                resetUI()
+                clearMeetingResume()
+                // 会议异常断开：返回连接页（主动离开时不重复跳转）
+                if (!leavingMeeting && !isFinishing && !isDestroyed) {
+                    restoreSystemBars()
+                    startActivity(Intent(this, MeetingActivity::class.java))
+                    finish()
+                }
+                return@runOnUiThread
+            }
+            // v1.261: 临时断开（ICE DISCONNECTED/FAILED）进入重连态——WebRTC 正在自恢复或 ICE restart 中，
+            // 保留最后一帧画面与会议 UI，状态胶囊提示"正在重连"，连接恢复后无感继续
             stopAdaptiveLoop()
             stopViewerStatsLoop()
-            // v1.259: 停止闪避并恢复剧情音量
             stopDuckLoop()
-            updateUI("连接已断开")
+            updateUI("连接中断，正在重连…")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
-            resetUI()
-            // 连接已断开，清除自动重连记录，避免下次打开 App 又自动连接上次会议
-            clearMeetingResume()
-            // 会议异常断开：返回连接页（主动离开时不重复跳转）
-            if (!leavingMeeting && !isFinishing && !isDestroyed) {
-                restoreSystemBars()
-                startActivity(Intent(this, MeetingActivity::class.java))
-                finish()
-            }
+            reconnecting = true
         }
     }
 
     /** 连接彻底失败（重连超限）：结合本机候选情况给出可操作诊断，避免用户无从下手 */
     override fun onConnectionFailed() {
         runOnUiThread {
+            // 标记彻底终止：随后触发的 onDisconnected 走结束会议流程
+            connectionTerminated = true
+            reconnecting = false
+            clearMeetingResume()
             val counts = iceCandidates.groupingBy { c ->
                 when {
                     c.sdp.contains("typ host") -> "host"
@@ -3921,6 +3951,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private fun leaveMeeting(message: String) {
         leavingMeeting = true
+        connectionTerminated = true
         clearMeetingResume()
         stopToolbarAutoHide()
         cleanupPeer()
@@ -3935,6 +3966,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 会议异常结束：清理并返回连接页 */
     private fun handleMeetingFailure() {
         leavingMeeting = true
+        connectionTerminated = true
         clearMeetingResume()
         cleanupPeer()
         resetUI()
