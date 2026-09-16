@@ -1,40 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 会议室工具条瓦片：柔和投影 + 白玻璃 + 顶部高光 + 粉调描边，按下玫瑰提亮（v1.258 美化版） -->
+<!-- 顶部状态胶囊：柔和投影 + 白玻璃 + 顶部高光（v1.258 美化版） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 柔和暖粉投影（浮起感） -->
+    <!-- 柔和暖粉投影 -->
     <item
         android:left="1dp"
-        android:top="3dp"
+        android:top="4dp"
         android:right="1dp"
         android:bottom="0dp">
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
-            <solid android:color="#14DF9BB0" />
+            <corners android:radius="999dp" />
+            <solid android:color="#1EDF9BB0" />
         </shape>
     </item>
-    <!-- 顶部高光（玻璃质感） -->
+    <!-- 顶部高光 -->
     <item
-        android:left="6dp"
-        android:right="6dp"
+        android:left="10dp"
+        android:right="10dp"
         android:top="0dp"
-        android:bottom="18dp">
+        android:bottom="14dp">
         <shape android:shape="rectangle">
-            <corners android:radius="14dp" />
+            <corners android:radius="999dp" />
             <gradient
                 android:angle="270"
-                android:startColor="#30FFFFFF"
-                android:centerColor="#10FFFFFF"
+                android:startColor="#38FFFFFF"
+                android:centerColor="#12FFFFFF"
                 android:endColor="#00FFFFFF" />
         </shape>
     </item>
     <!-- 玻璃主体 -->
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="999dp" />
             <gradient
                 android:angle="90"
-                android:startColor="#F4FFFFFF"
-                android:endColor="#E6FFF7FA" />
+                android:startColor="#FAFFFFFF"
+                android:endColor="#F2FFF8FA" />
             <stroke
                 android:width="1dp"
                 android:color="#2CD98AA6" />
