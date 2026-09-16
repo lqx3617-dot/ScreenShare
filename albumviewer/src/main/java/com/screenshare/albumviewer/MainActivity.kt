@@ -383,6 +383,8 @@ class MainActivity : AppCompatActivity() {
             mainHandler.post(progressTick)
         }
         // 缓冲/渲染开始/结束切换加载指示，避免大视频长时间黑屏无反馈
+        // 注：VideoView 未公开 OnBufferingUpdateListener，无法显示精确的已缓冲区间
+        // （secondaryProgress）；拖到未缓冲区时由 BUFFERING_START 转圈给出反馈
         vv.setOnInfoListener { _, what, _ ->
             when (what) {
                 MediaPlayer.MEDIA_INFO_BUFFERING_START -> pb.visibility = View.VISIBLE
@@ -426,10 +428,8 @@ class MainActivity : AppCompatActivity() {
         vv.setVideoURI(Uri.parse(api.videoUrl(photo.token, photo.index)), headers)
     }
 
-    private fun showFullScreen(position: Int) {
-        val photo = adapter.photoAt(position) ?: return
-        val token = photo.token
-        val index = photo.index
+    private fun showFullScreen(startPosition: Int) {
+        if (adapter.photoAt(startPosition) == null) return
         val inflater = LayoutInflater.from(this)
         val content = inflater.inflate(R.layout.dialog_full, null)
         val ivFull = content.findViewById<ImageView>(R.id.iv_full)
@@ -437,56 +437,82 @@ class MainActivity : AppCompatActivity() {
         val tvTip = content.findViewById<TextView>(R.id.tv_orig_tip)
         val tvIdx = content.findViewById<TextView>(R.id.tv_idx)
 
-        tvIdx.text = "${position + 1} / ${adapter.photos.size}"
-
-        // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
-        pb.visibility = View.VISIBLE
-        val thumbDisposable = ivFull.load(api.thumbUrl(token, index)) {
-            listener(
-                onSuccess = { _, _ -> pb.visibility = View.GONE },
-                onError = { _, _ -> pb.visibility = View.GONE }
-            )
-        }
-
         // 全屏 Dialog：大图必须铺满整屏，AlertDialog wrap_content 会把图片压成一条
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
         dialog.setContentView(content)
         dialog.applyFullScreen()
 
-        // 点击空白背景关闭；点图片区域保持不关（避免刚打开就误关）
-        content.setOnClickListener { dialog.dismiss() }
-        (ivFull as ZoomableImageView).onSingleTap = { dialog.dismiss() }
+        var position = startPosition
+        var origJob: Job? = null
+        var thumbDisposable: coil.request.Disposable? = null
 
-        dialog.show()
-        // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
-        val origJob = scope.launch {
-            tvTip.text = "正在加载高清原图…"
-            tvTip.visibility = View.VISIBLE
-            val orig = api.pollOriginal(token, index, maxTries = 20)
-            if (orig != null) {
-                // IO 线程采样解码：大图先读边界再按目标尺寸降采样，避免主线程全尺寸解码 OOM/ANR
-                val bmp = withContext(Dispatchers.IO) {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeByteArray(orig, 0, orig.size, bounds)
-                    val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight)
-                    BitmapFactory.decodeByteArray(orig, 0, orig.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                }
-                if (bmp != null) {
-                    // 原图已就绪，释放缩略图请求，避免旧请求继续占用 Coil 缓存
-                    thumbDisposable.dispose()
-                    ivFull.setImageBitmap(bmp)
-                    tvTip.visibility = View.GONE
+        // 加载指定位置的图片（缩略图秒出 + 后台轮询原图替换）
+        fun loadPhoto(pos: Int) {
+            val photo = adapter.photoAt(pos) ?: return
+            origJob?.cancel()
+            thumbDisposable?.dispose()
+            // 复位缩放与提示，切图瞬间不留旧图放大态
+            (ivFull as ZoomableImageView).resetZoom()
+            ivFull.setImageBitmap(null)
+            tvTip.visibility = View.GONE
+            tvIdx.text = "${pos + 1} / ${adapter.photos.size}"
+            position = pos
+
+            // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
+            pb.visibility = View.VISIBLE
+            thumbDisposable = ivFull.load(api.thumbUrl(photo.token, photo.index)) {
+                listener(
+                    onSuccess = { _, _ -> pb.visibility = View.GONE },
+                    onError = { _, _ -> pb.visibility = View.GONE }
+                )
+            }
+
+            // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
+            origJob = scope.launch {
+                tvTip.text = "正在加载高清原图…"
+                tvTip.visibility = View.VISIBLE
+                val orig = api.pollOriginal(photo.token, photo.index, maxTries = 20)
+                if (position != pos || !isActive) return@launch
+                if (orig != null) {
+                    // IO 线程采样解码：大图先读边界再按目标尺寸降采样，避免主线程全尺寸解码 OOM/ANR
+                    val bmp = withContext(Dispatchers.IO) {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(orig, 0, orig.size, bounds)
+                        val sample = sampleSizeFor(bounds.outWidth, bounds.outHeight)
+                        BitmapFactory.decodeByteArray(orig, 0, orig.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                    }
+                    if (position != pos) return@launch
+                    if (bmp != null) {
+                        // 原图已就绪，释放缩略图请求，避免旧请求继续占用 Coil 缓存
+                        thumbDisposable?.dispose()
+                        ivFull.setImageBitmap(bmp)
+                        tvTip.visibility = View.GONE
+                    } else {
+                        tvTip.text = "原图加载失败"
+                    }
                 } else {
-                    tvTip.text = "原图加载失败"
+                    tvTip.text = "共享方不在线，显示预览图"
                 }
-            } else {
-                tvTip.text = "共享方不在线，显示预览图"
             }
         }
-        dialog.setOnDismissListener {
-            origJob.cancel()
-            thumbDisposable.dispose()
+
+        // 点击空白背景关闭；点图片区域保持不关（避免刚打开就误关）
+        content.setOnClickListener { dialog.dismiss() }
+        // v1.204: 左右滑动切换上/下一张（未放大时生效）
+        (ivFull as ZoomableImageView).onSingleTap = { dialog.dismiss() }
+        (ivFull as ZoomableImageView).onSwipeNext = {
+            if (position < adapter.photos.size - 1) loadPhoto(position + 1)
         }
+        (ivFull as ZoomableImageView).onSwipePrev = {
+            if (position > 0) loadPhoto(position - 1)
+        }
+
+        dialog.setOnDismissListener {
+            origJob?.cancel()
+            thumbDisposable?.dispose()
+        }
+        dialog.show()
+        loadPhoto(startPosition)
     }
 
     /** 计算采样率：按屏幕短边为目标，长边不超过短边的 2 倍，避免 1080P 和 2K 屏都压到 2048 */

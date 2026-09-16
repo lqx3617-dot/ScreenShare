@@ -23,6 +23,9 @@ class ZoomableImageView @JvmOverloads constructor(
 ) : ImageView(context, attrs, defStyleAttr) {
 
     var onSingleTap: (() -> Unit)? = null
+    // v1.204: 未放大时横向快速滑动切换上/下一张（在 showFullScreen 中赋值）
+    var onSwipeNext: (() -> Unit)? = null
+    var onSwipePrev: (() -> Unit)? = null
 
     private val matrix = Matrix()
     private val baseMatrix = Matrix()
@@ -53,9 +56,24 @@ class ZoomableImageView @JvmOverloads constructor(
             return true
         }
 
-        override fun onSingleTapUp(e: MotionEvent): Boolean {
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             onSingleTap?.invoke()
             return true
+        }
+
+        // v1.204: 未放大时横向快速滑动 → 切换上/下一张；纵向或速度不足不处理
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            if (currentScale() > baseScale * 1.05f) return false
+            if (Math.abs(velocityX) <= Math.abs(velocityY)) return false
+            if (velocityX < -800f) {
+                onSwipeNext?.invoke()
+                return true
+            }
+            if (velocityX > 800f) {
+                onSwipePrev?.invoke()
+                return true
+            }
+            return false
         }
 
         override fun onDown(e: MotionEvent): Boolean = true
