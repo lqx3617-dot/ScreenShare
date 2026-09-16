@@ -1838,6 +1838,18 @@ class WebRTCPeer(
     private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
     private var lastCaptureSwitchMs = 0L
+    // v1.257: 崩塌→恢复边缘检测。老设备 WiFi 周期性故障的恢复是瞬时的
+    // （实测 rtt 2436ms→23ms 仅一个采样周期），好窗口仅 ~17s。
+    @Volatile private var lastAdaptRttMs = 0
+    // v1.257: 恢复边缘待发的关键帧。崩塌期观看端抖动缓冲累积 200~290ms 陈旧帧、
+    // 缓冲最小目标被棘轮抬高（实测恢复后 60s 仍残留 231ms），需要 I 帧让接收端
+    // 丢弃全部待解码帧重新同步。与采集格式切换解耦：即使格式未变也补一个关键帧。
+    @Volatile private var pendingRecoveryKeyFrame = false
+    // v1.257: 实发低于此值视为「链路无容量证据」——屏幕静止（实发≈0）或链路
+    // 已濒死（连 80k 都扛不住）时，回升分辨率既无意义（静态画面观看端已有帧）
+    // 又危险（内容恢复运动往往立刻重新崩塌，实测 21:45:25 静态期回升 480p，
+    // 21:45:29 内容一动 8 秒后链路再次死亡）。
+    private val staticHoldBps = 80_000
     // v1.249: captureSwitchCooldownMs 已改为按设备分流的 get() 属性（见上方 highMotionFpsCap 附近）
     // v1.246 实验：高动态内容（视频播放）采集帧率上限。30fps 采集与 30fps 内容帧
     // 存在相位差导致系统性丢帧，提到 48fps 减少丢帧。仅档位0（网络良好）生效；
@@ -2177,6 +2189,16 @@ class WebRTCPeer(
         val level = maxOf(lossLevel, rttLevel, bwLevel)
         // v1.253: 仍处于（或重于）当前档位的拥塞时刷新遗忘计时器。否则持续丢包/高 RTT
         // 期间 minAdaptLevel 会被误判为"已平静"而逐级放开，回升后再次拥塞形成长期震荡。
+        // v1.257: 链路崩塌→恢复边缘检测。rtt 从 >=900 骤降到 <200 说明老设备
+        // WiFi 周期性故障已解除（实测 2436ms→23ms 一个采样周期，且故障与码率无关）。
+        // 该边缘上：强制关键帧排空观看端残留缓冲、放开静态抑制允许立即回升。
+        val linkRecovered = lastAdaptRttMs >= 900 && rttMs < 200
+        lastAdaptRttMs = rttMs
+        if (linkRecovered) {
+            pendingRecoveryKeyFrame = true
+            // 丢一次恢复等待，让本次采样即可回升（rtt 已证明链路可用，无需再等 6s）
+            recoverTimer = 4
+        }
         if (level > 0 && level >= curAdaptLevel) {
             lastCongestionMs = System.currentTimeMillis()
         }
@@ -2193,7 +2215,15 @@ class WebRTCPeer(
             // 网络好转：连续 4 次（约 6s）回升一档，避免抖动。
             // v1.240 由 8 次（12s）提速——蜂窝/跨网场景从最高档回满约 24s（原 48s），
             // 弱网缓解后画质恢复更及时；6s 窗口仍足以滤除蜂窝 RTT 瞬时波动
-            recoverTimer++
+            // v1.257: 静态抑制——实发 <= staticHoldBps 时暂停回升计数。屏幕静止时
+            // 实发≈0 是内容所致而非链路改善的证据，此时回升只是白白触发
+            // changeCaptureFormat（重启采集器+关键帧，撑高刚排空的队列）；
+            // 且老设备内容恢复运动后往往立刻重新崩塌（实测静态期回升 480p，
+            // 8 秒后链路再死）。链路恢复边缘已在上文把 recoverTimer 预置为 4，
+            // 若此刻内容正在运动则本周期即可回升；内容静止则继续被抑制，
+            // 等内容动起来再按常规节奏回升。
+            val staticHold = actualBitrateBps in 0..staticHoldBps
+            if (staticHold) recoverTimer = 0 else recoverTimer++
             if (recoverTimer >= 4) {
                 // v1.251: 拥塞记忆抑制回升——不越过最近一次被迫降档的档位，
                 // 避免回升到 9M 后再次拥塞形成周期震荡
@@ -2292,6 +2322,8 @@ class WebRTCPeer(
                         if (capturer != null) {
                             val (capW, capH) = captureSizeForLevel(targetProfile)
                             capturer.changeCaptureFormat(capW, capH, targetFps)
+                            // v1.257: changeCaptureFormat 已产生关键帧，无需恢复补帧
+                            pendingRecoveryKeyFrame = false
                             AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
                         }
                     }
@@ -2303,6 +2335,15 @@ class WebRTCPeer(
                     Log.w(TAG, "采集降分辨率失败: ${t.message}")
                 }
             }
+        }
+        // v1.257: 链路恢复后补发关键帧。崩塌期观看端抖动缓冲累积 200~290ms 陈旧帧、
+        // 缓冲最小目标被棘轮式抬高（实测恢复后 60s 仍残留 231ms、每 2s 仅排空 3~8ms）。
+        // 采集格式若已切换，changeCaptureFormat 本身已产生关键帧，标志位在切换块内
+        // 清掉；此处只处理"格式未变但仍需重同步"的情形。requestKeyFrame 内部有
+        // 500ms 防抖，且只在采集器存在时生效。
+        if (pendingRecoveryKeyFrame) {
+            pendingRecoveryKeyFrame = false
+            requestKeyFrame()
         }
         // v1.249: 每次自适应采样落盘一行摘要（不再受全屏限制），现场导出日志即可看到
         // 档位/实测码率/RTT/丢包/编码瓶颈，无需用户进入全屏复现。
