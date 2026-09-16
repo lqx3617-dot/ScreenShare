@@ -13,11 +13,9 @@
  *
  *   server -> client:
  *     { "type": "created", "code": "1234" }                      // 创建成功
- *     { "type": "join-pending" }                                 // 加入请求已提交，等待 host 确认
- *     { "type": "join-request", "viewerId": n }                  // 有人请求加入（仅 host 收到，需确认）
- *     { "type": "joined",  "code": "1234", "viewerId": n }       // host 同意，加入成功
- *     { "type": "join-rejected" }                                // host 拒绝加入
- *     { "type": "join-cancelled", "viewerId": n }                // 请求者超时/断开（仅 host 收到）
+ *     { "type": "joined",  "code": "1234", "viewerId": n }       // 加入成功（直接加入，无需 host 确认）
+ *     { "type": "join-rejected" }                                // host 拒绝加入（保留兼容）
+ *     { "type": "join-cancelled", "viewerId": n }                // 请求者超时/断开（仅 host 收到，保留兼容）
  *     { "type": "peer-ready" }                                   // 对端已加入（host 视角）
  *     { "type": "viewer-joined", "viewerId": n }                 // viewer 正式加入（仅 host 收到）
  *     { "type": "relay",     "data": "<payload>", "viewerId": n }
@@ -28,7 +26,7 @@
  *
  * 行为：
  * - 会议 1 host + 多 viewer（从 1对1 升级为 1对多）
- * - viewer 加入需 host 确认（防撞房）：join 只进入待确认队列，host accept 后才正式加入
+ * - viewer 直接加入（无需 host 确认）：join 即正式加入并通知双方；旧版 join-pending/join-request 流程保留兼容
  * - 连接级状态互斥：同一连接已有角色时拒绝二次 create/join（防僵尸房间）
  * - host 离开：整房销毁，通知所有 viewer
  * - viewer 离开：仅移除该 viewer，通知 host
@@ -321,12 +319,11 @@ wss.on("connection", (ws, request) => {
         roomCode = code;
         role = "viewer";
         viewerId = res.viewerId;
-        // 通知 viewer：等待 host 确认
-        send(ws, { type: "join-pending" });
-        // 通知 host：有人请求加入（等待确认）
+        // 直接加入（无需 host 确认）：通知 viewer 已加入，并通知 host
+        send(ws, { type: "joined", code, viewerId });
         const host = rooms.getHost(code);
-        send(host, { type: "join-request", viewerId });
-        console.log(`[room ${code}] viewer#${viewerId} requested join (awaiting host)`);
+        send(host, { type: "viewer-joined", viewerId });
+        console.log(`[room ${code}] viewer#${viewerId} joined (auto-approved)`);
         break;
       }
 

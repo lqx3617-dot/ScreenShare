@@ -40,9 +40,9 @@ class RoomManager {
   }
 
   /**
-   * viewer 请求加入房间（进入 pending，等待 host 确认）。
+   * viewer 加入房间（直接进入 viewers，无需 host 确认）。
    * 返回 { ok:true, viewerId } 或 { ok:false, error }。
-   * 情侣模式：已有 viewer 或已有 pending 请求时拒绝后续加入。
+   * 情侣模式：已有 viewer 时拒绝后续加入。
    */
   requestJoin(code, viewerWs) {
     const room = this.rooms.get(code);
@@ -50,11 +50,8 @@ class RoomManager {
     if (room.viewers.size > 0) {
       return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };
     }
-    if (room.pending.size > 0) {
-      return { ok: false, error: "已有加入请求等待确认，请稍后再试" };
-    }
     const viewerId = ++this.viewerSeq;
-    room.pending.set(viewerId, { ws: viewerWs, at: Date.now() });
+    room.viewers.set(viewerId, viewerWs);
     return { ok: true, viewerId };
   }
 
