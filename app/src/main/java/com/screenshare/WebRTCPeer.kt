@@ -385,6 +385,8 @@ class WebRTCPeer(
         }
         override fun onRenegotiationNeeded() {}
         override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+            // v1.259: 音频轨（对端麦克风）单独捕获以控制对讲音量
+            handleRemoteAudioTrack(receiver)
             val track = receiver?.track() as? VideoTrack
             if (track != null) {
                 if (track.id() == CAMERA_TRACK_ID) {
@@ -395,6 +397,8 @@ class WebRTCPeer(
             }
         }
         override fun onTrack(track: RtpTransceiver?) {
+            // v1.259: onTrack 路径同样可能交付音频轨
+            handleRemoteAudioTrack(track?.receiver)
             val vt = track?.receiver?.track() as? VideoTrack
             if (vt != null) {
                 if (vt.id() == CAMERA_TRACK_ID) {
@@ -404,6 +408,28 @@ class WebRTCPeer(
                 }
             }
         }
+    }
+
+    // v1.259: 远端音频轨（对端麦克风，1 对 1 场景只有一路）。到达时应用当前对讲音量
+    @Volatile private var remoteAudioTrack: AudioTrack? = null
+    // v1.259: 对讲音量 0~1（远端音轨到达前缓存，到达后立即应用）
+    @Volatile private var talkVolume: Double = 1.0
+
+    /**
+     * v1.259: 设置对讲音量（本端听到的对端说话声）。
+     * @param v 0~1，远端音轨到达前缓存，到达时应用
+     */
+    fun setTalkVolume(v: Float) {
+        talkVolume = v.toDouble().coerceIn(0.0, 1.0)
+        val t = remoteAudioTrack ?: return
+        try { t.setVolume(talkVolume) } catch (_: Throwable) {}
+    }
+
+    /** v1.259: 捕获远端音频轨并应用当前对讲音量（host 端 viewer 连接 / viewer 端主连接共用） */
+    private fun handleRemoteAudioTrack(receiver: RtpReceiver?) {
+        val at = receiver?.track() as? AudioTrack ?: return
+        remoteAudioTrack = at
+        try { at.setVolume(talkVolume) } catch (_: Throwable) {}
     }
 
     fun createPeerConnection(): PeerConnection? {
@@ -481,6 +507,8 @@ class WebRTCPeer(
             @Deprecated("Deprecated in Java")
             override fun onRemoveStream(stream: MediaStream?) {}
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                // v1.259: viewer 的麦克风音轨（host 端听到 viewer 说话）
+                handleRemoteAudioTrack(receiver)
                 val track = receiver?.track() as? VideoTrack
                 if (track != null) {
                     // host 端 viewer 连接收的远端视频轨即 viewer 的摄像头画面
@@ -488,6 +516,7 @@ class WebRTCPeer(
                 }
             }
             override fun onTrack(transceiver: RtpTransceiver?) {
+                handleRemoteAudioTrack(transceiver?.receiver)
                 val vt = transceiver?.receiver?.track() as? VideoTrack
                 if (vt != null) {
                     listener.onViewerCameraTrack(viewerId, vt)
@@ -2436,6 +2465,8 @@ class WebRTCPeer(
         stopCameraVideo()
         // 麦克风：先 track 后 source（track 持有 native AudioSource 引用，反序悬空崩溃）
         try { localAudioTrack?.dispose() } catch (_: Throwable) {}
+        // v1.259: 远端音轨由 PeerConnection 持有，只需摘引用避免 dispose 后误用
+        remoteAudioTrack = null
         localAudioTrack = null
         try { micAudioSource?.dispose() } catch (_: Throwable) {}
         micAudioSource = null

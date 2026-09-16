@@ -123,6 +123,8 @@ object SystemAudioBridge {
 
     // ==================== 观看方：播放系统 PCM ====================
     @Volatile private var audioTrack: AudioTrack? = null
+    // v1.259: 剧情音音量 0~1（用户在音频设置里调节；闪避循环也会改写这个值）
+    @Volatile private var mediaVolume: Float = 1f
     // 有界 PCM 队列：DataChannel 回调（信令/发送线程）只入队不阻塞，专用播放线程消费。
     // 之前 writePcm 直接在信令线程执行阻塞式 AudioTrack.write，AudioTrack 缓冲（40ms 余量）
     // 写满后会无限期阻塞，导致整个 WebRTC 信令/数据处理链路冻结。
@@ -164,6 +166,8 @@ object SystemAudioBridge {
             return false
         }
         audioTrack = track
+        // 应用当前剧情音音量（AudioTrack 创建后立即生效，避免开播第一段是最大音量）
+        try { track.setVolume(mediaVolume) } catch (_: Throwable) {}
         try {
             track.play()
             Log.d(TAG, "系统音频播放开始")
@@ -218,5 +222,15 @@ object SystemAudioBridge {
         playThread?.join(1000)
         playThread = null
         pcmQueue.clear()
+    }
+
+    /**
+     * v1.259: 设置剧情音播放音量（观看方）。
+     * @param v 0~1，立即应用到当前 AudioTrack；若播放尚未开始则缓存，startPlayback 时生效
+     */
+    fun setMediaVolume(v: Float) {
+        mediaVolume = v.coerceIn(0f, 1f)
+        val t = audioTrack ?: return
+        try { t.setVolume(mediaVolume) } catch (_: Throwable) {}
     }
 }

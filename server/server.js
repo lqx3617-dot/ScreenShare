@@ -425,7 +425,7 @@ wss.on("connection", (ws, request) => {
         const host = code ? rooms.getHost(code) : null;
         if (host) {
           send(host, { type: "come-on", code });
-          console.log(`[room ${code}] viewer#${viewerId} pls-join (喊TA)`);
+          console.log(`[room ${code}] viewer#${viewerId != null ? viewerId : "?"} pls-join (喊TA)`);
         } else {
           send(ws, { type: "error", message: "对方不在线，无法提醒（可先点这里创建房间等 TA）" });
         }

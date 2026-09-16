@@ -746,3 +746,32 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.256(259) 产物：allarch md5=75534556b05e2eb704e61eb73bdaad3c、arm64 md5=7dfff0a3b66bfb3d64a3685cacbb444f；构建脚本 /tmp/opencode/build_v1256.sh。**复测要点**：看 `CAPTURE 动态分辨率` 行是否在崩塌（丢包≥30% 或 rtt≥900）后 1.5s 内出现（此前老设备是 19s）；以及高 RTT 持续时长是否从 40s 压到 5s 量级。
 
 
+
+[服务统一守护与重启方式]
+- Date: 2026-09-16
+- Context: 服务器优化后重启 8090/8095/8097 让改动生效时确认了守护机制
+- Category: Operations & Deployment
+- Instructions:
+  - 统一守护脚本 `/tmp/opencode/supervise-server.sh`（后台终端 term_1788721717155_153）每 15s 轮询 8090/8095/8096/8097，端口无监听则 `setsid env` 拉起（日志 /tmp/server-<port>.log、/tmp/supervise-daemon.log）；旧的 `server/daemon-signaling.sh` 已废弃不再运行
+  - 重启服务的正确方式：`background_terminal_kill` 停掉 terminal 管的服务后 supervise 会在 15s 内以 setsid 独立进程接管重启；8095 信令服务器当前由 supervise 直接 setsid 启动（不在任何 terminal 内），只能 `kill <pid>` 后等 supervise 拉起
+  - 改 server.js / relay-server.js / download-server.js 后必须重启对应端口才生效；release-config.json 的 changelog 由 download-server 启动时读一次到内存（RELEASE_CONFIG），App 内检查更新读 version.json 的 changelog，改完配置同样需重启 8090
+  - supervise 拉起参数（照抄，缺失会致服务异常）：8090 需 KEYSTORE_PASS=screenshare123 + DOWNLOAD_BASE=8090-10d780a80ffc046e.monkeycode-ai.online；8095 需 DIAG=1 TRUST_PROXY=1 DIAG_TOKEN=s8sc_diag_7f3a9b2c4d6e8f1a_3b5d7f9a1c2e4b6d + DIAG_TOKEN_OLD=s8sc_diag_10d780a80ffc046e_40346dc2；8096 需 ALBUM_KEY/ALBUM_KEY_OLD/ALBUM_ROOT=/workspace/albums；8097 仅 PORT
+  - 重启前先 `ss -tnp | grep :<port> | grep -v LISTEN` 确认无真实客户端会话；agent(pid 459) 的健康探针连接（FIN-WAIT-2 残留，可达数千条）不是用户会话，可忽略
+  - relay-server.js 是手写 ws（非 ws 库）：createWsParser 处理分片/掩码；服务端发送用 encodeWsText（无掩码），回 pong 用 [0x8a,0x00]
+
+[v1.259 音量功能与产物]
+- Date: 2026-09-16
+- Context: 服务器优化后接着做了情侣一起看场景的音频功能
+- Category: Build Methods
+- Instructions:
+  - v1.259(262) 已构建签名：allarch md5=e596228b20f1a578dcf72ac75f00117b、arm64 md5=7bc82e29eae870defa6dd74353f4f625；构建脚本 /tmp/opencode/build_v1259.sh（由 build_v1258.sh sed 生成）
+  - 校验新 XML 布局的中文字符串不能用 grep resources.arsc：AXML 硬编码中文在每个 res/*.xml 自己的字符串池里（UTF-8/UTF-16 两种编码都可能），需解 APK 遍历 res xml 二进制匹配两种编码；资源名/按钮 id 用 aapt dump resources 校验最可靠
+
+[v1.260 发布与音量入口修正]
+- Date: 2026-09-16
+- Context: v1.259 音量按钮原本放在 llCallExtras（视频通话增强面板），但该面板只在开摄像头时显示，只开麦克风对讲时入口不可见
+- Category: Build Methods
+- Instructions:
+  - v1.260(263) 已构建签名：allarch md5=ff5052ba6b649909f8f4e311b356fbc0、arm64 md5=a6fcb4aa165679bf2bbbcd51600a3418；构建脚本 /tmp/opencode/build_v1260.sh
+  - 修 bug 发版必须 bump 版本号：覆盖同名 APK 不触发 App 内检查更新（version.json 比对 versionCode），修体验问题后改了版本号才能让已装用户收到更新
+  - 常驻入口放工具条 llToolbar（btnMic/btnCamera/btnToolbarMore/btnStop 同级，weight=1 等宽），进入会议 updateUI 里 llToolbar.visibility=VISIBLE 后即显示；llCallExtras 只在 videoCallOn 时显示，不宜放通用入口

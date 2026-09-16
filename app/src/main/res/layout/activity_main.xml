@@ -180,6 +180,25 @@
             android:foreground="?attr/selectableItemBackground"
             android:background="@drawable/bg_room_tile" />
 
+        <!-- v1.259: 音量入口提到工具条常驻（麦克风/剧情音分别调节 + 说话闪避） -->
+        <TextView
+            android:id="@+id/btnAudioSettings"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="68dp"
+            android:layout_marginStart="12dp"
+            android:gravity="center"
+            android:text="音量"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary"
+            android:drawableTop="@drawable/ic_volume"
+            android:drawablePadding="4dp"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:foreground="?attr/selectableItemBackground"
+            android:background="@drawable/bg_room_tile" />
+
         <TextView
             android:id="@+id/btnToolbarMore"
             android:layout_width="0dp"

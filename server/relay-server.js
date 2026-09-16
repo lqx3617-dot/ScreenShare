@@ -68,7 +68,7 @@ function acceptWs(req, socket) {
 }
 
 /** 读取一个 ws 文本帧的 payload（处理分片与掩码）。返回 {text, opcode} 或 null（需更多数据/连接关闭） */
-function createWsParser(onText, onClose) {
+function createWsParser(onText, onClose, onPing) {
   let buf = Buffer.alloc(0);
   let fragmentedText = "";
   return {
@@ -102,7 +102,13 @@ function createWsParser(onText, onClose) {
         }
         buf = buf.subarray(offset + maskLen + len);
         if (opcode === 0x8) { onClose(); return; }
-        if (opcode === 0x9) { return; } // ping 忽略
+        if (opcode === 0x9) {
+          // ping 帧必须回 pong（RFC 6455），且 continue 继续处理本 chunk 内的后续帧：
+          // 误写成 return 会把同 TCP chunk 中 ping 之后的数据帧留在 buf 里，
+          // 对端不再发数据时这些帧被永久丢弃（丢 candidate/信令）
+          if (onPing) onPing();
+          continue;
+        }
         if (opcode === 0x2) { /* binary 忽略 */ continue; }
         fragmentedText += payload.toString("utf8");
         // 分片累计超限：断开（防无限分片拼接 OOM）
@@ -146,7 +152,9 @@ server.on("upgrade", (req, socket) => {
       try { msg = JSON.parse(text); } catch (e) { return; }
       handleMessage(msg, send);
     },
-    () => { try { socket.destroy(); } catch (e) {} }
+    () => { try { socket.destroy(); } catch (e) {} },
+    // 回空 payload 的 pong 帧（fin=1, opcode=0xA, len=0）
+    () => { try { socket.write(PONG_FRAME); } catch (e) {} }
   );
 
   function handleMessage(msg, send) {
@@ -228,6 +236,9 @@ setInterval(() => {
 function formatCode(code) {
   return code.length === 8 ? `${code.slice(0, 4)} ${code.slice(4)}` : code;
 }
+
+// 空 payload 的 pong 帧（fin=1, opcode=0xA, len=0），用于回应客户端 ping
+const PONG_FRAME = Buffer.from([0x8a, 0x00]);
 
 /** 服务端发送 ws 文本帧（无掩码） */
 function encodeWsText(text) {

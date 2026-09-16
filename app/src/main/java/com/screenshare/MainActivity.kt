@@ -100,6 +100,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 主动离开会议标记：避免 cleanupPeer 触发 onDisconnected 时重复跳转连接页
     @Volatile private var leavingMeeting = false
 
+    // ======================== v1.259: 双音量 + 说话闪避 ========================
+    // 剧情音/对讲音音量 0~100 与闪避开关，持久化到 audio_settings；仅本端生效
+    private val audioPrefs by lazy { getSharedPreferences("audio_settings", MODE_PRIVATE) }
+    private fun mediaVol(): Int = audioPrefs.getInt("media_volume", 100).coerceIn(0, 100)
+    private fun talkVol(): Int = audioPrefs.getInt("talk_volume", 100).coerceIn(0, 100)
+    private fun duckEnabled(): Boolean = audioPrefs.getBoolean("duck_enabled", true)
+    // 闪避平滑：当前实际应用到 SystemAudioBridge 的剧情音（0~100），向目标值逐步逼近
+    @Volatile private var appliedMediaVol = 100
+    private var duckRunnable: Runnable? = null
+    // 闪避压低到的比例（对方说话时剧情音 = 用户音量 × 0.25）
+    private val DUCK_FACTOR = 0.25f
+    // 视为"对方在说话"的电平阈值（与对讲状态指示同阈值，约 -60dB）
+    private val DUCK_LEVEL_THRESHOLD = 800.0
+
     // 口令共享（信令服务器模式）
     private var signalClient: SignalClient? = null
     private var signalMode = false
@@ -270,6 +284,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnAspectToggle.setOnClickListener { onAspectToggleClicked() }
         binding.btnMic.setOnClickListener { onMicClicked() }
         binding.btnCamera.setOnClickListener { onVideoCallClicked() }
+        binding.btnAudioSettings.setOnClickListener { showAudioSettings() }
         binding.btnAlbum.setOnClickListener { onAlbumClicked() }
         binding.tvTitleBrand.setOnClickListener { onBrandTripleTap() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
@@ -1258,6 +1273,139 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvTalkIndicator.text = "对讲待机"
             binding.tvTalkIndicator.setTextColor(Color.parseColor("#FF4A3B44"))
         }
+    }
+
+    // ======================== v1.259: 双音量应用 + 说话闪避 ========================
+
+    /** 把持久化的音量设置应用到当前播放链路（剧情音=SystemAudioBridge/系统媒体音量；对讲音=远端音轨） */
+    private fun applyAudioSettings() {
+        // 对讲音：远端音轨到达前由 WebRTCPeer 缓存，到达后应用
+        peer?.setTalkVolume(talkVol() / 100f)
+        if (isHost) {
+            // 共享方的"剧情音"就是本机播放的媒体声音，映射到系统媒体音量
+            val am = getSystemService(AUDIO_SERVICE) as? android.media.AudioManager
+            if (am != null) {
+                val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                am.setStreamVolume(
+                    android.media.AudioManager.STREAM_MUSIC,
+                    (mediaVol() / 100f * max).toInt().coerceIn(0, max), 0
+                )
+            }
+        } else {
+            // 观看方的"剧情音"是 DataChannel 回放的 PCM 音量
+            appliedMediaVol = mediaVol()
+            SystemAudioBridge.setMediaVolume(appliedMediaVol / 100f)
+        }
+    }
+
+    /** 启动闪避循环：仅观看方需要（只有观看方同时听剧情音与对讲音） */
+    private fun startDuckLoop() {
+        if (duckRunnable != null) return
+        val h = binding.root.handler ?: return
+        duckRunnable = object : Runnable {
+            override fun run() {
+                val p = peer
+                // 闪避前提：观看方 + 对讲已连接（电平由 talkStatsThread 每秒刷新）
+                if (!isHost && p != null && videoCallOn) {
+                    val target = if (duckEnabled() && p.remoteAudioLevel() > DUCK_LEVEL_THRESHOLD) {
+                        (mediaVol() * DUCK_FACTOR).toInt()
+                    } else {
+                        mediaVol()
+                    }
+                    // 平滑过渡（每 250ms 逼近 40%），避免音量突变刺耳
+                    appliedMediaVol += ((target - appliedMediaVol) * 0.4f).toInt()
+                    if (appliedMediaVol != target) {
+                        // 差距小于 1 时直接对齐，否则浮点尾差会让音量永远差一点
+                        if (kotlin.math.abs(target - appliedMediaVol) <= 1) appliedMediaVol = target
+                    }
+                    SystemAudioBridge.setMediaVolume(appliedMediaVol.coerceIn(0, 100) / 100f)
+                }
+                h.postDelayed(this, 250)
+            }
+        }
+        h.post(duckRunnable!!)
+    }
+
+    private fun stopDuckLoop() {
+        duckRunnable?.let { binding.root.handler?.removeCallbacks(it) }
+        duckRunnable = null
+        // 恢复用户设定的剧情音量，避免闪避中的压低值残留
+        if (!isHost) {
+            appliedMediaVol = mediaVol()
+            SystemAudioBridge.setMediaVolume(appliedMediaVol / 100f)
+        }
+    }
+
+    /** 音量设置对话框：剧情音/对讲音 + 自动闪避，改动即时生效并持久化 */
+    private fun showAudioSettings() {
+        val view = layoutInflater.inflate(R.layout.dialog_audio_settings, null)
+        val sbMedia = view.findViewById<android.widget.SeekBar>(R.id.sbMediaVol)
+        val tvMedia = view.findViewById<android.widget.TextView>(R.id.tvMediaVol)
+        val sbTalk = view.findViewById<android.widget.SeekBar>(R.id.sbTalkVol)
+        val tvTalk = view.findViewById<android.widget.TextView>(R.id.tvTalkVol)
+        val swDuck = view.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.swDuck)
+
+        // 共享方初始值读系统媒体音量（语义=本机播放的剧情声音）；观看方读持久化
+        if (isHost) {
+            val am = getSystemService(AUDIO_SERVICE) as? android.media.AudioManager
+            if (am != null) {
+                val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                val cur = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+                sbMedia.progress = if (max > 0) (cur.toFloat() / max * 100).toInt() else 100
+            }
+        } else {
+            sbMedia.progress = mediaVol()
+        }
+        sbTalk.progress = talkVol()
+        swDuck.isChecked = duckEnabled()
+        tvMedia.text = sbMedia.progress.toString()
+        tvTalk.text = sbTalk.progress.toString()
+
+        sbMedia.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                tvMedia.text = progress.toString()
+                if (fromUser) {
+                    if (isHost) {
+                        // 即时改系统媒体音量
+                        val am = getSystemService(AUDIO_SERVICE) as? android.media.AudioManager
+                        if (am != null) {
+                            val max = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                            am.setStreamVolume(
+                                android.media.AudioManager.STREAM_MUSIC,
+                                (progress / 100f * max).toInt().coerceIn(0, max), 0
+                            )
+                        }
+                    } else {
+                        appliedMediaVol = progress
+                        SystemAudioBridge.setMediaVolume(progress / 100f)
+                    }
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                audioPrefs.edit().putInt("media_volume", seekBar?.progress ?: 100).apply()
+            }
+        })
+
+        sbTalk.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                tvTalk.text = progress.toString()
+                if (fromUser) peer?.setTalkVolume(progress / 100f)
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                audioPrefs.edit().putInt("talk_volume", seekBar?.progress ?: 100).apply()
+            }
+        })
+
+        swDuck.setOnCheckedChangeListener { _, isChecked ->
+            audioPrefs.edit().putBoolean("duck_enabled", isChecked).apply()
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setView(view)
+            .setPositiveButton("完成", null)
+            .show()
     }
 
     // ======================== 相册上传查看 ========================
@@ -2579,6 +2727,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
+                // v1.259: 应用持久化的剧情音音量，并启动说话闪避循环
+                applyAudioSettings()
+                startDuckLoop()
                 // 观看端显示实时网络延迟/接收帧率，便于量化画面延迟
                 startViewerStatsLoop()
             }
@@ -2589,6 +2740,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         runOnUiThread {
             stopAdaptiveLoop()
             stopViewerStatsLoop()
+            // v1.259: 停止闪避并恢复剧情音量
+            stopDuckLoop()
             updateUI("连接已断开")
             stopStatusBreathing()
             SystemAudioBridge.stopPlayback()
@@ -4020,6 +4173,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnMic.visibility = View.GONE
         // 视频通话增强：停止对讲轮询、隐藏增强控件、移除屏幕常亮
         setTalkPolling(false)
+        // v1.259: 同时停止闪避循环（UI 重置路径兜底）
+        stopDuckLoop()
         binding.llCallExtras.visibility = View.GONE
         if (keepScreenOnForCall) {
             keepScreenOnForCall = false
@@ -4056,6 +4211,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onDestroy() {
         super.onDestroy()
+        // v1.259: 兜底停止闪避循环，避免 Activity 销毁后主线程 Runnable 残留
+        stopDuckLoop()
         albumWebView?.let { wv ->
             try {
                 binding.flAlbumWeb.removeView(wv)

@@ -295,11 +295,12 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   }
   if (urlPath === "/version.json") {
     getVersion(req.headers.host).then((v) => {
-      res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });
+      const err = !!(v && v.error);
+      res.writeHead(err ? 500 : 200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify(v || { error: "internal" }));
-      done(200);
+      done(err ? 500 : 200);
     }).catch(() => {
-      res.writeHead(500, { "Content-Type": "application/json" });
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ error: "internal" }));
       done(500);
     });
@@ -308,11 +309,12 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   // 相册查看 APP 独立版本检查（AlbumViewer 云更新）
   if (urlPath === "/albumviewer-version.json") {
     getAlbumVersion(req.headers.host).then((v) => {
-      res.writeHead(v && v.error ? 500 : 200, { "Content-Type": "application/json" });
+      const err = !!(v && v.error);
+      res.writeHead(err ? 500 : 200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify(v || { error: "internal" }));
-      done(200);
+      done(err ? 500 : 200);
     }).catch(() => {
-      res.writeHead(500, { "Content-Type": "application/json" });
+      res.writeHead(500, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       res.end(JSON.stringify({ error: "internal" }));
       done(500);
     });
