@@ -729,3 +729,20 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.254(257) 产物：allarch md5=025793641cd7aa7b724a62fda51598ca、arm64 md5=c53484c99f6849464a3fd382987e7c88；构建脚本 /tmp/opencode/build_v1254.sh；共享方日志 `.monkeycode-tmp-files/81bb3071-screenshare-1.log`（v1.254 段 2359~2425）、观看方 `.monkeycode-tmp-files/dd976121-screenshare观看方-2.log`（2512~2598）。
   - v1.255(258) 产物：allarch md5=a9b2577cd9a76b415deb3bf6addc82c9、arm64 md5=c1c2f3e2a5c9c7833264e7836941fada；构建脚本 /tmp/opencode/build_v1255.sh。**复测要点**：重点看崩塌窗口（rtt 首次 ≥900ms 之后 3~5 个采样）实发是否回落到档位上限附近、高 RTT 是否从 14s 压到 2~4s。
 
+## v1.256 「老设备共享卡、平板共享不卡」的分设备对照与采集切换重试缺失（2026-09-16）
+
+[Project Knowledge Summary]
+- Date: 2026-09-16
+- Context: 用户首次提供"老设备(realme RMX3350)共享 + 平板(oppo OPD2511)共享"两份日志对照，反馈老设备共享延迟高、平板共享没问题
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **v1.255 修复已验证有效**：realme 02:03 会话崩塌时（rtt 7→700ms），采集格式立即切换（02:03:13 CAPTURE 319x640@15），实发从 2461k 秒降到 396k，rtt 14s 内从 1866ms 恢复到 105ms。对比 v1.254 同类崩塌实发顶 2-4Mbps、rtt 顶 2300ms 达 14s。
+  - **平板与老设备的差异是硬件级**：平板作共享方（21:14:38 会话，1280x886/1920x1329 分辨率）RTT 全程 3-117ms **从不崩塌**；平板同样会过冲（档位 6 时实发 8580k，cap 仅 800k），但其 WiFi 扛得住突发。老设备 WiFi 在持续上行 ~2.6-6.9Mbps 约 10-15s 后周期性掉到 ~0kbps（v1.253 峰值 2.6M 崩、v1.254 峰值 6.9M 崩，时机与码率无关 → 判为 realme WiFi 周期事件）。**结论：自适应逻辑无法预防崩塌，只能快速收敛**。
+  - **v1.256 根因（比 v1.255 更深一层）**：采集切换块被包在 `if (lastAdaptBitrateCap != cap)` 内部。realme 21:13:33 会话崩塌以**丢包先行**（21:13:45 丢包 77.3% 但 rtt 仍 10ms）→ 档位跳 0→6 时切换被 5s 冷却挡住（上次切换才过 1.7s）；下一采样 rtt 升到 2817ms，但档位仍是 6、cap 没变 → **切换块整段跳过、重试机会被彻底剥夺**，采集在 1080p 卡了 19s（21:13:45→21:14:04），rtt 顶 3041ms、40s 才恢复。
+  - **v1.256 修复**：①把采集切换块从 cap 变化块内提到函数体层级，**每个采样周期都评估**（被冷却挡住时下个 1.5s 周期自动重试，最坏延迟 = 冷却 5s）；②`collapse` 判据补上高丢包：`rttMs >= 900 || sendLossPct >= 30.0`（丢包先行型崩塌可立即绕过冷却，不必等 rtt 判据）。
+  - **平板会话的其他特征**：内容受限频繁出现（实发远低于目标，如 档位0 目标 6300k 实发仅 95-5220k 波动），这是内容动态变化所致，非链路问题；平板的档位下降由丢包驱动（6.6%/21.9% 丢包 → lossLevel=6），与老设备的 rtt 驱动不同。
+  - **判读要点**：`CAPTURE 动态分辨率` 行与 `NETWORK` 行的时间差 = 切换延迟；正常应同采样周期内（≤1.5s）。若相差多个采样周期且期间档位未变，即为"切换被挡且未重试"。
+  - 日志位置：老设备 `.monkeycode-tmp-files/332a593d-screenshare-2.log`（v1.255 段 3153、21:13 会话 5639~5680）、平板 `.monkeycode-tmp-files/22782642-screenshare_1-1.log`（平板作共享方 2650~2724）。
+  - v1.256(259) 产物：allarch md5=75534556b05e2eb704e61eb73bdaad3c、arm64 md5=7dfff0a3b66bfb3d64a3685cacbb444f；构建脚本 /tmp/opencode/build_v1256.sh。**复测要点**：看 `CAPTURE 动态分辨率` 行是否在崩塌（丢包≥30% 或 rtt≥900）后 1.5s 内出现（此前老设备是 19s）；以及高 RTT 持续时长是否从 40s 压到 5s 量级。
+
+

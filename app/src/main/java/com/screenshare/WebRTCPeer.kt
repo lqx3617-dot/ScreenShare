@@ -2139,7 +2139,9 @@ class WebRTCPeer(
         // 本机编码器中途改 maxBitrateBps 不生效，必须 changeCaptureFormat 重配才遵守新码率；
         // 若切换被 5s 冷却阻塞，1080p 采集器会以 2-4Mbps（单关键帧 300-800KB）灌入死链路，
         // 队列堆积数 MB → rtt 顶在 2.3s 长达 14s、观看端 0 帧（v1.254 实测）。
-        val collapse = rttMs >= 900
+        // v1.256: 补上高丢包判据。老设备崩塌常以丢包先行（实测 77% 丢包时 rtt 仍 10ms），
+        // 只看 rtt 会晚 1~2 个采样周期，届时档位/cap 已稳定、切换块被"cap 未变"跳过。
+        val collapse = rttMs >= 900 || sendLossPct >= 30.0
         // v1.241: 带宽匹配档位——链路带宽不足时（如蜂窝上行 1M 而档位上限 4M），编码器无降档余地、
         // 帧率被硬压；按实测带宽从高到低选第一个码率上限 ≤ 实测带宽×1.6 的档位参与取大，
         // 让采集分辨率/帧率主动降到与链路匹配，帧率优先保连续。带宽波动由"降档立即、回升 6s/档"兜底。
@@ -2250,48 +2252,55 @@ class WebRTCPeer(
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应切分辨率策略失败: ${t.message}")
             }
-            // V3.1: 采集侧降分辨率——弱网档位>=2 降720p、>=3 降480p，减轻采集+编码双端负载；
-            // 恢复档位0 回升 1080p（v1.243: 顶档码率上限 9M）
-            // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
-            // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
-            val weakProfile = captureProfileForLevel(curAdaptLevel)
-            val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
-            // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
-            // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
-            val targetFps = captureFpsForLevel(curAdaptLevel)
-            val profileChanged = targetProfile != lastCaptureProfile
-            if (profileChanged || targetFps != captureFps) {
-                val now = System.currentTimeMillis()
-                val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
-                val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
-                val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
-                // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
-                // v1.255: 崩塌（rtt>=900）时绕过冷却立即降采集格式。冷却本意是抑制 4↔5↔6
-                // 单档抖动，但崩塌时每多等 1.5s 就多灌 ~5MB 进死链路，代价完全不对称。
-                if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
-                    lastCaptureProfile = targetProfile
-                    lastCaptureFps = targetFps
-                    captureFps = targetFps
-                    lastCaptureSwitchMs = now
-                    try {
-                        // v1.254: 仅帧率变化时只改编码器上限、不重启采集器；只有分辨率档位
-                        // 变化才走 changeCaptureFormat。后者每次都会重建采集管线并触发关键帧，
-                        // 是弱网档位在 4↔5↔6 间抖动时画面一卡一卡的直接来源。
-                        if (profileChanged) {
-                            val capturer = videoCapturer
-                            if (capturer != null) {
-                                val (capW, capH) = captureSizeForLevel(targetProfile)
-                                capturer.changeCaptureFormat(capW, capH, targetFps)
-                                AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
-                            }
+        }
+        // V3.1: 采集侧降分辨率——弱网档位>=2 降720p、>=3 降480p，减轻采集+编码双端负载；
+        // 恢复档位0 回升 1080p（v1.243: 顶档码率上限 9M）
+        // V3.2: 防抖——降质立即执行；回升需冷却 4s，避免 1080/720/480 临界来回跳
+        // V1.120: 与编码负载自适应档位取较大值（编码瓶颈时即使网络好也保持降档）
+        // v1.256: 本块从 cap 变化块内提出，改为每个采样周期都评估。原先档位不变时
+        // cap 不变 → 切换块整段跳过，一旦某次切换被冷却挡住就再也不会重试，采集格式
+        // 卡在 1080p 长达 19s（老设备实测：丢包 77% 降档到 6 时被挡，之后 rtt 升到
+        // 2800ms 但档位/cap 未变，1080p 采集器持续灌死链路）。
+        val weakProfile = captureProfileForLevel(curAdaptLevel)
+        val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
+        // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
+        // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
+        val targetFps = captureFpsForLevel(curAdaptLevel)
+        val profileChanged = targetProfile != lastCaptureProfile
+        if (profileChanged || targetFps != captureFps) {
+            val now = System.currentTimeMillis()
+            val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
+            val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
+            val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
+            // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
+            // v1.255: 崩塌时绕过冷却立即降采集格式。冷却本意是抑制 4↔5↔6
+            // 单档抖动，但崩塌时每多等 1.5s 就多灌 ~5MB 进死链路，代价完全不对称。
+            // v1.256: 崩塌判据补上高丢包——老设备崩塌常以丢包先行（实测 77% 丢包时
+            // rtt 仍 10ms，rtt 判据要晚 1~2 个采样周期才触发，届时切换块已被 cap 未变
+            // 跳过）。
+            if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
+                lastCaptureProfile = targetProfile
+                lastCaptureFps = targetFps
+                captureFps = targetFps
+                lastCaptureSwitchMs = now
+                try {
+                    // v1.254: 仅帧率变化时只改编码器上限、不重启采集器；只有分辨率档位
+                    // 变化才走 changeCaptureFormat。后者每次都会重建采集管线并触发关键帧，
+                    // 是弱网档位在 4↔5↔6 间抖动时画面一卡一卡的直接来源。
+                    if (profileChanged) {
+                        val capturer = videoCapturer
+                        if (capturer != null) {
+                            val (capW, capH) = captureSizeForLevel(targetProfile)
+                            capturer.changeCaptureFormat(capW, capH, targetFps)
+                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
                         }
-                        // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
-                        val params = sender.parameters
-                        params.encodings?.firstOrNull()?.maxFramerate = targetFps
-                        sender.parameters = params
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "采集降分辨率失败: ${t.message}")
                     }
+                    // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
+                    val params = sender.parameters
+                    params.encodings?.firstOrNull()?.maxFramerate = targetFps
+                    sender.parameters = params
+                } catch (t: Throwable) {
+                    Log.w(TAG, "采集降分辨率失败: ${t.message}")
                 }
             }
         }
