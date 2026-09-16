@@ -50,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rvGrid: RecyclerView
     private lateinit var tvEmpty: TextView
     private var refreshJob: Job? = null
+    // v1.205: 视频下载协程引用，供进度对话框「取消」终止
+    private var saveJob: Job? = null
     private val adapter = GridAdapter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -446,29 +448,12 @@ class MainActivity : AppCompatActivity() {
         var origJob: Job? = null
         var thumbDisposable: coil.request.Disposable? = null
 
-        // 加载指定位置的图片（缩略图秒出 + 后台轮询原图替换）
-        fun loadPhoto(pos: Int) {
+        // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
+        fun pollOriginal(pos: Int) {
             val photo = adapter.photoAt(pos) ?: return
             origJob?.cancel()
-            thumbDisposable?.dispose()
-            // 复位缩放与提示，切图瞬间不留旧图放大态
-            (ivFull as ZoomableImageView).resetZoom()
-            ivFull.setImageBitmap(null)
-            tvTip.visibility = View.GONE
-            tvIdx.text = "${pos + 1} / ${adapter.photos.size}"
-            position = pos
-
-            // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
-            pb.visibility = View.VISIBLE
-            thumbDisposable = ivFull.load(api.thumbUrl(photo.token, photo.index)) {
-                listener(
-                    onSuccess = { _, _ -> pb.visibility = View.GONE },
-                    onError = { _, _ -> pb.visibility = View.GONE }
-                )
-            }
-
-            // 后台轮询原图：不遮屏，用底部文字提示状态；原图到了替换缩略图
             origJob = scope.launch {
+                tvTip.setOnClickListener(null)
                 tvTip.text = "正在加载高清原图…"
                 tvTip.visibility = View.VISIBLE
                 val orig = api.pollOriginal(photo.token, photo.index, maxTries = 20)
@@ -491,9 +476,35 @@ class MainActivity : AppCompatActivity() {
                         tvTip.text = "原图加载失败"
                     }
                 } else {
-                    tvTip.text = "共享方不在线，显示预览图"
+                    // v1.205: 超时不等于对方不在线——共享方可能只是压缩慢，给「继续等待」入口
+                    tvTip.text = "共享方响应较慢，点此继续等待原图"
+                    tvTip.setOnClickListener { pollOriginal(pos) }
                 }
             }
+        }
+
+        // 加载指定位置的图片（缩略图秒出 + 后台轮询原图替换）
+        fun loadPhoto(pos: Int) {
+            val photo = adapter.photoAt(pos) ?: return
+            origJob?.cancel()
+            thumbDisposable?.dispose()
+            // 复位缩放与提示，切图瞬间不留旧图放大态
+            (ivFull as ZoomableImageView).resetZoom()
+            ivFull.setImageBitmap(null)
+            tvTip.visibility = View.GONE
+            tvIdx.text = "${pos + 1} / ${adapter.photos.size}"
+            position = pos
+
+            // 缩略图加载期间显示转圈，加载完立即隐藏（保证点开秒出图、不一直转）
+            pb.visibility = View.VISIBLE
+            thumbDisposable = ivFull.load(api.thumbUrl(photo.token, photo.index)) {
+                listener(
+                    onSuccess = { _, _ -> pb.visibility = View.GONE },
+                    onError = { _, _ -> pb.visibility = View.GONE }
+                )
+            }
+
+            pollOriginal(pos)
         }
 
         // 点击空白背景关闭；点图片区域保持不关（避免刚打开就误关）
@@ -589,22 +600,45 @@ class MainActivity : AppCompatActivity() {
 
     /** 下载并保存视频到系统相册（Movies）：流式落盘，避免大视频一次性读入内存 OOM */
     private fun saveVideo(photo: AlbumPhoto) {
-        Toast.makeText(this, "正在下载视频…", Toast.LENGTH_SHORT).show()
         val name = "album_${photo.token.take(8)}_${photo.index}.mp4"
-        scope.launch {
+
+        // v1.205: 下载进度对话框——大视频几十秒下载期间给百分比反馈，可随时取消
+        val content = LayoutInflater.from(this).inflate(R.layout.dialog_download, null)
+        val pb = content.findViewById<ProgressBar>(R.id.pb_download)
+        val tvPercent = content.findViewById<TextView>(R.id.tv_download_percent)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("正在下载视频")
+            .setView(content)
+            .setNegativeButton("取消", null)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+        // 取消按钮：终止协程，downloadToFile 的 isActive 检查会让出循环
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
+            .setOnClickListener { saveJob?.cancel() }
+
+        val job = scope.launch {
             val ok = withContext(Dispatchers.IO) {
                 val tmp = File(cacheDir, "dl_${photo.token.take(8)}_${photo.index}.mp4")
-                val bytes = api.downloadToFile(api.videoUrl(photo.token, photo.index), tmp)
+                val bytes = api.downloadToFile(api.videoUrl(photo.token, photo.index), tmp) { percent ->
+                    // 回调在 IO 线程，切回主线程刷新 UI
+                    runOnUiThread {
+                        pb.progress = percent
+                        tvPercent.text = "已下载 $percent%"
+                    }
+                }
                 val saved = if (bytes != null && bytes > 0) saveVideoFileToGallery(name, tmp) else false
                 tmp.delete()
                 saved
             }
+            dialog.dismiss()
             Toast.makeText(
                 this@MainActivity,
-                if (ok) "已保存视频到相册" else "下载失败",
+                if (ok) "已保存视频到相册" else if (!isActive) "已取消下载" else "下载失败",
                 Toast.LENGTH_SHORT
             ).show()
         }
+        saveJob = job
     }
 
     private fun saveVideoFileToGallery(fileName: String, src: File): Boolean {
@@ -736,12 +770,20 @@ class MainActivity : AppCompatActivity() {
             holder.retryCount = 0
             holder.boundToken = photo.token
             holder.boundIndex = photo.index
+            holder.tvRetry.visibility = View.GONE
             loadThumbWithRetry(holder, thumbUrl(photo), photo.token, photo.index)
             holder.vb.visibility = if (photo.isVideo) View.VISIBLE else View.GONE
             holder.itemView.setOnClickListener { onThumbClick?.invoke(position) }
             holder.itemView.setOnLongClickListener {
                 onThumbLongClick?.invoke(position)
                 true
+            }
+            // v1.205: 手动重试入口（自动重试耗尽后显示）
+            holder.tvRetry.setOnClickListener {
+                if (holder.boundToken != photo.token || holder.boundIndex != photo.index) return@setOnClickListener
+                holder.retryCount = 0
+                holder.tvRetry.visibility = View.GONE
+                loadThumbWithRetry(holder, thumbUrl(photo), photo.token, photo.index)
             }
         }
 
@@ -766,9 +808,14 @@ class MainActivity : AppCompatActivity() {
                                     loadThumbWithRetry(holder, url, token, index)
                                 }
                             }, backoff)
+                        } else {
+                            // v1.205: 自动重试耗尽，露出「点击重试」层，用户可手动恢复
+                            holder.tvRetry.visibility = View.VISIBLE
                         }
                     },
-                    onSuccess = { _, _ -> }
+                    onSuccess = { _, _ ->
+                        holder.tvRetry.visibility = View.GONE
+                    }
                 )
             }
         }
@@ -778,6 +825,7 @@ class MainActivity : AppCompatActivity() {
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
             val iv: ImageView = itemView.findViewById(R.id.iv_thumb)
             val vb: View = itemView.findViewById(R.id.vb_play)
+            val tvRetry: TextView = itemView.findViewById(R.id.tv_thumb_retry)
             var retryCount: Int = 0
             var boundToken: String = ""
             var boundIndex: Int = -1

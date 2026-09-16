@@ -26,8 +26,8 @@ android {
         applicationId = "com.screenshare.albumviewer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 26
-        versionName = "1.204"
+        versionCode = 27
+        versionName = "1.205"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }

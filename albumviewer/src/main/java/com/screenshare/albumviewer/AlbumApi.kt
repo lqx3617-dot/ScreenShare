@@ -2,6 +2,7 @@ package com.screenshare.albumviewer
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -65,14 +66,35 @@ class AlbumApi(private val context: Context) {
      * 流式下载到文件，返回写入的字节数，失败返回 null。
      * 大文件（视频）必须走这里：`httpGetBytes` 会把整个响应体读进内存，几十 MB 的视频极易 OOM。
      * OkHttp 的 readTimeout 约束的是相邻数据块间隔而非总时长，流式读取可持续下载大文件。
+     * [onProgress] 接收 0..100 的下载百分比，用于大视频的进度反馈。
      */
-    suspend fun downloadToFile(url: String, dest: File): Long? = withContext(Dispatchers.IO) {
+    suspend fun downloadToFile(
+        url: String,
+        dest: File,
+        onProgress: ((Int) -> Unit)? = null
+    ): Long? = withContext(Dispatchers.IO) {
         try {
             client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
                 val body = resp.body ?: return@withContext null
+                val total = body.contentLength()
                 body.byteStream().use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
+                    dest.outputStream().use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        var done = 0L
+                        while (true) {
+                            if (!isActive) return@withContext null
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            output.write(buf, 0, n)
+                            done += n
+                            if (total > 0 && onProgress != null) {
+                                val percent = (done * 100 / total).toInt().coerceIn(0, 100)
+                                onProgress(percent)
+                            }
+                        }
+                        if (total <= 0 && onProgress != null) onProgress(100)
+                    }
                 }
                 dest.length()
             }
