@@ -4179,6 +4179,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.llStatus.visibility = View.VISIBLE
         binding.llToolbar.visibility = View.VISIBLE
+        // v1.263: 工具条与面板按钮统一按压回弹反馈
+        PressEffect.bindChildren(binding.llToolbar)
+        PressEffect.bindChildren(binding.llMorePanel)
         // 根布局兜底：工具条隐藏后点击任意空白区唤出（覆盖 host 无视频、renderer 不可见场景）
         binding.root.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -4321,8 +4324,23 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     private fun updateUI(status: String) {
-        binding.tvStatus.text = status
+        // v1.263: 状态文案切换平滑过渡——淡出再淡入，重连中/已恢复不再生硬跳变
+        val tv = binding.tvStatus
+        if (tv.text.toString() == status) {
+            Log.d(TAG, status)
+            return
+        }
         Log.d(TAG, status)
+        if (tv.visibility != View.VISIBLE || tv.alpha < 1f) {
+            tv.text = status
+            tv.animate().cancel()
+            tv.alpha = 1f
+            return
+        }
+        tv.animate().alpha(0f).setDuration(140).withEndAction {
+            tv.text = status
+            tv.animate().alpha(1f).setDuration(200).start()
+        }.start()
     }
 
     /** 状态点呼吸发光（已连接时持续，alpha 循环） */

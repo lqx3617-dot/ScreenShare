@@ -12,6 +12,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import android.view.animation.LinearInterpolator
 
@@ -104,6 +105,29 @@ class GlowButtonView @JvmOverloads constructor(
     fun setLabel(text: String) {
         label = text
         invalidate()
+    }
+
+    // v1.263: 按压回弹——自定义 View 无需 PressEffect，自己处理缩放更稳（不影响光斑动画）
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        super.onTouchEvent(event)
+        return when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                animate().scaleX(0.96f).scaleY(0.96f).setDuration(110)
+                    .setInterpolator(android.view.animation.AccelerateDecelerateInterpolator())
+                    .start()
+                true
+            }
+            MotionEvent.ACTION_UP -> {
+                animate().scaleX(1f).scaleY(1f).setDuration(170).start()
+                if (hasOnClickListeners()) performClick()
+                true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                animate().scaleX(1f).scaleY(1f).setDuration(170).start()
+                true
+            }
+            else -> false
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
