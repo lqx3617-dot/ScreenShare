@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.Dialog
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
@@ -232,6 +233,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // 远程控制（观看方控制共享方）：true=控制模式（单指触摸下发控制指令）
     private var isControlMode = false
+    // v1.262: 标注模式——观看方在画面上滑动，共享方对应位置出现爱心标记（不需要无障碍权限）
+    private var isMarkMode = false
 
     // 控制模式下是否已发送 down（用于过滤黑边区域的 move/up）
     private var ctrlDownSent = false
@@ -241,6 +244,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     // 滑动实时跟手节流：MOVE 阶段每 50ms 发送一次完整路径
     private var lastCtrlSend = 0L
+    // v1.262: 标注发送节流时间戳
+    private var lastMarkSend = 0L
 
     // 触摸会话判定：是否已进入滑动、按下时间与起点（区分点击/长按/滑动）
     private var ctrlMoveStarted = false
@@ -296,6 +301,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnCtrlHome.setOnClickListener { onCtrlKeyClicked("home") }
         binding.btnCtrlRecents.setOnClickListener { onCtrlKeyClicked("recents") }
         binding.btnCtrlText.setOnClickListener { onCtrlTextClicked() }
+        binding.btnCtrlPoke.setOnClickListener { onCtrlPokeClicked() }
+        binding.btnCtrlMark.setOnClickListener { onCtrlMarkClicked() }
         binding.btnCtrlSetup.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
@@ -761,6 +768,65 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
         binding.btnCtrlText.visibility = if (isControlMode) View.VISIBLE else View.GONE
         if (!isControlMode) ctrlDownSent = false
+    }
+
+    /** 观看方：戳一下——震动 + 爱心迸发，不需要无障碍权限，随时可点 */
+    private fun onCtrlPokeClicked() {
+        val p = peer ?: return
+        if (p.controlChannelOpen().not()) {
+            Toast.makeText(this, "控制通道未就绪 ${p.controlChannelDebug()}", Toast.LENGTH_SHORT).show()
+            return
+        }
+        p.sendControl("""{"type":"poke"}""")
+        Toast.makeText(this, "已戳TA一下", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 观看方：切换标注模式。标注模式下单指触摸下发标记坐标，不触发远程控制 */
+    private fun onCtrlMarkClicked() {
+        if (isHost) return
+        val p = peer ?: return
+        if (p.controlChannelOpen().not()) {
+            Toast.makeText(this, "控制通道未就绪 ${p.controlChannelDebug()}", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isMarkMode = !isMarkMode
+        // 标注与控制互斥：开标注时退出控制模式
+        if (isMarkMode && isControlMode) {
+            isControlMode = false
+            binding.btnRemoteControl.text = "远程控制"
+            binding.btnRemoteControl.setTextColor(0xFF4A3B44.toInt())
+            binding.llCtrlKeys.visibility = View.GONE
+            binding.btnCtrlText.visibility = View.GONE
+            ctrlDownSent = false
+        }
+        binding.btnCtrlMark.text = if (isMarkMode) "标注中" else "标注"
+        binding.btnCtrlMark.setTextColor(if (isMarkMode) 0xFFE85D8D.toInt() else 0xFF4A3B44.toInt())
+    }
+
+    /** 观看方标注：把触点归一化坐标发给共享方，由共享方在对应位置显示爱心标记 */
+    private fun handleMarkTouch(event: MotionEvent, renderer: SurfaceViewRenderer) {
+        val p = peer ?: return
+        if (lastFrameW <= 0 || lastFrameH <= 0) return
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {}
+            else -> return
+        }
+        val crop = !isFitMode
+        val rw = renderer.width.toFloat()
+        val rh = renderer.height.toFloat()
+        val norm = CoordinateMapper.normalizeTouch(event.x, event.y, rw, rh, lastFrameW, lastFrameH, crop)
+            ?: return
+        // down/up 立即发送；move 节流 100ms（约 10fps 的标记点，足够形成指向轨迹）
+        val now = SystemClock.uptimeMillis()
+        if (event.actionMasked == MotionEvent.ACTION_MOVE && now - lastMarkSend < 100) return
+        lastMarkSend = now
+        val nx = norm[0]
+        val ny = norm[1]
+        try {
+            p.sendControl("""{"type":"mark","nx":$nx,"ny":$ny}""")
+        } catch (t: Throwable) {
+            Log.e(TAG, "发送标注指令失败: ${t.message}")
+        }
     }
 
     /** 观看方：发送系统按键指令（对方服务是否可用由共享方回执反馈） */
@@ -2087,6 +2153,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             closeVideoCall(notify = false)
                         }
                     }
+                    // v1.262: 戳一下——震动 + 爱心迸发 + 提示（不需要无障碍权限）
+                    "poke" -> runOnUiThread {
+                        playPokeFeedback()
+                    }
+                    // v1.262: 屏幕标注——在共享方屏幕对应位置显示爱心标记，1.8 秒后淡出
+                    "mark" -> runOnUiThread {
+                        showRemoteMark(obj.optDouble("nx", 0.5), obj.optDouble("ny", 0.5))
+                    }
                     else -> {
                         // 无障碍服务未开启或被共享方停止控制时回发提示
                         if (!RemoteControlService.handle(obj)) {
@@ -2711,6 +2785,46 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
     }
 
+    /** v1.262: 收到「戳一下」——短震动 + 爱心迸发 + 提示文案 */
+    private fun playPokeFeedback() {
+        Toast.makeText(this, "对方戳了你一下", Toast.LENGTH_SHORT).show()
+        try {
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            // 60ms 轻震一下（有振动马达的设备）
+            vibrator?.vibrate(60L)
+        } catch (t: Throwable) {
+            Log.w(TAG, "震动失败: ${t.message}")
+        }
+        runHeartBurst()
+    }
+
+    /** v1.262: 收到标注坐标——在屏幕对应位置显示爱心标记，弹出后淡出（不拦截触摸） */
+    private fun showRemoteMark(nx: Double, ny: Double) {
+        val container = binding.flHeartBurst
+        if (container.width == 0 || container.height == 0) return
+        val density = resources.displayMetrics.density
+        val size = (26 * density).toInt()
+        val mark = ImageView(this)
+        mark.setImageResource(R.drawable.ic_heart_fill)
+        mark.imageTintList = ColorStateList.valueOf(0xFFE85D8D.toInt())
+        mark.alpha = 0f
+        mark.scaleX = 0.2f
+        mark.scaleY = 0.2f
+        container.addView(mark, FrameLayout.LayoutParams(size, size))
+        // 归一化坐标 → 容器内像素；略微上偏，避免手指遮挡标记
+        mark.x = (nx.toFloat() * container.width - size / 2f)
+        mark.y = (ny.toFloat() * container.height - size / 2f - 18 * density)
+        mark.animate().alpha(1f).scaleX(1.15f).scaleY(1.15f).setDuration(180L).withEndAction {
+            mark.animate().scaleX(1f).scaleY(1f).setDuration(120L).start()
+        }.start()
+        // 1.8 秒后淡出移除；拖动时多个标记点依次消失，自然形成指向轨迹
+        mark.postDelayed({
+            mark.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(350L).withEndAction {
+                container.removeView(mark)
+            }.start()
+        }, 1800L)
+    }
+
     override fun onConnected() {        runOnUiThread {
             // v1.261: 从重连态恢复——无感继续会议，提示"连接已恢复"
             if (reconnecting) {
@@ -2737,10 +2851,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 binding.llCtrlStatus.visibility = View.VISIBLE
                 binding.btnAlbum.visibility = View.GONE
                 updateRemoteControlStatus()
+                // v1.262: 共享期间屏蔽通知预览（免打扰优先级模式），避免微信等消息内容被对方看到
+                applyNotificationFilter()
             } else {
                 binding.flRemoteVideo.visibility = View.VISIBLE
                 binding.btnFpsToggle.visibility = View.VISIBLE
                 binding.btnRemoteControl.visibility = View.VISIBLE
+                // v1.262: 戳TA/标注入口（不需要无障碍权限，进入会议即可见）
+                binding.btnCtrlPoke.visibility = View.VISIBLE
+                binding.btnCtrlMark.visibility = View.VISIBLE
                 SystemAudioBridge.startPlayback()
                 // v1.259: 应用持久化的剧情音音量，并启动说话闪避循环
                 applyAudioSettings()
@@ -2761,6 +2880,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 updateUI("连接已断开")
                 stopStatusBreathing()
                 SystemAudioBridge.stopPlayback()
+                restoreNotificationFilter()
                 resetUI()
                 clearMeetingResume()
                 // 会议异常断开：返回连接页（主动离开时不重复跳转）
@@ -2781,6 +2901,48 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             SystemAudioBridge.stopPlayback()
             reconnecting = true
         }
+    }
+
+    // ======================== v1.262: 共享期间屏蔽通知预览 ========================
+
+    private var dndApplied = false
+
+    /**
+     * 共享方开启免打扰优先级模式：通知只静音不弹预览，避免微信等消息内容被对方看到。
+     * 需要「勿扰模式」访问权限；无权限时仅提示一次，不强制打断。
+     */
+    private fun applyNotificationFilter() {
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        if (!nm.isNotificationPolicyAccessGranted) {
+            // 首次提示引导用户开启（不自动跳转系统设置，避免打断共享）
+            if (!audioPrefs.getBoolean("dnd_prompted", false)) {
+                audioPrefs.edit().putBoolean("dnd_prompted", true).apply()
+                Toast.makeText(
+                    this,
+                    "共享期间通知预览会被对方看到。可在「设置 → 应用 → 屏幕共享 → 通知访问」开启免打扰权限自动屏蔽",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+        try {
+            nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            dndApplied = true
+        } catch (t: Throwable) {
+            Log.w(TAG, "设置免打扰失败: ${t.message}")
+        }
+    }
+
+    /** 结束共享：恢复通知正常显示 */
+    private fun restoreNotificationFilter() {
+        if (!dndApplied) return
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            nm?.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+        } catch (t: Throwable) {
+            Log.w(TAG, "恢复通知模式失败: ${t.message}")
+        }
+        dndApplied = false
     }
 
     /** 连接彻底失败（重连超限）：结合本机候选情况给出可操作诊断，避免用户无从下手 */
@@ -2877,7 +3039,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         renderer.setOnTouchListener { v, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) onVideoTapDown()
             if (event.actionMasked == MotionEvent.ACTION_UP) onVideoTapUp()
-            if (isControlMode && !isHost && event.pointerCount == 1) {
+            if (isMarkMode && !isHost && event.pointerCount == 1) {
+                handleMarkTouch(event, renderer)
+                true
+            } else if (isControlMode && !isHost && event.pointerCount == 1) {
                 handleControlTouch(event, renderer)
                 true
             } else {
@@ -3373,7 +3538,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         renderer.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) onVideoTapDown()
             if (event.actionMasked == MotionEvent.ACTION_UP) onVideoTapUp()
-            if (isControlMode && !isHost && event.pointerCount == 1) {
+            if (isMarkMode && !isHost && event.pointerCount == 1) {
+                handleMarkTouch(event, renderer)
+                true
+            } else if (isControlMode && !isHost && event.pointerCount == 1) {
                 handleControlTouch(event, renderer)
                 true
             } else {
@@ -3952,6 +4120,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun leaveMeeting(message: String) {
         leavingMeeting = true
         connectionTerminated = true
+        restoreNotificationFilter()
         clearMeetingResume()
         stopToolbarAutoHide()
         cleanupPeer()
@@ -3967,6 +4136,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun handleMeetingFailure() {
         leavingMeeting = true
         connectionTerminated = true
+        restoreNotificationFilter()
         clearMeetingResume()
         cleanupPeer()
         resetUI()
@@ -4195,8 +4365,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnRemoteControl.visibility = View.GONE
         binding.llCtrlKeys.visibility = View.GONE
         binding.btnCtrlText.visibility = View.GONE
+        binding.btnCtrlPoke.visibility = View.GONE
+        binding.btnCtrlMark.visibility = View.GONE
         binding.llCtrlStatus.visibility = View.GONE
         isControlMode = false
+        isMarkMode = false
         ctrlDownSent = false
         currentFps = 48
         micMuted = false
@@ -4245,6 +4418,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         super.onDestroy()
         // v1.259: 兜底停止闪避循环，避免 Activity 销毁后主线程 Runnable 残留
         stopDuckLoop()
+        // v1.262: 兜底恢复通知模式，避免 Activity 销毁后免打扰残留
+        restoreNotificationFilter()
         albumWebView?.let { wv ->
             try {
                 binding.flAlbumWeb.removeView(wv)

@@ -332,6 +332,32 @@
                 android:visibility="gone" />
 
             <TextView
+                android:id="@+id/btnCtrlPoke"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
+                android:gravity="center"
+                android:text="戳TA"
+                android:textSize="12sp"
+                android:textColor="@color/text_primary"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_panel_btn"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnCtrlMark"
+                android:layout_width="wrap_content"
+                android:minWidth="76dp"
+                android:layout_height="48dp"
+                android:gravity="center"
+                android:text="标注"
+                android:textSize="12sp"
+                android:textColor="@color/text_primary"
+                android:foreground="?attr/selectableItemBackground"
+                android:background="@drawable/bg_panel_btn"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/btnAlbum"
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
