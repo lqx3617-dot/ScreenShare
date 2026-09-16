@@ -39,4 +39,59 @@
         android:text="关闭"
         android:textColor="@color/text_primary"
         android:textSize="14sp" />
+
+    <!-- v1.203: 视频控制条——播放/暂停 + 进度拖动 + 时间显示，3 秒无操作自动隐藏 -->
+    <LinearLayout
+        android:id="@+id/ll_video_controls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#99000000"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/btn_video_play"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_pause"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="播放或暂停" />
+
+        <TextView
+            android:id="@+id/tv_video_position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="0:00"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp" />
+
+        <SeekBar
+            android:id="@+id/sb_video"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:max="100"
+            android:progressTint="#FFE85D8D"
+            android:thumbTint="#FFE85D8D" />
+
+        <TextView
+            android:id="@+id/tv_video_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
+            android:text="0:00"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp" />
+    </LinearLayout>
 </FrameLayout>

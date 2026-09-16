@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.ProgressBar
 import android.widget.RadioGroup
 import android.widget.TextView
@@ -290,7 +291,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 视频全屏播放（内嵌 VideoView，支持流式加载、缓冲指示与拖动） */
+    /** 视频全屏播放（内嵌 VideoView，支持流式加载、缓冲指示、进度拖动与暂停） */
     private fun playVideo(photo: AlbumPhoto) {
         val dialog = Dialog(this, R.style.Theme_ScreenShare_Dialog)
         val content = LayoutInflater.from(this).inflate(R.layout.dialog_video, null)
@@ -298,6 +299,75 @@ class MainActivity : AppCompatActivity() {
         val pb = content.findViewById<ProgressBar>(R.id.pb_video)
         val tvTip = content.findViewById<TextView>(R.id.tv_video_tip)
         val btnClose = content.findViewById<View>(R.id.btn_video_close)
+        // v1.203: 视频控制条
+        val llControls = content.findViewById<View>(R.id.ll_video_controls)
+        val btnPlay = content.findViewById<ImageView>(R.id.btn_video_play)
+        val tvPos = content.findViewById<TextView>(R.id.tv_video_position)
+        val tvDur = content.findViewById<TextView>(R.id.tv_video_duration)
+        val sb = content.findViewById<SeekBar>(R.id.sb_video)
+
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var userSeeking = false
+        var controlsVisible = false
+
+        // ms → 可读时间（小时视频也兼容）
+        fun fmtTime(ms: Int): String {
+            val s = (ms / 1000).coerceAtLeast(0)
+            return if (s >= 3600) String.format("%d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60)
+            else String.format("%d:%02d", s / 60, s % 60)
+        }
+
+        fun syncPlayButton() {
+            btnPlay.setImageResource(if (vv.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+        }
+
+        // 控制条 3 秒无操作自动隐藏（暂停时常驻，方便用户随时继续）
+        val hideControls = Runnable {
+            controlsVisible = false
+            llControls.visibility = View.GONE
+        }
+        fun showControls() {
+            controlsVisible = true
+            llControls.visibility = View.VISIBLE
+            mainHandler.removeCallbacks(hideControls)
+            if (vv.isPlaying) mainHandler.postDelayed(hideControls, 3000)
+        }
+
+        // 每 500ms 刷新进度条与时间（用户拖动期间跳过，避免回弹）
+        val progressTick = object : Runnable {
+            override fun run() {
+                if (!userSeeking) {
+                    try {
+                        val dur = vv.duration
+                        if (dur > 0) {
+                            sb.max = dur
+                            sb.progress = vv.currentPosition
+                            tvPos.text = fmtTime(vv.currentPosition)
+                            tvDur.text = fmtTime(dur)
+                        }
+                    } catch (t: Throwable) {
+                        // 视频尚未 prepared，等下一拍
+                    }
+                }
+                mainHandler.postDelayed(this, 500)
+            }
+        }
+
+        // 拖动：松开时跳转，拖动中只更新时间预览
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) tvPos.text = fmtTime(progress)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {
+                userSeeking = true
+                mainHandler.removeCallbacks(hideControls)
+            }
+            override fun onStopTrackingTouch(bar: SeekBar?) {
+                userSeeking = false
+                try { vv.seekTo(bar?.progress ?: 0) } catch (t: Throwable) {}
+                showControls()
+            }
+        })
 
         pb.visibility = View.VISIBLE
         vv.setOnPreparedListener { mp ->
@@ -305,7 +375,12 @@ class MainActivity : AppCompatActivity() {
             mp.isLooping = false
             pb.visibility = View.GONE
             tvTip.visibility = View.GONE
+            sb.max = vv.duration.coerceAtLeast(1)
+            tvDur.text = fmtTime(vv.duration)
+            syncPlayButton()
+            showControls()
             vv.start()
+            mainHandler.post(progressTick)
         }
         // 缓冲/渲染开始/结束切换加载指示，避免大视频长时间黑屏无反馈
         vv.setOnInfoListener { _, what, _ ->
@@ -323,12 +398,26 @@ class MainActivity : AppCompatActivity() {
             true
         }
         vv.setOnCompletionListener { dialog.dismiss() }
-        vv.setOnClickListener { if (vv.isPlaying) vv.pause() else vv.start() }
+        // 点击画面：切换播放/暂停并显示控制条
+        vv.setOnClickListener {
+            if (vv.isPlaying) vv.pause() else vv.start()
+            syncPlayButton()
+            showControls()
+        }
+        btnPlay.setOnClickListener {
+            if (vv.isPlaying) vv.pause() else vv.start()
+            syncPlayButton()
+            showControls()
+        }
         btnClose.setOnClickListener { dialog.dismiss() }
 
         dialog.setContentView(content)
         dialog.applyFullScreen()
-        dialog.setOnDismissListener { try { vv.stopPlayback() } catch (t: Throwable) {} }
+        dialog.setOnDismissListener {
+            mainHandler.removeCallbacks(progressTick)
+            mainHandler.removeCallbacks(hideControls)
+            try { vv.stopPlayback() } catch (t: Throwable) {}
+        }
         dialog.show()
         // VideoView 走平台 MediaPlayer，不会经过 OkHttp/Coil 拦截器，
         // 必须显式携带 x-album-key，否则 /api/video 因无鉴权返回 401（表现为「看不到视频」）
