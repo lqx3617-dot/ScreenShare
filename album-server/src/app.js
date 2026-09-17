@@ -134,6 +134,22 @@ app.use(auth);
 // pending：网页点开某张原图但尚未上传的队列（内存态，重启丢失后网页会重新标记）
 const pending = new Map(); // token -> Set<index>
 
+/**
+ * 按文件串行化异步写入：stat→校验→append 之间会 await 让出事件循环，
+ * 同一文件的并发分块可交错通过 offset 校验导致双倍追加、视频静默损坏。
+ * 锁在队列清空后移除引用，防泄漏。
+ */
+const videoWriteLocks = new Map();
+function serializeVideoWrite(file, fn) {
+  const prev = videoWriteLocks.get(file) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  videoWriteLocks.set(file, next);
+  next.finally(() => {
+    if (videoWriteLocks.get(file) === next) videoWriteLocks.delete(file);
+  });
+  return next;
+}
+
 function sessionDir(token) {
   return path.join(ALBUM_ROOT, token);
 }
@@ -168,6 +184,9 @@ function loadSession(token) {
       done: !!meta.done,
       received: new Set(meta.received || []),
       originals: new Set(meta.originals || []),
+      // 缺 videos 时后续 video-finish 的 session.videos.add / photo-delete 的
+      // .delete 会抛 TypeError（走异步错误链路导致请求挂死/崩溃）
+      videos: new Set(meta.videos || []),
     };
     db.saveSession(s);
     return s;
@@ -344,16 +363,21 @@ app.post("/api/video/upload", writeLimiter, async (req, res) => {
     const file = path.join(dir, `${pad(index)}.mp4`);
     // offset 断言：必须与当前文件长度一致（顺序写入），不一致说明客户端丢块
     const offset = parseInt(body.offset, 10) || 0;
-    let cur = 0;
-    try {
-      cur = (await fsp.stat(file)).size;
-    } catch (e) {}
-    if (cur !== offset) {
-      return json(res, 409, { error: "offset mismatch", expected: cur, got: offset });
-    }
-    await fsp.appendFile(file, buf);
-    console.log(`[album] ${new Date().toISOString()} video-chunk ${tokShort(token)} idx=${index} offset=${offset}+${buf.length}`);
-    return json(res, 200, { ok: true, offset: cur + buf.length });
+    // stat→比较→append 之间会让出事件循环，同一文件的并发分块可交错通过校验
+    // 导致双倍追加、后续分块全部错位、视频静默损坏；按文件串行化写入（H2 修复）
+    const result = await serializeVideoWrite(file, async () => {
+      let cur = 0;
+      try {
+        cur = (await fsp.stat(file)).size;
+      } catch (e) {}
+      if (cur !== offset) {
+        return { code: 409, body: { error: "offset mismatch", expected: cur, got: offset } };
+      }
+      await fsp.appendFile(file, buf);
+      console.log(`[album] ${new Date().toISOString()} video-chunk ${tokShort(token)} idx=${index} offset=${offset}+${buf.length}`);
+      return { code: 200, body: { ok: true, offset: cur + buf.length } };
+    });
+    return json(res, result.code, result.body);
   } catch (e) {
     console.log(`[album] ${new Date().toISOString()} video-chunk-fail ${tokShort(token)} idx=${index}: ${e.message}`);
     return json(res, 500, { error: "write failed" });
@@ -395,7 +419,7 @@ app.get("/api/video", (req, res) => {
 });
 
 // ==================== GET 状态/按需原图/轮询 ====================
-app.get("/api/status", (req, res) => {
+app.get("/api/status", readLimiter, (req, res) => {
   const token = String(req.query.token || "");
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
@@ -422,7 +446,7 @@ app.get("/api/original", (req, res) => {
   return json(res, 200, { status: "pending", index });
 });
 
-app.get("/api/pending", (req, res) => {
+app.get("/api/pending", readLimiter, (req, res) => {
   const token = String(req.query.token || "");
   const session = loadSession(token);
   if (!session) return json(res, 404, { error: "session not found" });
@@ -532,6 +556,8 @@ app.post("/api/photo/delete", writeLimiter, async (req, res) => {
       await fsp.rm(f, { force: true });
     } catch (e) {}
   }
+  // 原图被删后该 index 不再可能补传，从 pending 移除，避免观看方网页空转重试（L1）
+  pending.get(token)?.delete(index);
   // 从 DB 原子移除（查询+更新同步执行，无竞态）
   const after = db.unmarkMedia(token, index);
   console.log(`[album] ${new Date().toISOString()} photo-delete ${tokShort(token)} idx=${index} (剩 ${after ? after.receivedCount : 0})`);
@@ -539,12 +565,12 @@ app.post("/api/photo/delete", writeLimiter, async (req, res) => {
 });
 
 /** 有照片的设备列表（按设备分组），观看方远程相册同步后按设备查看 */
-app.get("/api/devices", (req, res) => {
+app.get("/api/devices", readLimiter, (req, res) => {
   return json(res, 200, { devices: db.listDevices() });
 });
 
 /** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
-app.get("/api/albums", (req, res) => {
+app.get("/api/albums", readLimiter, (req, res) => {
   // 旧版 meta.json 会话已在启动时迁移入库（migrateLegacySessions），此处无需再扫盘
   const deviceFilter = String(req.query.device || "").trim().replace(/\s+/g, "");
   const albums = db

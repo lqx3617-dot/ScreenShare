@@ -842,4 +842,10 @@ Entries discovered by the Agent during task execution should follow this format:
   - host 主连接只作采集底座、ICE 永不 CONNECTED——onConnected 的 host 分支是死代码，host 侧 UI/免打扰必须在 startSessionCore 采集成功后显式启动
   - ICE 候选必须在 setRemoteDescription 的 onSetSuccess 回调里 add（remoteDescription 为空时 AddIceCandidate 返回 INVALID_STATE 静默丢弃）；receiving=false 在 CHECKING 阶段是正常态，判断线必须先查 iceConnectionState
   - 已知遗留（下一轮）：相册会话状态 load-modify-write 非原子（并发上传可能丢照片，需 per-token 串行化或原子 SQL）；WebRTCPeer 关键字段缺 @Volatile 跨线程读写；publish 的 zipalign/apksigner 无超时可能永久卡死发布通道
+  - 上述三项已在第二轮修复（v1.268/272，commit 426bec3）：相册写操作改原子 SQL（db.js markPhoto/markVideo/markOriginal/unmarkMedia + json_group_array 去重），8 路并发上传回归脚本 /tmp/opencode/concurrency-test.cjs 通过；ICE 候选暂存到 setRemoteDescription 的 onSetSuccess 后应用；签名工具加 10 分钟超时 + finally 清理临时文件
+  - db.js 的 DATA_DIR 固定为 album-server/data（不读 ALBUM_ROOT）：测试实例的照片目录可隔离，但 SQLite 库仍共用真实库，测试脚本须自行 DELETE 测试 session 行
+  - 原子标记 SQL 模式：`received = json_insert((SELECT json_group_array(value) FROM json_each(received) WHERE value <> ?), '$[#]', ?)` —— 子查询重建数组顺带去重，MAX(total, ?) 同条语句更新
+  - 第三轮 album-server 修复（2026-09）：视频分块 offset 竞态用文件级串行锁 serializeVideoWrite（Map<file,Promise> 链式排队 + finally 比较自身后删引用防泄漏）；legacy meta.json 迁移必须补全所有 Set 字段（缺 videos 时 session.videos.add 抛 TypeError）；列表型读接口（/api/status、/api/pending、/api/devices、/api/albums）挂 readLimiter，单文件流式接口（/api/video、/api/original）不挂防网页批量加载被限流
+  - 测试封装陷阱：http.request 的 path 传 undefined 会默认打到 "/" 收到全局 404；post 封装函数必须给默认 path 且 JSON.parse 容错（先打印 raw 再解析，否则错误信息被 SyntaxError 吞掉）
+  - spawn 的测试子进程 SIGTERM 后可能不立即退出占用端口，下次测试会连到旧实例产生困惑；测试启动前先 `ss -ltnp | grep 端口` 确认空闲，finally 里 kill 后多等几秒
   - 审查用并行子 agent 分模块读完全文、每条带 file:line 与推理依据，再人工复核（读上下文确认是真 bug 还是误报），避免误改
