@@ -100,6 +100,7 @@
                     android:drawableStart="@drawable/ic_liquid_refresh"
                     android:drawablePadding="6dp"
                     android:clickable="true"
+                    android:foreground="@android:attr/selectableItemBackgroundBorderless"
                     android:focusable="true" />
             </LinearLayout>
 
@@ -128,6 +129,7 @@
                     android:drawablePadding="8dp"
                     android:drawableTint="#FFFFFFFF"
                     android:clickable="true"
+                    android:foreground="@android:attr/selectableItemBackgroundBorderless"
                     android:focusable="true" />
 
                 <!-- 分隔线 -->
@@ -261,6 +263,7 @@
                     android:drawablePadding="8dp"
                     android:drawableTint="#FFFFFFFF"
                     android:clickable="true"
+                    android:foreground="@android:attr/selectableItemBackgroundBorderless"
                     android:focusable="true" />
             </LinearLayout>
 
@@ -370,6 +373,7 @@
                         android:drawableStart="@drawable/ic_liquid_copy"
                         android:drawablePadding="5dp"
                         android:clickable="true"
+                        android:foreground="@android:attr/selectableItemBackgroundBorderless"
                         android:focusable="true" />
 
                     <TextView
@@ -386,6 +390,7 @@
                         android:textSize="13sp"
                         android:textColor="#FFFFFFFF"
                         android:clickable="true"
+                        android:foreground="@android:attr/selectableItemBackgroundBorderless"
                         android:focusable="true" />
                 </LinearLayout>
             </LinearLayout>
@@ -428,6 +433,7 @@
                         android:textSize="13sp"
                         android:textColor="#A6FFFFFF"
                         android:clickable="true"
+                        android:foreground="@android:attr/selectableItemBackgroundBorderless"
                         android:focusable="true" />
                 </LinearLayout>
 
@@ -464,6 +470,7 @@
             android:padding="8dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
+            android:foreground="@android:attr/selectableItemBackgroundBorderless"
             android:focusable="true">
 
             <ImageView
@@ -491,6 +498,7 @@
             android:padding="8dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
+            android:foreground="@android:attr/selectableItemBackgroundBorderless"
             android:focusable="true">
 
             <ImageView
@@ -518,6 +526,7 @@
             android:padding="8dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
+            android:foreground="@android:attr/selectableItemBackgroundBorderless"
             android:focusable="true">
 
             <ImageView

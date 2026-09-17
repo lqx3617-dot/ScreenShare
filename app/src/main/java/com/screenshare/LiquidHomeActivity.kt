@@ -52,9 +52,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         Blob(0xFFFF1493.toInt(), 380, Gravity.TOP or Gravity.START, -90, -100, 0.60f, 60f, 50f, 1.12f, 16000),
         Blob(0xFF6B21A8.toInt(), 320, Gravity.TOP or Gravity.END, -90, 60, 0.55f, -50f, 60f, 1.08f, 20000),
         Blob(0xFF0891B2.toInt(), 260, Gravity.BOTTOM or Gravity.START, 20, -40, 0.30f, 40f, -60f, 1.15f, 22000),
-        Blob(0xFFEC4899.toInt(), 200, Gravity.TOP or Gravity.START, 110, 320, 0.40f, 60f, 50f, 0.95f, 18000),
-        Blob(0xFF7C3AED.toInt(), 240, Gravity.BOTTOM or Gravity.END, 40, 180, 0.35f, -50f, 60f, 1.08f, 24000),
-        Blob(0xFFF472B6.toInt(), 160, Gravity.TOP or Gravity.START, -20, 560, 0.25f, 40f, -60f, 1.15f, 14000)
+        Blob(0xFFEC4899.toInt(), 200, Gravity.TOP or Gravity.START, 110, 320, 0.40f, 60f, 50f, 0.95f, 18000)
     )
 
     /** 最近会议数据（对应原型 5 条记录） */
@@ -74,7 +72,6 @@ class LiquidHomeActivity : AppCompatActivity() {
         setContentView(binding.root)
         setupImmersive()
         setupBlobs()
-        setupGlassBlur()
         setupCodeInputs()
         setupRecentList()
         setupClicks()
@@ -127,16 +124,6 @@ class LiquidHomeActivity : AppCompatActivity() {
                 start()
             }
         }
-    }
-
-    /** Android 12+ 给卡片/导航条加背景模糊（对应 backdrop-filter:blur(40px)） */
-    private fun setupGlassBlur() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        val blur = RenderEffect.createBlurEffect(20f, 20f, Shader.TileMode.DECAL)
-        binding.cardJoin.setRenderEffect(blur)
-        binding.cardRoom.setRenderEffect(blur)
-        binding.cardRecent.setRenderEffect(blur)
-        binding.tabBar.setRenderEffect(blur)
     }
 
     /** 4 位数字输入：输满自动跳下一格，Backspace 空格回退到上一格 */
