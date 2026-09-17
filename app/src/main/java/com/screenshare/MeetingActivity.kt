@@ -113,12 +113,23 @@ class MeetingActivity : AppCompatActivity() {
             }
         }
 
-        /** 清空会议历史 */
-        fun clearMeetingHistory(context: Context) {
-            context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
-                .edit().remove(KEY_LIST).apply()
-        }
+    /** 清空会议历史 */
+    fun clearMeetingHistory(context: Context) {
+        context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
+            .edit().remove(KEY_LIST).apply()
     }
+
+    /** 删除单条会议历史（按会议号） */
+    fun removeMeetingHistory(context: Context, code: String) {
+        val rest = loadMeetingHistory(context).filter { it.code != code }
+        val arr = JSONArray()
+        rest.forEach { e ->
+            arr.put(JSONObject().put("code", e.code).put("action", e.action).put("ts", e.ts))
+        }
+        context.getSharedPreferences(PREFS_HISTORY, Context.MODE_PRIVATE)
+            .edit().putString(KEY_LIST, arr.toString()).apply()
+    }
+}
 
     private lateinit var binding: ActivityMeetingBinding
 

@@ -5,23 +5,31 @@ import android.animation.PropertyValuesHolder
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import com.screenshare.BuildConfig
 import com.screenshare.databinding.FragmentHomeBinding
 import com.screenshare.databinding.ItemRecentBinding
-import kotlin.random.Random
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.security.SecureRandom
+import java.util.concurrent.TimeUnit
 
 /**
- * 液态玻璃首页 Fragment：顶部栏 + 创建/加入卡片 + 专属房间卡片 + 最近会议卡片。
- * 原 activity_liquid 的主体逻辑迁移至此。
+ * 液态玻璃首页 Fragment：创建/加入会议 + 专属房间 + 最近会议。
+ * 全部接入真实会议流程（MeetingActivity 同一套持久化与信令接口）。
  */
 class HomeFragment : Fragment() {
 
@@ -30,12 +38,26 @@ class HomeFragment : Fragment() {
     private val handler = Handler(Looper.getMainLooper())
     private val codeEdits = ArrayList<EditText>()
 
-    /** 最近会议记录（持久化暂未接入，先用本地空列表 —— 不使用原型演示数据） */
-    private data class Recent(val code: String, val meta: String, val isCreate: Boolean)
-    private val recentList = ArrayList<Recent>()
-
-    /** 当前角色：true=观看方（你看TA的屏幕），false=共享方（TA看你的屏幕） */
-    private var isViewer = true
+    /** 专属房间在线状态：true=在线，false=不在线，null=未知 */
+    @Volatile private var favOnline: Boolean? = null
+    private var favPolling = false
+    private val favHandler = Handler(Looper.getMainLooper())
+    private val favPollRunnable = object : Runnable {
+        override fun run() {
+            val fav = MeetingActivity.getFavoriteRoom(requireContext())
+            if (fav != null) {
+                queryFavStatus(fav.first, fav.second)
+                favHandler.postDelayed(this, 5000)
+            }
+        }
+    }
+    private val statusClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .writeTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
+            .build()
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -49,16 +71,52 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         setupCodeInputs()
-        setupRecentList()
+        renderFavoriteCard()
+        renderRecentMeetings()
         setupClicks()
         animateEntrance()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 从会议室返回时历史可能已变化，重新渲染
+        renderFavoriteCard()
+        renderRecentMeetings()
+        startFavPolling()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopFavPolling()
     }
 
     private fun toast(msg: String) {
         (activity as? LiquidHomeActivity)?.showToast(msg)
     }
 
-    /** 4 位数字输入：输满自动跳下一格，Backspace 空格回退到上一格 */
+    // ==================== 会议流程 ====================
+
+    /** 跳转会议室（与 MeetingActivity.enterMeeting 同一协议） */
+    private fun enterMeeting(action: String, code: String, token: String = "") {
+        val intent = Intent(requireContext(), MainActivity::class.java)
+            .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, action)
+            .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
+            .putExtra(MeetingActivity.EXTRA_MEETING_TOKEN, token)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        startActivity(intent)
+    }
+
+    /** 生成 4 位数字会议号（SecureRandom，与 MeetingActivity 一致） */
+    private fun generateMeetingCode(): String {
+        val sb = StringBuilder()
+        val random = SecureRandom()
+        repeat(4) { sb.append(random.nextInt(10)) }
+        return sb.toString()
+    }
+
+    // ==================== 4 位输入框 ====================
+
+    /** 输满自动跳下一格，Backspace 空格回退；最后一格输满自动加入 */
     private fun setupCodeInputs() {
         codeEdits.apply {
             add(binding.etCode0); add(binding.etCode1); add(binding.etCode2); add(binding.etCode3)
@@ -75,6 +133,10 @@ class HomeFragment : Fragment() {
                         codeEdits[i + 1].requestFocus()
                     }
                     et.isActivated = text.isNotEmpty()
+                    // 输完最后一位自动提交（会议号固定 4 位）
+                    if (text.length == 1 && i == codeEdits.size - 1) {
+                        tryJoin()
+                    }
                 }
             })
             et.setOnKeyListener { _, keyCode, event ->
@@ -92,93 +154,302 @@ class HomeFragment : Fragment() {
         }
     }
 
-    /** 填充最近会议列表；空列表时显示占位 */
-    private fun setupRecentList() {
+    /** 校验输入并加入会议 */
+    private fun tryJoin() {
+        val code = codeEdits.joinToString("") { it.text.toString() }
+        if (!Regex("^[0-9]{4}$").matches(code)) {
+            toast("会议号为 4 位数字")
+            return
+        }
+        enterMeeting(MeetingActivity.ACTION_JOIN, code)
+    }
+
+    // ==================== 专属房间 ====================
+
+    /** 渲染专属房间卡片：已设置显示房间号+角色+在线状态，未设置显示提示 */
+    private fun renderFavoriteCard() {
+        val fav = MeetingActivity.getFavoriteRoom(requireContext())
+        if (fav == null) {
+            binding.tvRoomNumber.text = "未设置"
+            binding.tvRoomStatus.text = "点击卡片设置我们的专属房间号"
+            binding.viewStatusDot.visibility = View.GONE
+            binding.btnCallTa.visibility = View.GONE
+            binding.tvSwitchRole.visibility = View.GONE
+            binding.tvChangeRoom.visibility = View.GONE
+            binding.btnCopy.visibility = View.GONE
+            return
+        }
+        val code = fav.first
+        val isHostRole = fav.second == MeetingActivity.ACTION_CREATE
+        binding.tvRoomNumber.text = code
+        val roleText = if (isHostRole) "你是共享方（TA看你的屏幕）" else "你是观看方（你看TA的屏幕）"
+        val online = favOnline
+        val statusText = when (online) {
+            true -> " · 对方在线"
+            false -> " · 对方不在线"
+            null -> ""
+        }
+        binding.tvRoomStatus.text = roleText + statusText
+        binding.viewStatusDot.visibility = if (online == null) View.GONE else View.VISIBLE
+        if (online == true) {
+            binding.viewStatusDot.setBackgroundResource(R.drawable.dot_green)
+            pulseStatusDot()
+        } else if (online == false) {
+            binding.viewStatusDot.setBackgroundResource(R.drawable.dot_gray)
+        }
+        // 观看方才显示「喊TA」（host 是常驻共享方，不需要喊）
+        binding.btnCallTa.visibility = if (!isHostRole) View.VISIBLE else View.GONE
+        binding.tvSwitchRole.visibility = View.VISIBLE
+        binding.tvChangeRoom.visibility = View.VISIBLE
+        binding.btnCopy.visibility = View.VISIBLE
+    }
+
+    /** 专属房间点击：已设置直接进入；未设置弹窗输入房间号+选择角色 */
+    private fun onFavoriteClicked() {
+        val ctx = requireContext()
+        val fav = MeetingActivity.getFavoriteRoom(ctx)
+        if (fav != null) {
+            val isHostRole = fav.second == MeetingActivity.ACTION_CREATE
+            val online = favOnline
+            if (online == false && !isHostRole) {
+                AlertDialog.Builder(ctx)
+                    .setTitle("对方不在线")
+                    .setMessage("TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？")
+                    .setPositiveButton("进入等待") { _, _ -> enterMeeting(fav.second, fav.first) }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return
+            }
+            enterMeeting(fav.second, fav.first)
+            return
+        }
+        // 未设置：预填一个随机 4 位房间号，双方约定即可
+        val input = EditText(ctx).apply {
+            hint = "输入 4 位数字房间号"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            maxLines = 1
+            setText(generateMeetingCode())
+            setSelection(text.length)
+        }
+        val roles = arrayOf("我是共享方（TA 看我的屏幕）", "我是观看方（我看 TA 的屏幕）")
+        var chosenRole = MeetingActivity.ACTION_CREATE
+        AlertDialog.Builder(ctx)
+            .setTitle("设置专属房间")
+            .setMessage("双方约定同一个房间号，各自选好角色，之后一键进入")
+            .setView(input)
+            .setSingleChoiceItems(roles, 0) { _, which ->
+                chosenRole = if (which == 0) MeetingActivity.ACTION_CREATE else MeetingActivity.ACTION_JOIN
+            }
+            .setPositiveButton("进入") { _, _ ->
+                val code = input.text.toString().trim()
+                if (!Regex("^[0-9]{4}$").matches(code)) {
+                    toast("房间号需为 4 位数字")
+                    return@setPositiveButton
+                }
+                MeetingActivity.setFavoriteRoom(ctx, chosenRole, code)
+                favOnline = null
+                renderFavoriteCard()
+                enterMeeting(chosenRole, code)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 查询专属房间在线状态并刷新 UI */
+    private fun queryFavStatus(code: String, role: String) {
+        val httpBase = signalHttpBase() ?: return
+        val isHostRole = role == MeetingActivity.ACTION_CREATE
+        Thread {
+            try {
+                // 观看方查"对方（host）是否在房间"；共享方查"是否有观看方已加入"
+                val url = if (isHostRole)
+                    "$httpBase/room-status?code=$code&s=host"
+                else
+                    "$httpBase/room-status?code=$code"
+                val req = Request.Builder().url(url).build()
+                statusClient.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string() ?: return@use
+                    val json = try { JSONObject(body) } catch (e: Exception) { return@use }
+                    val onlineHint = json.optBoolean("online", false)
+                    if (onlineHint != favOnline) {
+                        favOnline = onlineHint
+                        activity?.runOnUiThread { renderFavoriteCard() }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w("HomeFragment", "查询房间状态失败: ${t.message}")
+            }
+        }.start()
+    }
+
+    /** 从 BuildConfig.SIGNAL_URL（wss://.../ws）推导 HTTP base（https://...） */
+    private fun signalHttpBase(): String? {
+        val s = BuildConfig.SIGNAL_URL
+        if (s.isNullOrBlank()) return null
+        return when {
+            s.startsWith("wss://") -> "https://" + s.removePrefix("wss://").removeSuffix("/ws")
+            s.startsWith("ws://") -> "http://" + s.removePrefix("ws://").removeSuffix("/ws")
+            else -> null
+        }
+    }
+
+    /** 「喊TA」：临时 WebSocket 短连接投递 pls-join（观看方发起，host 收到提示） */
+    private fun sendPlsJoin(code: String) {
+        val url = BuildConfig.SIGNAL_URL
+        if (url.isNullOrBlank()) {
+            toast("信令服务未配置，无法呼叫")
+            return
+        }
+        toast("已提醒对方，等 TA 来上屏...")
+        val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
+        val wsReq = Request.Builder().url(url).build()
+        client.newWebSocket(wsReq, object : okhttp3.WebSocketListener() {
+            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
+                webSocket.send(JSONObject().apply { put("type", "pls-join"); put("code", code) }.toString())
+                Handler(Looper.getMainLooper()).postDelayed({ webSocket.close(1000, "done") }, 1200)
+            }
+        })
+    }
+
+    private fun startFavPolling() {
+        stopFavPolling()
+        favPolling = true
+        favHandler.post(favPollRunnable)
+    }
+
+    private fun stopFavPolling() {
+        favPolling = false
+        favHandler.removeCallbacks(favPollRunnable)
+    }
+
+    // ==================== 最近会议 ====================
+
+    /** 渲染最近会议列表（真实历史记录）；空列表时显示占位 */
+    private fun renderRecentMeetings() {
+        val list = MeetingActivity.loadMeetingHistory(requireContext())
         binding.llRecentList.removeAllViews()
-        for (r in recentList) {
+        list.forEach { entry ->
             val item = ItemRecentBinding.inflate(layoutInflater, binding.llRecentList, false)
-            item.tvRecentCode.text = r.code
-            item.tvRecentMeta.text = r.meta
-            item.ivRecentIcon.setImageResource(if (r.isCreate) R.drawable.ic_liquid_clock else R.drawable.ic_liquid_login)
+            val isCreate = entry.action == MeetingActivity.ACTION_CREATE
+            item.tvRecentCode.text = entry.code
+            item.tvRecentMeta.text = (if (isCreate) "创建" else "加入") + " · " + relativeTime(entry.ts)
+            item.ivRecentIcon.setImageResource(if (isCreate) R.drawable.ic_liquid_clock else R.drawable.ic_liquid_login)
+            item.root.setOnClickListener { enterMeeting(entry.action, entry.code) }
             item.ivRecentDelete.setOnClickListener {
-                recentList.remove(r)
-                setupRecentList()
+                MeetingActivity.removeMeetingHistory(requireContext(), entry.code)
+                renderRecentMeetings()
                 toast("已删除该记录")
             }
-            item.root.setOnClickListener { toast("正在加入房间 ${r.code}...") }
             binding.llRecentList.addView(item.root)
         }
-        binding.emptyState.visibility =
-            if (recentList.isEmpty()) View.VISIBLE else View.GONE
+        binding.emptyState.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
     }
+
+    /** 相对时间显示 */
+    private fun relativeTime(ts: Long): String {
+        val diff = System.currentTimeMillis() - ts
+        return when {
+            diff < 60_000 -> "刚刚"
+            diff < 3600_000 -> "${diff / 60_000}分钟前"
+            diff < 86400_000 -> "${diff / 3600_000}小时前"
+            else -> "${diff / 86400_000}天前"
+        }
+    }
+
+    // ==================== 点击事件 ====================
 
     private fun setupClicks() {
         binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(requireContext(), manual = true) }
 
+        // 创建房间：随机 4 位会议号，直接进入会议室（共享方）
         binding.btnCreate.setOnClickListener {
-            binding.btnCreate.text = "创建中..."
-            binding.btnCreate.alpha = 0.8f
-            handler.postDelayed({
-                binding.btnCreate.text = "创建房间"
-                binding.btnCreate.alpha = 1f
-                toast("创建房间成功！")
-            }, 1500)
+            val code = generateMeetingCode()
+            enterMeeting(MeetingActivity.ACTION_CREATE, code)
         }
 
-        binding.btnJoin.setOnClickListener {
-            val code = codeEdits.joinToString("") { it.text.toString() }
-            if (code.length < 4) {
-                toast("请输入 4 位房间号")
-                return@setOnClickListener
-            }
-            toast("正在加入房间 $code...")
-        }
+        // 加入会议：校验 4 位输入
+        binding.btnJoin.setOnClickListener { tryJoin() }
+
+        // 专属房间卡：已设置进入，未设置弹窗设置
+        binding.cardRoom.setOnClickListener { onFavoriteClicked() }
 
         binding.btnCopy.setOnClickListener {
+            val fav = MeetingActivity.getFavoriteRoom(requireContext())
+            if (fav == null) {
+                toast("请先设置专属房间")
+                return@setOnClickListener
+            }
             val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("房间号", binding.tvRoomNumber.text))
+            cm.setPrimaryClip(ClipData.newPlainText("房间号", fav.first))
             toast("房间号已复制")
         }
 
+        // 喊TA：观看方投递 pls-join
         binding.btnCallTa.setOnClickListener {
-            toast("已发送呼叫通知")
-            handler.postDelayed({
-                binding.viewStatusDot.setBackgroundResource(R.drawable.dot_online)
-                binding.tvRoomStatus.text = "你是观看方（你看TA的屏幕）· 对方在线"
-                pulseStatusDot()
-            }, 1500)
+            val fav = MeetingActivity.getFavoriteRoom(requireContext())
+            if (fav == null) {
+                toast("请先设置专属房间")
+                return@setOnClickListener
+            }
+            if (fav.second != MeetingActivity.ACTION_JOIN) {
+                toast("你是共享方，无需喊TA，等对方加入即可")
+                return@setOnClickListener
+            }
+            sendPlsJoin(fav.first)
         }
 
-        // 换角色：真实切换观看方/共享方身份文案
+        // 换角色：保持房间号不变，翻转共享方/观看方
         binding.tvSwitchRole.setOnClickListener {
-            isViewer = !isViewer
-            binding.tvRoomStatus.text = if (isViewer) {
-                "你是观看方（你看TA的屏幕）· 对方不在线"
-            } else {
-                "你是共享方（TA看你的屏幕）· 对方不在线"
+            val ctx = requireContext()
+            val fav = MeetingActivity.getFavoriteRoom(ctx)
+            if (fav == null) {
+                toast("请先设置专属房间")
+                return@setOnClickListener
             }
-            toast(if (isViewer) "已切换为观看方" else "已切换为共享方")
+            val newRole = if (fav.second == MeetingActivity.ACTION_CREATE)
+                MeetingActivity.ACTION_JOIN else MeetingActivity.ACTION_CREATE
+            val newRoleText = if (newRole == MeetingActivity.ACTION_CREATE)
+                "共享方（TA 看我的屏幕）" else "观看方（我看 TA 的屏幕）"
+            AlertDialog.Builder(ctx)
+                .setTitle("切换角色")
+                .setMessage("房间号 ${fav.first} 保持不变，切换后你成为：$newRoleText")
+                .setPositiveButton("切换") { _, _ ->
+                    MeetingActivity.setFavoriteRoom(ctx, newRole, fav.first)
+                    favOnline = null
+                    renderFavoriteCard()
+                    toast("已切换为$newRoleText")
+                }
+                .setNegativeButton("取消", null)
+                .show()
         }
 
         // 换一个：生成新的 4 位房间号
         binding.tvChangeRoom.setOnClickListener {
-            val newCode = Random.nextInt(1000, 10000).toString()
-            binding.tvRoomNumber.text = newCode
+            val ctx = requireContext()
+            val fav = MeetingActivity.getFavoriteRoom(ctx)
+            if (fav == null) {
+                toast("请先设置专属房间")
+                return@setOnClickListener
+            }
+            val newCode = generateMeetingCode()
+            MeetingActivity.setFavoriteRoom(ctx, fav.second, newCode)
+            favOnline = null
+            renderFavoriteCard()
             toast("已更换房间号 $newCode")
         }
 
         binding.btnClearRecent.setOnClickListener {
-            if (recentList.isEmpty()) {
+            if (MeetingActivity.loadMeetingHistory(requireContext()).isEmpty()) {
                 toast("没有可清空的记录")
                 return@setOnClickListener
             }
-            recentList.clear()
-            setupRecentList()
+            MeetingActivity.clearMeetingHistory(requireContext())
+            renderRecentMeetings()
             toast("已清空历史记录")
         }
     }
 
-    /** 状态点脉冲（对应 @keyframes pulse 的 box-shadow 呼吸） */
+    /** 状态点脉冲（在线时呼吸提示） */
     private fun pulseStatusDot() {
         ObjectAnimator.ofPropertyValuesHolder(
             binding.viewStatusDot,
@@ -215,6 +486,7 @@ class HomeFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         handler.removeCallbacksAndMessages(null)
+        stopFavPolling()
         _binding = null
     }
 }
