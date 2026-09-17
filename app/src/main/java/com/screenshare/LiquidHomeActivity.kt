@@ -76,6 +76,8 @@ class LiquidHomeActivity : AppCompatActivity() {
         setupRecentList()
         setupClicks()
         animateEntrance()
+        // 静默自动检查更新（12h 节流，与 MainActivity 行为一致）
+        UpdateChecker.check(this)
     }
 
     /** 沉浸式状态栏：透明背景 + 深色底配白色图标 */
@@ -181,7 +183,7 @@ class LiquidHomeActivity : AppCompatActivity() {
     }
 
     private fun setupClicks() {
-        binding.tvCheckUpdate.setOnClickListener { showToast("已是最新版本") }
+        binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(this, manual = true) }
 
         // 创建房间：按钮内 spinner 1.5s 后恢复并提示
         binding.btnCreate.setOnClickListener {
