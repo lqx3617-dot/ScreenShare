@@ -138,6 +138,7 @@ server.on("upgrade", (req, socket) => {
   totalConnections++;
   acceptWs(req, socket);
   socket.lastSeen = Date.now();
+  upgradedSockets.add(socket);
 
   let deviceCode = null;
   let role = null; // "host" | "viewer"
@@ -213,6 +214,7 @@ server.on("upgrade", (req, socket) => {
   socket.on("data", (chunk) => parser.push(chunk));
   socket.on("close", () => {
     totalConnections--;
+    upgradedSockets.delete(socket);
     const n = (ipConnections.get(ip) || 1) - 1;
     if (n <= 0) ipConnections.delete(ip); else ipConnections.set(ip, n);
     if (deviceCode && registry.get(deviceCode)?.ws === socket) {
@@ -223,13 +225,17 @@ server.on("upgrade", (req, socket) => {
   socket.on("error", () => { try { socket.destroy(); } catch (e) {} });
 });
 
-// 心跳扫描：30s 周期，超过 45s 无消息的连接强制断开（触发 close → 清理 registry）
+// 已完成 WS 握手的连接（含未注册的）：心跳扫描必须覆盖空闲连接，
+// 否则握手后静默的连接永不超时，可累积到连接上限顶掉合法设备（relay DoS 缺口）
+const upgradedSockets = new Set();
+
+// 心跳扫描：30s 周期，超过 45s 无消息的连接强制断开（触发 close → 清理 registry 与计数器）
 setInterval(() => {
   const now = Date.now();
-  for (const [code, info] of registry) {
-    if (now - (info.ws.lastSeen || now) > HEARTBEAT_TIMEOUT) {
-      console.log(`[relay] ${code} idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
-      try { info.ws.destroy(); } catch (e) {}
+  for (const socket of upgradedSockets) {
+    if (now - (socket.lastSeen || now) > HEARTBEAT_TIMEOUT) {
+      console.log(`[relay] idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
+      try { socket.destroy(); } catch (e) {}
     }
   }
 }, 30 * 1000).unref();

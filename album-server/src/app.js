@@ -232,11 +232,11 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
         return json(res, 400, { error: "invalid image data" });
       }
       await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
-      session.received.add(index);
-      session.total = Math.max(session.total, index);
-      db.saveSession(session);
+      // 原子标记：避免并发上传同一会话时 read-modify-write 丢索引（H1 修复）
+      db.markPhoto(token, index);
+      const fresh = db.loadSession(token);
       console.log(`[album] ${new Date().toISOString()} upload ${tokShort(token)} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
-      return json(res, 200, { ok: true, received: session.received.size, total: session.total });
+      return json(res, 200, { ok: true, received: fresh ? fresh.received.size : 0, total: fresh ? fresh.total : 0 });
     } catch (e) {
       console.log(`[album] ${new Date().toISOString()} upload-write-fail ${tokShort(token)} idx=${index}: ${e.message}`);
       return json(res, 500, { error: "write failed" });
@@ -268,12 +268,11 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     // 视频全部字节上传完成：received + videos 标记（缩略图已存），total 取最大 index
     const index = parseInt(body.index, 10);
     if (!validVideoIndex(index)) return json(res, 400, { error: "bad index" });
-    session.received.add(index);
-    session.videos.add(index);
-    session.total = Math.max(session.total, index);
-    db.saveSession(session);
+    // 原子标记 received+videos+total
+    db.markVideo(token, index);
+    const fresh = db.loadSession(token);
     console.log(`[album] ${new Date().toISOString()} video-finish ${tokShort(token)} idx=${index}`);
-    return json(res, 200, { ok: true, received: session.received.size, total: session.total });
+    return json(res, 200, { ok: true, received: fresh ? fresh.received.size : 0, total: fresh ? fresh.total : 0 });
   }
 
   if (action === "original") {
@@ -291,8 +290,8 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
       await fsp.mkdir(dir, { recursive: true });
       await fsp.writeFile(path.join(dir, `${pad(index)}.jpg`), buf);
       pending.get(token)?.delete(index);
-      session.originals.add(index);
-      db.saveSession(session);
+      // 原子标记原图已收
+      db.markOriginal(token, index);
       console.log(`[album] ${new Date().toISOString()} original ${tokShort(token)} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true });
     } catch (e) {
@@ -496,13 +495,8 @@ app.post("/api/dedup", writeLimiter, async (req, res) => {
             await fsp.rm(f, { force: true });
           } catch (e) {}
         }
-        // 更新 DB：从 received/originals 移除该序号
-        const s = loadSession(it.token);
-        if (s) {
-          s.received.delete(it.index);
-          s.originals.delete(it.index);
-          db.saveSession(s);
-        }
+        // 更新 DB：原子移除该序号（避免与并发上传的 read-modify-write 交错复活已删索引）
+        db.unmarkMedia(it.token, it.index);
         removed.push({ token: it.token, index: it.index });
       }
     }
@@ -538,13 +532,10 @@ app.post("/api/photo/delete", writeLimiter, async (req, res) => {
       await fsp.rm(f, { force: true });
     } catch (e) {}
   }
-  // 从 DB 移除
-  session.received.delete(index);
-  session.originals.delete(index);
-  session.videos.delete(index);
-  db.saveSession(session);
-  console.log(`[album] ${new Date().toISOString()} photo-delete ${tokShort(token)} idx=${index} (剩 ${session.received.size})`);
-  return json(res, 200, { ok: true, received: session.received.size });
+  // 从 DB 原子移除（查询+更新同步执行，无竞态）
+  const after = db.unmarkMedia(token, index);
+  console.log(`[album] ${new Date().toISOString()} photo-delete ${tokShort(token)} idx=${index} (剩 ${after ? after.receivedCount : 0})`);
+  return json(res, 200, { ok: true, received: after ? after.receivedCount : 0 });
 });
 
 /** 有照片的设备列表（按设备分组），观看方远程相册同步后按设备查看 */

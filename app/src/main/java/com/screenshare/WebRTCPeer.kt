@@ -145,7 +145,8 @@ class WebRTCPeer(
         fun onDataChannelInfo(info: String) {}
     }
 
-    private var peerConnection: PeerConnection? = null
+    // 统计/自适应线程读、主线程写，@Volatile 保证可见性（M2 修复）
+    @Volatile private var peerConnection: PeerConnection? = null
     private var localVideoTrack: VideoTrack? = null
     private var localAudioTrack: AudioTrack? = null
     private var videoCapturer: VideoCapturer? = null
@@ -204,11 +205,11 @@ class WebRTCPeer(
     private var controlListener: ((String) -> Unit)? = null
 
     // 视频发送器（切换帧率时更新编码参数）
-    private var videoSender: org.webrtc.RtpSender? = null
+    @Volatile private var videoSender: org.webrtc.RtpSender? = null
 
     // 麦克风语音（会议内双向对讲）：标准 WebRTC 音频轨道
     private var micAudioSource: AudioSource? = null
-    private var micSender: org.webrtc.RtpSender? = null
+    @Volatile private var micSender: org.webrtc.RtpSender? = null
 
     // 视频通话摄像头（camera_track）：前端摄像头实时采集，人脸画面。与屏幕轨（screen_track）并存，
     // host 端挂到每个 viewer 连接、viewer 端挂到主连接；对端按 track id 区分渲染到 PIP 小窗
@@ -221,7 +222,7 @@ class WebRTCPeer(
     // host 端：每个 viewer 连接的摄像头发送器（同摄像头轨可 addTrack 到多条连接）
     private val cameraViewerSenders = mutableMapOf<Int, org.webrtc.RtpSender>()
     // viewer 端：主连接的摄像头发送器
-    private var cameraSender: org.webrtc.RtpSender? = null
+    @Volatile private var cameraSender: org.webrtc.RtpSender? = null
     // 摄像头弱网自适应：最近一次码率/帧率上限（防重复设置）
     private var lastCameraBitrateCap = 0
     private var lastCameraFpsCap = 0
@@ -695,19 +696,31 @@ class WebRTCPeer(
     fun handleViewerAnswer(viewerId: Int, sdp: SessionDescription, candidates: List<IceCandidate>) {
         val conn = viewerConnections[viewerId] ?: return
         val pc = conn.pc
+        // 候选必须等远端描述设置成功才能 add：setRemoteDescription 异步未完成时
+        // AddIceCandidate 返回 INVALID_STATE 静默丢弃，批量候选会永久丢失导致建连失败（H2）
+        if (candidates.isNotEmpty()) {
+            synchronized(pendingViewerCandidates) {
+                pendingViewerCandidates.getOrPut(viewerId) { mutableListOf() }.addAll(candidates)
+            }
+        }
         pc.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
-                pendingViewerCandidates[viewerId]?.forEach { pc.addIceCandidate(it) }
-                pendingViewerCandidates.remove(viewerId)
+                // 与 addViewerIce 写端共用同一把锁，避免遍历/移除时的并发修改（M1）
+                synchronized(pendingViewerCandidates) {
+                    pendingViewerCandidates[viewerId]?.forEach { pc.addIceCandidate(it) }
+                    pendingViewerCandidates.remove(viewerId)
+                }
                 AppLogger.webrtc("viewer#$viewerId answer applied")
                 // 新 viewer 完成 Answer 后立即触发关键帧，让观看端尽快拿到 I 帧出画面
                 requestKeyFrame()
             }
-            override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId setRemoteDescription 失败: $error") }
+            override fun onSetFailure(error: String?) {
+                synchronized(pendingViewerCandidates) { pendingViewerCandidates.remove(viewerId) }
+                Log.e(TAG, "viewer#$viewerId setRemoteDescription 失败: $error")
+            }
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onCreateFailure(p0: String?) {}
         }, sdp)
-        candidates.forEach { pc.addIceCandidate(it) }
     }
 
     /**
@@ -720,8 +733,19 @@ class WebRTCPeer(
             return
         }
         val pc = conn.pc
+        // 候选同样暂存到 onSetSuccess 后应用（H2，与 handleViewerAnswer 同因）
+        if (candidates.isNotEmpty()) {
+            synchronized(pendingViewerCandidates) {
+                pendingViewerCandidates.getOrPut(viewerId) { mutableListOf() }.addAll(candidates)
+            }
+        }
         pc.setRemoteDescription(object : SdpObserver {
             override fun onSetSuccess() {
+                // 应用暂存候选（H2：remoteDescription 就绪后方可 add）
+                synchronized(pendingViewerCandidates) {
+                    pendingViewerCandidates[viewerId]?.forEach { pc.addIceCandidate(it) }
+                    pendingViewerCandidates.remove(viewerId)
+                }
                 // 应用远端描述后自动生成 Answer（Trickle ICE：SDP 先回，候选随后增量）
                 val constraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -744,11 +768,13 @@ class WebRTCPeer(
                     override fun onSetFailure(error: String?) {}
                 }, MediaConstraints())
             }
-            override fun onSetFailure(error: String?) { Log.e(TAG, "viewer#$viewerId 重协商 setRemoteDescription 失败: $error") }
+            override fun onSetFailure(error: String?) {
+                synchronized(pendingViewerCandidates) { pendingViewerCandidates.remove(viewerId) }
+                Log.e(TAG, "viewer#$viewerId 重协商 setRemoteDescription 失败: $error")
+            }
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onCreateFailure(p0: String?) {}
         }, sdp)
-        candidates.forEach { pc.addIceCandidate(it) }
     }
     private val pendingViewerCandidates = mutableMapOf<Int, MutableList<IceCandidate>>()
 

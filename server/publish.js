@@ -93,16 +93,22 @@ async function signApk(task, key) {
   }
   task.log.push(`签名 ${cfg.label}…`);
   const aligned = cfg.final + ".aligned" + process.pid;
-  await run(ZIPALIGN, ["-f", "4", cfg.unsigned, aligned]);
   const signed = cfg.final + ".signed" + process.pid;
-  await run(APKSIGNER, [
-    "sign", "--ks", KEYSTORE, "--ks-pass", `pass:${KEYSTORE_PASS}`,
-    "--ks-key-alias", KEYSTORE_ALIAS, "--out", signed, aligned,
-  ]);
-  await run(APKSIGNER, ["verify", "--verbose", signed]);
-  atomicWrite(cfg.final, fs.readFileSync(signed));
-  fs.unlinkSync(aligned);
-  fs.unlinkSync(signed);
+  // 工具挂起（keystore 锁、磁盘满、僵尸进程）时必须超时，否则 currentTask 永不释放、
+  // 后续发布全部 409；finally 兜底清理临时文件，避免 verify 失败后残留 21MB×2
+  const SIGN_TIMEOUT = 10 * 60 * 1000;
+  try {
+    await run(ZIPALIGN, ["-f", "4", cfg.unsigned, aligned], { timeout: SIGN_TIMEOUT });
+    await run(APKSIGNER, [
+      "sign", "--ks", KEYSTORE, "--ks-pass", `pass:${KEYSTORE_PASS}`,
+      "--ks-key-alias", KEYSTORE_ALIAS, "--out", signed, aligned,
+    ], { timeout: SIGN_TIMEOUT });
+    await run(APKSIGNER, ["verify", "--verbose", signed], { timeout: SIGN_TIMEOUT });
+    atomicWrite(cfg.final, fs.readFileSync(signed));
+  } finally {
+    try { fs.unlinkSync(aligned); } catch (e) {}
+    try { fs.unlinkSync(signed); } catch (e) {}
+  }
   task.log.push(`${cfg.label} 签名完成 -> ${cfg.final}`);
 }
 

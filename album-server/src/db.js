@@ -93,6 +93,58 @@ function deleteSession(token) {
   getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
 
+/**
+ * 原子标记方法：取代 load → 内存改 → save 的 read-modify-write 模式。
+ * 原模式下多个请求并发上传同一会话时，后写的快照会覆盖先写的索引，
+ * 导致「上传成功却不在相册里」。以下方法用单条 SQL 原子完成，
+ * json_group_array 重建时顺带去重（同 index 重传不重复入库）。
+ */
+function markPhoto(token, index) {
+  getDb()
+    .prepare(
+      `UPDATE sessions SET
+         received = json_insert((SELECT json_group_array(value) FROM json_each(received) WHERE value <> ?), '$[#]', ?),
+         total = MAX(total, ?)
+       WHERE token = ?`
+    )
+    .run(index, index, index, token);
+}
+
+function markVideo(token, index) {
+  getDb()
+    .prepare(
+      `UPDATE sessions SET
+         received = json_insert((SELECT json_group_array(value) FROM json_each(received) WHERE value <> ?), '$[#]', ?),
+         videos  = json_insert((SELECT json_group_array(value) FROM json_each(videos)  WHERE value <> ?), '$[#]', ?),
+         total = MAX(total, ?)
+       WHERE token = ?`
+    )
+    .run(index, index, index, index, index, token);
+}
+
+function markOriginal(token, index) {
+  getDb()
+    .prepare(
+      `UPDATE sessions SET
+         originals = json_insert((SELECT json_group_array(value) FROM json_each(originals) WHERE value <> ?), '$[#]', ?)
+       WHERE token = ?`
+    )
+    .run(index, index, token);
+}
+
+/** 从 received/originals/videos 移除序号。查询与更新同步执行、中间无 await，整段原子。 */
+function unmarkMedia(token, index) {
+  const db = getDb();
+  const row = db.prepare("SELECT received, originals, videos FROM sessions WHERE token = ?").get(token);
+  if (!row) return null;
+  const recv = parseJsonArray(row.received).filter((i) => i !== index);
+  const orig = parseJsonArray(row.originals).filter((i) => i !== index);
+  const vid = parseJsonArray(row.videos).filter((i) => i !== index);
+  db.prepare("UPDATE sessions SET received = ?, originals = ?, videos = ? WHERE token = ?")
+    .run(JSON.stringify(recv), JSON.stringify(orig), JSON.stringify(vid), token);
+  return { receivedCount: recv.length };
+}
+
 /** 全部会话（按创建时间倒序），供聚合相册页汇总所有照片 */
 function listAll() {
   return getDb()
@@ -144,4 +196,4 @@ function listExpired(now, ttlMs) {
     .map((r) => r.token);
 }
 
-module.exports = { createSession, loadSession, saveSession, deleteSession, listAll, listDevices, listExpired };
+module.exports = { createSession, loadSession, saveSession, deleteSession, listAll, listDevices, listExpired, markPhoto, markVideo, markOriginal, unmarkMedia };
