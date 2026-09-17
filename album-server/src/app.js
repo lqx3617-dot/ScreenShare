@@ -31,6 +31,9 @@ if (!ALBUM_KEY) {
 // 密钥轮换过渡期旧密钥（2026-08-26 轮换）：旧版 App 内置旧密钥，双密钥并存避免升级窗口期相册失效；
 // 双端 App 全部更新到新版后应移除 ALBUM_KEY_OLD 环境变量
 const ALBUM_KEY_OLD = process.env.ALBUM_KEY_OLD || "";
+// 相册公网访问地址（如 https://album.example.com）：优先用环境变量，
+// 避免把客户端可伪造的 Host 头直接拼进返回给 App 的 url
+const ALBUM_PUBLIC_URL = (process.env.ALBUM_PUBLIC_URL || "").replace(/\/+$/, "");
 const TTL_MS = 24 * 60 * 60 * 1000; // 会话 24h 过期
 const BODY_LIMIT = "12mb";
 
@@ -87,6 +90,8 @@ app.use((req, res, next) => {
   res.set("X-Frame-Options", "SAMEORIGIN");
   res.set("Referrer-Policy", "no-referrer");
   res.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  // CSP 保留 unsafe-inline：相册页为纯服务端渲染，所有动态变量经 jsString()/白名单过滤后入模板，
+  // 不存在用户可控的 HTML 注入点；内联 <script>/<style> 依赖模板内的动态计数（提取外部文件收益低）
   res.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'");
   if (req.secure || req.headers["x-forwarded-proto"] === "https") {
     res.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
@@ -300,7 +305,9 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     session.done = true;
     db.saveSession(session);
     console.log(`[album] ${new Date().toISOString()} finish ${tokShort(token)}`);
-    return json(res, 200, { ok: true, url: `https://${req.get("host")}/${token}/` });
+    // 不信任 Host 头：配置了 ALBUM_PUBLIC_URL 用配置值；否则只保留 host 中的域名字符，杜绝头注入
+    const base = ALBUM_PUBLIC_URL || `https://${(req.get("host") || "").replace(/[^a-zA-Z0-9.\-:]/g, "")}`;
+    return json(res, 200, { ok: true, url: `${base}/${token}/` });
   }
 
   return json(res, 400, { error: "unknown action" });

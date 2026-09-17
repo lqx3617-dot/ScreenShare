@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 8097;
 
 // 是否启用 WebSocket 握手后的消息帧解析（本服务使用精简 ws 实现，避免引入依赖）
 // deviceCode(normalized) -> connection 信息
-const registry = new Map(); // deviceCode(8位无空格) -> { ws, deviceName, ip, registeredAt }
+const registry = new Map(); // deviceCode(8位无空格) -> { ws, deviceName, ip(声称), realIp(真实), registeredAt }
 
 function normalizeCode(raw) {
   return String(raw || "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
@@ -164,16 +164,18 @@ server.on("upgrade", (req, socket) => {
         role = "host";
         const want = normalizeCode(msg.deviceCode);
         const code = want && isValidCode(want) ? want : genCode();
-        // 防设备码劫持：已有在线连接占用该码时拒绝覆盖（重连场景旧连接断开后 registry 已清理）
+        // 防设备码劫持：已有在线连接占用该码时拒绝覆盖；同真实 IP 视为设备重连允许覆盖
+        // （旧连接 TCP 半死未及时触发 close 时，设备自己重连应能成功）
         const existing = registry.get(code);
-        if (existing && existing.ws !== socket && !existing.ws.destroyed) {
-          console.log(`[relay] register rejected: code ${code} already in use`);
+        if (existing && existing.ws !== socket && !existing.ws.destroyed && existing.realIp !== ip) {
+          console.log(`[relay] register rejected: code ${code} already in use (ip=${ip})`);
           send({ type: "relay-registered", deviceCode: formatCode(code), error: "设备码已被占用" });
           return;
         }
         deviceCode = code;
+        // 展示给观看方的 ip 用客户端声称值（NAT 后的内网地址），realIp 仅供重连判断
         ipAddr = String(msg.ip || "");
-        registry.set(code, { ws: socket, deviceName: String(msg.deviceName || "").slice(0, 40), ip: ipAddr, registeredAt: Date.now() });
+        registry.set(code, { ws: socket, deviceName: String(msg.deviceName || "").slice(0, 40), ip: ipAddr, realIp: ip, registeredAt: Date.now() });
         console.log(`[relay] host registered ${code} ip=${ipAddr} name=${msg.deviceName || ""} online=${registry.size}`);
         send({ type: "relay-registered", deviceCode: formatCode(code), ip: ipAddr });
         break;

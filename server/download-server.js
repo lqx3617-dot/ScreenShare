@@ -6,6 +6,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
@@ -26,7 +27,14 @@ const PUBLISH_TOKEN = process.env.PUBLISH_TOKEN || "";
 function publishAuthorized(req) {
   if (!PUBLISH_TOKEN) return false;
   const h = req.headers["x-publish-token"] || req.headers["authorization"] || "";
-  return h === PUBLISH_TOKEN || h === `Bearer ${PUBLISH_TOKEN}`;
+  const presented = h.startsWith("Bearer ") ? h.slice(7) : h;
+  // 定长比较防时序侧信道；长度不等直接拒绝，避免 timingSafeEqual 抛错
+  if (!presented || presented.length !== PUBLISH_TOKEN.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(PUBLISH_TOKEN));
+  } catch (e) {
+    return false;
+  }
 }
 
 // 当前正在执行的发布任务（单任务互斥）+ 已完成任务历史（供状态查询）
@@ -65,7 +73,6 @@ let buildingVersion = null; // 正在计算的 Promise，避免并发重复计�
 let cachedAlbumVersion = null;
 let cachedAlbumMtime = 0;
 let buildingAlbumVersion = null;
-const crypto = require("crypto");
 // APK 下载 URL：优先用 DOWNLOAD_BASE 环境变量（公网域名，反代会把 Host 改写为 localhost，
 // 此时用请求 Host 生成的 url 手机端无法访问），否则随请求 Host 动态生成（http/https 统一 https）
 function fileMd5(file) {
