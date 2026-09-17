@@ -4237,7 +4237,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 if (child.getTag(R.id.tag_text_dark) == null) {
                     child.setTag(R.id.tag_text_dark, child.currentTextColor)
                 }
-                child.setTextColor(0xFFF3E9ED.toInt())
+                // v1.265: 纯白 + 深色描边阴影，任何明暗视频背景上都清晰
+                child.setTextColor(0xFFFFFFFF.toInt())
+                child.setShadowLayer(3f, 0f, 1f, 0xCC000000.toInt())
             }
             if (child is ViewGroup) applyLightText(child)
         }
@@ -4248,6 +4250,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             val child = vg.getChildAt(i) ?: continue
             if (child is TextView) {
                 (child.getTag(R.id.tag_text_dark) as? Int)?.let { child.setTextColor(it) }
+                child.setShadowLayer(0f, 0f, 0f, 0)
             }
             if (child is ViewGroup) restoreDarkText(child)
         }
