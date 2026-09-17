@@ -182,7 +182,7 @@
                         android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="#FFFFFFFF"
-                        android:textCursorDrawable="@null"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
                         android:imeOptions="actionNext"
                         android:importantForAutofill="no"
                         android:hint="0"
@@ -202,7 +202,7 @@
                         android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="#FFFFFFFF"
-                        android:textCursorDrawable="@null"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
                         android:imeOptions="actionNext"
                         android:importantForAutofill="no"
                         android:hint="0"
@@ -222,7 +222,7 @@
                         android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="#FFFFFFFF"
-                        android:textCursorDrawable="@null"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
                         android:imeOptions="actionNext"
                         android:importantForAutofill="no"
                         android:hint="0"
@@ -241,7 +241,7 @@
                         android:textSize="22sp"
                         android:textStyle="bold"
                         android:textColor="#FFFFFFFF"
-                        android:textCursorDrawable="@null"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
                         android:imeOptions="actionDone"
                         android:importantForAutofill="no"
                         android:hint="0"
@@ -306,12 +306,50 @@
                             android:textColor="#FFFFFFFF" />
                     </LinearLayout>
 
-                    <TextView
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="换角色  |  换一个"
-                        android:textSize="13sp"
-                        android:textColor="#BFFFFFFF" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:id="@+id/tvSwitchRole"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:paddingStart="10dp"
+                            android:paddingEnd="5dp"
+                            android:paddingTop="5dp"
+                            android:paddingBottom="5dp"
+                            android:text="换角色"
+                            android:textSize="13sp"
+                            android:textColor="#BFFFFFFF"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?android:attr/selectableItemBackground" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="|"
+                            android:textSize="13sp"
+                            android:alpha="0.3"
+                            android:textColor="#BFFFFFFF" />
+
+                        <TextView
+                            android:id="@+id/tvChangeRoom"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:paddingStart="5dp"
+                            android:paddingEnd="10dp"
+                            android:paddingTop="5dp"
+                            android:paddingBottom="5dp"
+                            android:text="换一个"
+                            android:textSize="13sp"
+                            android:textColor="#BFFFFFFF"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:foreground="?android:attr/selectableItemBackground" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <LinearLayout
@@ -440,6 +478,47 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
+
+                <!-- 空态（对应 .empty-state）：列表为空时显示 -->
+                <LinearLayout
+                    android:id="@+id/emptyState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:gravity="center"
+                    android:paddingTop="32dp"
+                    android:paddingBottom="32dp"
+                    android:visibility="gone">
+
+                    <FrameLayout
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:layout_marginBottom="12dp"
+                        android:background="@drawable/bg_liquid_pill">
+
+                        <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_liquid_clock"
+                            app:tint="#99FFFFFF" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="暂无会议记录"
+                        android:textSize="14sp"
+                        android:textColor="#80FFFFFF"
+                        android:layout_marginBottom="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="创建房间后会显示在这里"
+                        android:textSize="12sp"
+                        android:textColor="#59FFFFFF" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

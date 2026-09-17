@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 液态玻璃卡片：28dp 圆角 + 渐变白玻璃主体 + 渐变高光描边（对应 .glass-card） -->
+<!-- 液态玻璃卡片（对应 .glass-card + ::before 描边 + ::after 顶部高光） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 渐变描边（从亮白到淡紫再回亮白，模拟边缘高光） -->
+    <!-- 渐变描边：亮白→淡→紫→淡→亮白（模拟 ::before 五段渐变） -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="28dp" />
             <gradient
                 android:angle="135"
                 android:startColor="#80FFFFFF"
-                android:centerColor="#1AC896FF"
+                android:centerColor="#33C896FF"
                 android:endColor="#66FFFFFF" />
         </shape>
     </item>
-    <!-- 玻璃主体（内缩 1dp 露出描边） -->
+    <!-- 玻璃主体（内缩 1dp 露出描边）：三段半透明白 -->
     <item
         android:left="1dp"
         android:top="1dp"
@@ -25,6 +25,21 @@
                 android:startColor="#38FFFFFF"
                 android:centerColor="#14FFFFFF"
                 android:endColor="#26FFFFFF" />
+        </shape>
+    </item>
+    <!-- 顶部高光线（::after：左右各留 10%，横向渐变收尾） -->
+    <item
+        android:left="28dp"
+        android:right="28dp"
+        android:top="0dp"
+        android:bottom="-1dp"
+        android:height="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:startColor="#00FFFFFF"
+                android:centerColor="#99FFFFFF"
+                android:endColor="#00FFFFFF" />
         </shape>
     </item>
 </layer-list>

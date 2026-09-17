@@ -1,4 +1,4 @@
 {
-  "changelog": "修复新界面启动崩溃（根因已定位）：按钮涟漪属性误写为 @android:attr/...，编译期不校验、运行时把 attr 当资源解析抛 Resources$NotFoundException。已改为正确的主题引用格式 ?android:attr/selectableItemBackground。两个自带 ripple 的渐变大按钮去掉重复涟漪。",
+  "changelog": "新界面对齐最新设计稿优化：背景加 40 颗粒 + 6 个漂浮爱心补液态氛围；卡片玻璃质感对齐原型（三段半透明主体 + 五段渐变描边 + 顶部高光线）；「换角色 / 换一个」拆为可独立点击；最近会议为空时显示占位提示；输入格光标改粉色。设置入口：底部「设置」tab → 导出运行日志 / 检查更新 / 关于。",
   "forced": false
 }

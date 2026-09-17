@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 数字输入格光标：2dp 粉色竖线（对应 .code-box.active::after 的闪烁光标） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <size android:width="2dp" android:height="24dp" />
+    <solid android:color="#FFFF6BB5" />
+</shape>

@@ -2,9 +2,11 @@ package com.screenshare
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -23,10 +25,14 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import com.screenshare.databinding.ActivityLiquidBinding
 import com.screenshare.databinding.ItemRecentBinding
+import java.io.File
+import kotlin.random.Random
 
 /**
  * 液态玻璃主界面（HTML 原型转换）：深紫渐变背景 + 漂浮光斑 + 毛玻璃卡片。
@@ -136,6 +142,57 @@ class LiquidHomeActivity : AppCompatActivity() {
                 start()
             }
         }
+        setupGrains()
+        setupFloatingHearts()
+    }
+
+    /** 背景颗粒（对应 JS 生成的 40 个 1-3px 白点，静态低开销） */
+    private fun setupGrains() {
+        val dm = resources.displayMetrics
+        for (i in 0 until 40) {
+            val v = View(this)
+            val sizeDp = 1 + Random.nextFloat()
+            v.setBackgroundColor(Color.WHITE)
+            v.alpha = 0.1f + Random.nextFloat() * 0.4f
+            val size = (sizeDp * dm.density).toInt()
+            val lp = FrameLayout.LayoutParams(size, size)
+            lp.leftMargin = (Random.nextFloat() * dm.widthPixels).toInt()
+            lp.topMargin = (Random.nextFloat() * dm.heightPixels).toInt()
+            binding.flBlobs.addView(v, lp)
+        }
+    }
+
+    /** 漂浮爱心（对应 JS 生成的 6 个 float-heart：从底部升到顶部 + 旋转，25s 级慢速） */
+    private fun setupFloatingHearts() {
+        val dm = resources.displayMetrics
+        for (i in 0 until 6) {
+            val iv = ImageView(this)
+            iv.setImageResource(R.drawable.ic_heart_fill)
+            iv.setColorFilter(0xFFFF6BB5.toInt())
+            iv.alpha = 0.12f
+            val sizeDp = 14 + Random.nextFloat() * 18
+            val size = (sizeDp * dm.density).toInt()
+            val lp = FrameLayout.LayoutParams(size, size)
+            lp.leftMargin = (Random.nextFloat() * dm.widthPixels).toInt()
+            binding.flBlobs.addView(iv, lp)
+            val dur = 18000L + (Random.nextFloat() * 15000L).toLong()
+            val fromY = dm.heightPixels.toFloat()
+            val toY = -300f
+            ObjectAnimator.ofFloat(iv, "translationY", fromY, toY).apply {
+                duration = dur
+                startDelay = (Random.nextFloat() * 25000L).toLong()
+                repeatCount = ObjectAnimator.INFINITE
+                interpolator = android.view.animation.LinearInterpolator()
+                start()
+            }
+            ObjectAnimator.ofFloat(iv, "rotation", 0f, 360f).apply {
+                duration = dur
+                startDelay = (Random.nextFloat() * 25000L).toLong()
+                repeatCount = ObjectAnimator.INFINITE
+                interpolator = android.view.animation.LinearInterpolator()
+                start()
+            }
+        }
     }
 
     /** 4 位数字输入：输满自动跳下一格，Backspace 空格回退到上一格 */
@@ -190,6 +247,9 @@ class LiquidHomeActivity : AppCompatActivity() {
             item.root.setOnClickListener { showToast("正在加入房间 ${r.code}...") }
             binding.llRecentList.addView(item.root)
         }
+        // 空态切换：列表为空时显示占位（对应 .empty-state）
+        binding.emptyState.visibility =
+            if (recentList.isEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun setupClicks() {
@@ -227,6 +287,9 @@ class LiquidHomeActivity : AppCompatActivity() {
             }, 1500)
         }
 
+        binding.tvSwitchRole.setOnClickListener { showToast("已切换角色") }
+        binding.tvChangeRoom.setOnClickListener { showToast("已更换房间号") }
+
         binding.btnClearRecent.setOnClickListener {
             recentList.clear()
             setupRecentList()
@@ -247,10 +310,53 @@ class LiquidHomeActivity : AppCompatActivity() {
                     icon.setColorFilter(color)
                     label.setTextColor(color)
                 }
-                showToast("切换到「${labels[index]}」")
+                if (index == 2) {
+                    showSettingsDialog()
+                } else {
+                    showToast("切换到「${labels[index]}」")
+                }
             }
         }
         binding.tabHome.isActivated = true
+    }
+
+    /** 设置对话框（日志/更新/关于）——日志入口按用户要求放在设置里 */
+    private fun showSettingsDialog() {
+        val items = arrayOf("导出运行日志", "检查更新", "关于")
+        AlertDialog.Builder(this, R.style.Theme_ScreenShare_Dialog)
+            .setTitle("设置")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> exportLogFile()
+                    1 -> UpdateChecker.check(this, manual = true)
+                    2 -> showToast("共享屏界 v${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 导出运行日志：系统分享面板发送，便于反馈崩溃等问题（复用 MainActivity 逻辑） */
+    private fun exportLogFile() {
+        try {
+            val f = AppLogger.logFile()
+            if (f == null || !f.exists() || f.length() == 0L) {
+                Toast.makeText(this, "暂无日志可导出", Toast.LENGTH_SHORT).show()
+                return
+            }
+            AppLogger.app("用户导出日志文件 (${f.length()}B)")
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "ScreenShare 运行日志")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "导出日志"))
+        } catch (t: Throwable) {
+            Log.e(TAG, "导出日志失败", t)
+            Toast.makeText(this, "导出日志失败，请稍后重试", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** 状态点脉冲（对应 @keyframes pulse 的 box-shadow 呼吸） */
