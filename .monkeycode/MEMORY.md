@@ -831,3 +831,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 按压回弹用 onTouchListener 返回 true 接管事件序列、ACTION_UP 手动 performClick，否则点击事件不触发
   - View 无公开 getBackgroundResource：换肤识别用 background.constantState 判断当前资源
   - 改服务器代码或 release-config.json 后必须重启对应端口（8090 download-server / 8096 album-server / 8095 信令），由 /tmp/opencode/supervise-server.sh 守护（kill 后 15s 自动拉起，album /health 预期返回 401 = fail-closed 存活）
+
+[代码审查第一轮：崩溃级与连接可靠性]
+- Date: 2026-09-17
+- Context: 五个模块并行深度审查（SignalClient/WebRTCPeer、信令服务端、相册服务端、下载中继服务、MainActivity 后半），修可确认的 Critical/High，v1.267(271) 已构建签名提交（5eeffa0）：allarch md5=d68bcfd05570eb8ddd27d4f6a195bb4c、arm64 md5=17529b86e32ecd97a7828d707c025013；脚本 /tmp/opencode/build_v1267.sh
+- Category: Build Methods | Troubleshooting & Debugging
+- Instructions:
+  - 崩溃级通病模式（自查清单）：① JSON.parse("null") 返回 null 后 .type 取值抛 TypeError——parse 后必须校验 typeof msg === "object"；② 异步回调（WS/WebRTC 线程）post 到主线程的 runOnUiThread 闭包不检查 isFinishing/isDestroyed，Activity 销毁后仍执行（AlertDialog.show() 必 BadTokenException）；③ fs.createReadStream().pipe(res) 无 stream.on("error") 时源流错误使整个 Node 进程崩溃
+  - Kotlin 标签 return 陷阱：runOnUiThread { if (...) return@runOnUiThread } 的 return 若后接表达式会被当作带返回值的 return，而 Runnable.run() 返回 Unit → 编译失败；必须 return@runOnUiThread; 显式分号，或改用 if(!cond){...} 包裹
+  - host 主连接只作采集底座、ICE 永不 CONNECTED——onConnected 的 host 分支是死代码，host 侧 UI/免打扰必须在 startSessionCore 采集成功后显式启动
+  - ICE 候选必须在 setRemoteDescription 的 onSetSuccess 回调里 add（remoteDescription 为空时 AddIceCandidate 返回 INVALID_STATE 静默丢弃）；receiving=false 在 CHECKING 阶段是正常态，判断线必须先查 iceConnectionState
+  - 已知遗留（下一轮）：相册会话状态 load-modify-write 非原子（并发上传可能丢照片，需 per-token 串行化或原子 SQL）；WebRTCPeer 关键字段缺 @Volatile 跨线程读写；publish 的 zipalign/apksigner 无超时可能永久卡死发布通道
+  - 审查用并行子 agent 分模块读完全文、每条带 file:line 与推理依据，再人工复核（读上下文确认是真 bug 还是误报），避免误改
