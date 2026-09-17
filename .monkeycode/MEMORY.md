@@ -775,3 +775,59 @@ Entries discovered by the Agent during task execution should follow this format:
   - v1.260(263) 已构建签名：allarch md5=ff5052ba6b649909f8f4e311b356fbc0、arm64 md5=a6fcb4aa165679bf2bbbcd51600a3418；构建脚本 /tmp/opencode/build_v1260.sh
   - 修 bug 发版必须 bump 版本号：覆盖同名 APK 不触发 App 内检查更新（version.json 比对 versionCode），修体验问题后改了版本号才能让已装用户收到更新
   - 常驻入口放工具条 llToolbar（btnMic/btnCamera/btnToolbarMore/btnStop 同级，weight=1 等宽），进入会议 updateUI 里 llToolbar.visibility=VISIBLE 后即显示；llCallExtras 只在 videoCallOn 时显示，不宜放通用入口
+
+[v1.261 断线自动重连 + 加入免审批]
+- Date: 2026-09-16
+- Context: ICE 临时断开（DISCONNECTED/FAILED）时 WebRTC 正在自恢复或 ICE restart，此前 onDisconnected 直接踢回连接页；加入会议每次都要 host 点「同意」过于繁琐
+- Category: Build Methods
+- Instructions:
+  - v1.261(264) 已构建签名提交（commit 4c31e88）：allarch md5=cd3784b738d18c6df713f63654ab31a5、arm64 md5=e74d62b9fdf59272471a58c3a54cf7a0；构建脚本 /tmp/opencode/build_v1261.sh（由 build_v1260.sh sed 生成）
+  - 断线重连关键：onDisconnected 用 connectionTerminated/reconnecting 两个标志区分「彻底失败」与「临时断开」——临时断开只停循环+提示「连接中断，正在重连…」保留画面；onConnectionFailed（WebRTCPeer restartConnection 5 次超限后调）置 connectionTerminated=true 才退出；onConnected 里 reconnecting 恢复时提示「连接已恢复」；新建 peer 两处入口（startSessionCore 2012 / handleViewerJoined 的 isNewPeer 2424）必须重置这两个标志
+  - 加入免审批纯服务器改动（commit 3417923）：RoomManager.requestJoin 直接进 viewers（保留 pending 容器与 accept/reject 兼容旧客户端）；join 分支直接回 joined+通知 host viewer-joined；验证脚本 /tmp/opencode/verify-join.cjs（注意 create 必须带 4 位 code，服务器不自动生成；脚本需存整条消息而非只存 type 才能取 code）
+  - version.json 由 download-server 动态计算（读 build.gradle.kts versionCode + APK md5），改完 release-config.json 的 changelog 必须重启 8090 才生效
+
+[v1.262 互动三连]
+- Date: 2026-09-16
+- Context: 情侣共享场景补齐轻互动与隐私保护
+- Category: Build Methods
+- Instructions:
+  - v1.262(265) 已构建签名提交（commit 911a369）：allarch md5=2830e66d6148520aa822e347e2bdcd27、arm64 md5=1a21434d7316b6cde39384453e0b6813；脚本 /tmp/opencode/build_v1262.sh
+  - 互动指令复用 control DataChannel：poke/mark 在 MainActivity 控制消息处理器的 when 里加分支（与 video-call-off 同级），只有 touch/key/text 才走 RemoteControlService.handle；poke/mark 不需要无障碍权限
+  - 标注坐标复用 CoordinateMapper.normalizeTouch（fit 模式自动排除黑边区），move 节流 100ms；host 端标记加到 flHeartBurst 容器（全屏 FrameLayout），nx*容器宽 直接映射
+  - 标注与控制互斥：onCtrlMarkClicked 开标注时关 isControlMode；两处 renderer.setOnTouchListener（2942 主渲染器 + 3438 全屏渲染器）都要加 isMarkMode 分支
+  - 免打扰：NotificationManager.setInterruptionFilter(PRIORITY) 需 ACCESS_NOTIFICATION_POLICY 权限（manifest 普通权限，但用户须在系统「通知访问」授权）；无权限只 Toast 提示一次（audioPrefs dnd_prompted）；恢复点四处处兜底：onDisconnected 终止分支/leaveMeeting/handleMeetingFailure/onDestroy
+  - 编译报 Unresolved reference: NotificationManager 是缺 import android.app.NotificationManager（Kotlin 不会自动补 android.app.*）
+
+[相册 App v1.203/v1.204]
+- Date: 2026-09-16
+- Context: 相册 APP 视频播放与全屏看图体验优化
+- Category: Build Methods
+- Instructions:
+  - 版本 1.204(26) 已构建签名提交（commit 139daab），md5=85621c82ba0db3bf5f61751147fab6f4，产物 /workspace/AlbumViewer-signed.apk；构建脚本 /tmp/opencode/build_album_v1204.sh（由 build_album_v1202.sh 系列迭代生成，sed 换版本号时下划线边界导致 align_album_XX.apk 文件名不替换，需 sed -i 单独修）
+  - 相册 App 与主 App 独立版本：albumviewer-version.json 端点动态读 AlbumViewer-signed.apk 的 md5 + albumviewer/build.gradle.kts 版本号；改完同样要重启 8090
+  - VideoView 不公开 setOnBufferingUpdateListener（编译期就报 Unresolved reference），无法做 SeekBar secondaryProgress 缓冲区间；缓冲反馈只能用 setOnInfoListener 的 MEDIA_INFO_BUFFERING_START/END 转圈。要精确缓冲进度须换 MediaPlayer + TextureView 自管播放
+  - ZoomableImageView 手势分发：onSingleTapUp 会与 fling 冲突，单击关闭必须用 onSingleTapConfirmed；onFling 里 currentScale() <= baseScale*1.05f 才允许切图
+  - 全屏切图防串图：异步原图返回后用 position != pos 校验再 setImageBitmap
+
+[相册 App v1.205]
+- Date: 2026-09-16
+- Context: 相册三项体验优化收尾
+- Category: Build Methods
+- Instructions:
+  - v1.205(27) 已构建签名提交（commit 831c64e）：md5=5dd996b86d50705158cc9f0841f4d461；构建脚本 /tmp/opencode/build_album_v1205.sh
+  - Kotlin 局部函数不能前向引用：showFullScreen 内部 loadPhoto 调用 pollOriginal，定义必须在调用之前（报 Unresolved reference）；与 api.pollOriginal 同名不冲突（带前缀调用）
+  - 协程取消下载的模式：downloadToFile 循环内检查 isActive，UI 层 job.cancel() 让出；onProgress 在 IO 线程回调，更新 UI 必须 runOnUiThread
+  - 低内存环境（available < 200MB）偶发「Could not connect to Kotlin compile daemon」，重跑构建即可，非代码问题
+
+[v1.263-266 交互质感 + 安全加固]
+- Date: 2026-09-17
+- Context: 共享页视觉质感升级（按压回弹、状态胶囊过渡、深色玻璃浮层），security-review 发现并修复代码审查问题
+- Category: Build Methods
+- Instructions:
+  - v1.266(270) 已构建签名：allarch md5=e738e5e5c231401e42b6f94b603f8ccd、arm64 md5=6ea1a269f8e3f2cc86bcc734ef500f00；构建脚本 /tmp/opencode/build_v1266.sh（由 build_v1265b.sh 派生）
+  - 历史版本：v1.263(266) 9d0b606、v1.264(267) 5c9defe、v1.265(268) c31ca27、v1.265(269) caca670
+  - 安全审查修复（album-server）：loadSession 入口统一校验 token 为 32 位 hex（一处覆盖所有 API 路由，治路径穿越）；日志 token 统一 tokShort() 脱敏前 8 位（16 处）；web.js 模板变量必须走 jsString() 转义，聚合页输入再过白名单 replace(/[^0-9a-f]/g,"")
+  - 房间口令 M2：token 随分享链接全自动传递（buildShareText 带 &token=、/j 落地页透传到 intent:// 与 screenshare:// 链接），App 端 meeting_resume prefs 存 token 供断线/自动重连复用；服务器 REQUIRE_TOKEN 环境变量开关保持默认关闭，待双端更新后启用；手动输会议号场景不带 token（引导用分享链接）
+  - 按压回弹用 onTouchListener 返回 true 接管事件序列、ACTION_UP 手动 performClick，否则点击事件不触发
+  - View 无公开 getBackgroundResource：换肤识别用 background.constantState 判断当前资源
+  - 改服务器代码或 release-config.json 后必须重启对应端口（8090 download-server / 8096 album-server / 8095 信令），由 /tmp/opencode/supervise-server.sh 守护（kill 后 15s 自动拉起，album /health 预期返回 401 = fail-closed 存活）

@@ -290,7 +290,7 @@ wss.on("connection", (ws, request) => {
         AuthManager.releaseTokens(code);
         const token = AuthManager.issueToken(code);
         send(ws, { type: "created", code, token });
-        console.log(`[room ${code}] created by host${REQUIRE_TOKEN ? ` (token=${token})` : ""}`);
+        console.log(`[room ${code}] created by host${REQUIRE_TOKEN ? ` (token=${token.slice(0, 8)}…)` : ""}`);
         break;
       }
 

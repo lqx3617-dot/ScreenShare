@@ -34,7 +34,7 @@ let currentTask = null;
 const taskHistory = new Map();
 
 /** 分享链接兜底页 HTML：会议号 + 打开 App + 下载 App */
-function renderSharePage(code) {
+function renderSharePage(code, token) {
   if (!code) {
     return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ScreenShare 分享链接</title><style>
 body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
@@ -51,8 +51,8 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 .btn.ghost{background:#fff;color:#4f46e5;border:1px solid #e5e7eb}
 .hint{color:#9ca3af;font-size:12px;line-height:1.6;margin-top:16px}
 </style></head><body><div class="card"><div class="logo">🖥</div><div class="title">ScreenShare 屏幕共享</div><div class="sub">对方邀请你观看屏幕</div><div class="code">${code}</div>
-<a class="btn" href="intent://join?code=${code}#Intent;scheme=screenshare;package=com.screenshare;end">打开 App 加入</a>
-<a class="btn ghost" href="screenshare://join?code=${code}">备用：直接用链接唤起</a>
+<a class="btn" href="intent://join?code=${code}${token ? "&token=" + token : ""}#Intent;scheme=screenshare;package=com.screenshare;end">打开 App 加入</a>
+<a class="btn ghost" href="screenshare://join?code=${code}${token ? "&token=" + token : ""}">备用：直接用链接唤起</a>
 <a class="btn ghost" href="./ScreenShare-allarch-signed.apk">下载 ScreenShare App</a>
 <div class="hint">建议使用系统浏览器（Chrome）打开本页，点击「打开 App 加入」自动唤起<br>若未唤起：请确认已安装最新版 App；也可以记住上方会议号，在 App 内手动输入加入</div></div></body></html>`;
 }
@@ -322,10 +322,14 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   }
   // 分享链接兜底页：/j?code=XXXX 展示会议号 + 打开 App + 下载 App
   if (urlPath === "/j") {
-    const code = String(req.url.split("?")[1] ? new URLSearchParams(req.url.split("?")[1]).get("code") || "" : "");
+    const qs = req.url.split("?")[1] ? new URLSearchParams(req.url.split("?")[1]) : null;
+    const code = String(qs ? qs.get("code") || "" : "");
+    // 房间口令（服务器 REQUIRE_TOKEN=1 时必需）：随链接透传给 App，观看方无需手动输入
+    const tokenRaw = String(qs ? qs.get("token") || "" : "");
+    const token = /^[A-Za-z0-9]{4,16}$/.test(tokenRaw) ? tokenRaw : "";
     const valid = /^[0-9]{4}$/.test(code);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(renderSharePage(valid ? code : null));
+    res.end(renderSharePage(valid ? code : null, token));
     done(200);
     return;
   }

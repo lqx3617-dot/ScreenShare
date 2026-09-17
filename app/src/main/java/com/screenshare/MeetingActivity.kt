@@ -39,6 +39,7 @@ class MeetingActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_MEETING_ACTION = "extra_meeting_action"
         const val EXTRA_MEETING_CODE = "extra_meeting_code"
+        const val EXTRA_MEETING_TOKEN = "extra_meeting_token"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
 
@@ -573,8 +574,11 @@ class MeetingActivity : AppCompatActivity() {
     private fun handleShareLink(intent: Intent?) {
         val uri = intent?.data ?: return
         val code = uri.getQueryParameter("code")?.trim()
+        // 房间口令（服务器 REQUIRE_TOKEN=1 时必需）：分享链接自动携带，兼容 intent:// 解析合并 query 的情况
+        val token = uri.getQueryParameter("token")?.trim()
+            ?: Regex("token=([A-Za-z0-9]{4,16})").find(uri.toString())?.groupValues?.get(1) ?: ""
         if (!code.isNullOrEmpty() && Regex("^[0-9]{4}$").matches(code)) {
-            enterMeeting(ACTION_JOIN, code)
+            enterMeeting(ACTION_JOIN, code, token)
         }
     }
 
@@ -597,10 +601,11 @@ class MeetingActivity : AppCompatActivity() {
     }
 
     /** 跳转会议室并退出连接页 */
-    private fun enterMeeting(action: String, code: String) {
+    private fun enterMeeting(action: String, code: String, token: String = "") {
         val intent = Intent(this, MainActivity::class.java)
             .putExtra(EXTRA_MEETING_ACTION, action)
             .putExtra(EXTRA_MEETING_CODE, code)
+            .putExtra(EXTRA_MEETING_TOKEN, token)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         startActivity(intent)
         finish()

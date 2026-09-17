@@ -132,6 +132,7 @@ const pending = new Map(); // token -> Set<index>
 function sessionDir(token) {
   return path.join(ALBUM_ROOT, token);
 }
+function tokShort(t) { return String(t || "").slice(0, 8); }
 function pad(i) {
   return String(i).padStart(4, "0");
 }
@@ -145,6 +146,9 @@ function fileExists(p) {
 
 /** 读会话：DB 优先，兼容旧版 meta.json 会话自动迁移入库 */
 function loadSession(token) {
+  // 防御路径穿越（CWE-22）：token 必须是 32 位十六进制，与静态路由白名单一致。
+  // 否则 path.join(ALBUM_ROOT, token) 会被 ../ 逃逸出相册根目录，可读写任意文件。
+  if (!/^[0-9a-f]{32}$/.test(String(token))) return null;
   let s = db.loadSession(token);
   if (s) return s;
   const metaPath = path.join(sessionDir(token), "meta.json");
@@ -200,14 +204,14 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
       await fsp.mkdir(sessionDir(token), { recursive: true });
     } catch (e) {}
     pending.set(token, new Set());
-    console.log(`[album] ${new Date().toISOString()} create ${token} device=${device || "-"}`);
+    console.log(`[album] ${new Date().toISOString()} create ${tokShort(token)} device=${device || "-"}`);
     return json(res, 200, { token });
   }
 
   const token = String(body.token || "");
   const session = loadSession(token);
   if (!session) {
-    console.log(`[album] ${new Date().toISOString()} session-not-found action=${action} token=${token}`);
+    console.log(`[album] ${new Date().toISOString()} session-not-found action=${action} token=${tokShort(token)}`);
     return json(res, 404, { error: "session not found" });
   }
 
@@ -219,17 +223,17 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     try {
       const buf = Buffer.from(data, "base64");
       if (!isJpeg(buf)) {
-        console.log(`[album] ${new Date().toISOString()} upload-reject ${token} idx=${index}: 非 JPEG 数据`);
+        console.log(`[album] ${new Date().toISOString()} upload-reject ${tokShort(token)} idx=${index}: 非 JPEG 数据`);
         return json(res, 400, { error: "invalid image data" });
       }
       await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
       session.received.add(index);
       session.total = Math.max(session.total, index);
       db.saveSession(session);
-      console.log(`[album] ${new Date().toISOString()} upload ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
+      console.log(`[album] ${new Date().toISOString()} upload ${tokShort(token)} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true, received: session.received.size, total: session.total });
     } catch (e) {
-      console.log(`[album] ${new Date().toISOString()} upload-write-fail ${token} idx=${index}: ${e.message}`);
+      console.log(`[album] ${new Date().toISOString()} upload-write-fail ${tokShort(token)} idx=${index}: ${e.message}`);
       return json(res, 500, { error: "write failed" });
     }
   }
@@ -243,14 +247,14 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     try {
       const buf = Buffer.from(data, "base64");
       if (!isJpeg(buf)) {
-        console.log(`[album] ${new Date().toISOString()} video-thumb-reject ${token} idx=${index}: 非 JPEG 数据`);
+        console.log(`[album] ${new Date().toISOString()} video-thumb-reject ${tokShort(token)} idx=${index}: 非 JPEG 数据`);
         return json(res, 400, { error: "invalid image data" });
       }
       await fsp.writeFile(path.join(sessionDir(token), `${pad(index)}.jpg`), buf);
-      console.log(`[album] ${new Date().toISOString()} video-thumb ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
+      console.log(`[album] ${new Date().toISOString()} video-thumb ${tokShort(token)} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true });
     } catch (e) {
-      console.log(`[album] ${new Date().toISOString()} video-thumb-write-fail ${token} idx=${index}: ${e.message}`);
+      console.log(`[album] ${new Date().toISOString()} video-thumb-write-fail ${tokShort(token)} idx=${index}: ${e.message}`);
       return json(res, 500, { error: "write failed" });
     }
   }
@@ -263,7 +267,7 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     session.videos.add(index);
     session.total = Math.max(session.total, index);
     db.saveSession(session);
-    console.log(`[album] ${new Date().toISOString()} video-finish ${token} idx=${index}`);
+    console.log(`[album] ${new Date().toISOString()} video-finish ${tokShort(token)} idx=${index}`);
     return json(res, 200, { ok: true, received: session.received.size, total: session.total });
   }
 
@@ -275,7 +279,7 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
     try {
       const buf = Buffer.from(data, "base64");
       if (!isJpeg(buf)) {
-        console.log(`[album] ${new Date().toISOString()} original-reject ${token} idx=${index}: 非 JPEG 数据`);
+        console.log(`[album] ${new Date().toISOString()} original-reject ${tokShort(token)} idx=${index}: 非 JPEG 数据`);
         return json(res, 400, { error: "invalid image data" });
       }
       const dir = path.join(sessionDir(token), "original");
@@ -284,10 +288,10 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
       pending.get(token)?.delete(index);
       session.originals.add(index);
       db.saveSession(session);
-      console.log(`[album] ${new Date().toISOString()} original ${token} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
+      console.log(`[album] ${new Date().toISOString()} original ${tokShort(token)} idx=${index} b64=${data.length}B -> jpg=${buf.length}B`);
       return json(res, 200, { ok: true });
     } catch (e) {
-      console.log(`[album] ${new Date().toISOString()} original-write-fail ${token} idx=${index}: ${e.message}`);
+      console.log(`[album] ${new Date().toISOString()} original-write-fail ${tokShort(token)} idx=${index}: ${e.message}`);
       return json(res, 500, { error: "write failed" });
     }
   }
@@ -295,7 +299,7 @@ app.post("/api/upload", uploadActionLimiter, async (req, res) => {
   if (action === "finish") {
     session.done = true;
     db.saveSession(session);
-    console.log(`[album] ${new Date().toISOString()} finish ${token}`);
+    console.log(`[album] ${new Date().toISOString()} finish ${tokShort(token)}`);
     return json(res, 200, { ok: true, url: `https://${req.get("host")}/${token}/` });
   }
 
@@ -342,10 +346,10 @@ app.post("/api/video/upload", writeLimiter, async (req, res) => {
       return json(res, 409, { error: "offset mismatch", expected: cur, got: offset });
     }
     await fsp.appendFile(file, buf);
-    console.log(`[album] ${new Date().toISOString()} video-chunk ${token} idx=${index} offset=${offset}+${buf.length}`);
+    console.log(`[album] ${new Date().toISOString()} video-chunk ${tokShort(token)} idx=${index} offset=${offset}+${buf.length}`);
     return json(res, 200, { ok: true, offset: cur + buf.length });
   } catch (e) {
-    console.log(`[album] ${new Date().toISOString()} video-chunk-fail ${token} idx=${index}: ${e.message}`);
+    console.log(`[album] ${new Date().toISOString()} video-chunk-fail ${tokShort(token)} idx=${index}: ${e.message}`);
     return json(res, 500, { error: "write failed" });
   }
 });
@@ -532,7 +536,7 @@ app.post("/api/photo/delete", writeLimiter, async (req, res) => {
   session.originals.delete(index);
   session.videos.delete(index);
   db.saveSession(session);
-  console.log(`[album] ${new Date().toISOString()} photo-delete ${token} idx=${index} (剩 ${session.received.size})`);
+  console.log(`[album] ${new Date().toISOString()} photo-delete ${tokShort(token)} idx=${index} (剩 ${session.received.size})`);
   return json(res, 200, { ok: true, received: session.received.size });
 });
 

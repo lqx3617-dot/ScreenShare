@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         const val EXTRA_MEETING_ACTION = "extra_meeting_action"
         const val EXTRA_MEETING_CODE = "extra_meeting_code"
+        const val EXTRA_MEETING_TOKEN = "extra_meeting_token"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
 
@@ -130,6 +131,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 对端尚未加入时缓存的 ICE 候选（加入后连同 offer 一起补发，避免服务器"对端尚未加入"拒发丢失）
     private var signalPendingCandidates = mutableListOf<IceCandidate>()
     private var signalCode: String? = null
+    // 房间口令：host 侧为服务器本次签发的 token（分享给观看方）；viewer 侧为待发送的加入口令
+    private var signalRoomToken = ""
+    private var pendingJoinToken = ""
     // 本次会话是否已发起屏幕授权请求（避免重复弹授权框）
     private var authorizationRequested = false
     // Trickle ICE：SDP 是否已通过信令发出，之后的候选才单独增量发送
@@ -593,7 +597,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 cleanupPeer()
                 resetUI()
             }
-            joinMeetingWithCode(code)
+            // 房间口令优先取 Intent（分享链接/输入），兜底取上次会话记录（自动重连场景）
+            val joinToken = intent?.getStringExtra(EXTRA_MEETING_TOKEN)?.takeIf { it.isNotEmpty() }
+                ?: getSharedPreferences("meeting_resume", MODE_PRIVATE).getString("token", "").orEmpty()
+            joinMeetingWithCode(code, joinToken)
             return
         }
         // 分享链接冷启动：复用现有解析
@@ -646,6 +653,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 因此先从 query 取，取不到再从完整字符串兜底提取
         val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
             ?: Regex("code=([0-9]{4})").find(uri.toString())?.groupValues?.get(1) ?: ""
+        // 房间口令：分享链接自动携带（服务器 REQUIRE_TOKEN=1 时必需）
+        val token = uri.getQueryParameter("token")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: Regex("token=([A-Za-z0-9]{4,16})").find(uri.toString())?.groupValues?.get(1) ?: ""
         if (!Regex("^[0-9]{4}$").matches(code)) {
             Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
             return
@@ -655,7 +665,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "当前会话进行中，无法加入", Toast.LENGTH_SHORT).show()
             return
         }
-        joinMeetingWithCode(code)
+        joinMeetingWithCode(code, token)
     }
 
     /** 崩溃日志采集：Java 层崩溃写入外部存储，便于下次启动查看/上报定位闪退 */
@@ -2260,7 +2270,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             .trimEnd('/')
             .substringBeforeLast("/", BuildConfig.UPDATE_URL)
             .trimEnd('/')
-        return "【共享屏界】\n点击链接加入观看我的屏幕：\n$base/j?code=$code\n会议号：$code（也可在 App 内手动输入）"
+        // 房间口令随链接下发：观看方点开即带口令加入（服务器 REQUIRE_TOKEN=1 时无需手动输入）
+        val tk = if (signalRoomToken.isNotEmpty()) "&token=$signalRoomToken" else ""
+        return "【共享屏界】\n点击链接加入观看我的屏幕：\n$base/j?code=$code$tk\n会议号：$code（也可在 App 内手动输入）"
     }
 
     /** 调起系统分享面板发送会议链接 */
@@ -2285,9 +2297,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         meetingCodeDialog = null
     }
 
-    /** 携带会议号执行加入会议流程（Host 视角为 false） */
-    private fun joinMeetingWithCode(code: String) {
-        saveMeetingResume(ACTION_JOIN, code)
+    /** 携带会议号执行加入会议流程（Host 视角为 false）；token 为房间口令（可空） */
+    private fun joinMeetingWithCode(code: String, token: String = "") {
+        pendingJoinToken = token
+        saveMeetingResume(ACTION_JOIN, code, token)
         signalCode = code
         signalMode = true
         isHost = false
@@ -2301,7 +2314,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         binding.llStatus.visibility = View.VISIBLE
         updateUI("正在加入会议（$code）...")
-        connectSignal(code, asHost = false)
+        connectSignal(code, asHost = false, joinToken = token)
     }
 
     /** 生成 4 位数字会议号（不重复，忽略极小概率碰撞） */
@@ -2320,7 +2333,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         return true
     }
 
-    private fun connectSignal(code: String, asHost: Boolean) {
+    private fun connectSignal(code: String, asHost: Boolean, joinToken: String = "") {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
             leavingMeeting = true
@@ -2333,11 +2346,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         val client = SignalClient(BuildConfig.SIGNAL_URL, object : SignalClient.Listener {
-            override fun onRoomReady(role: String, viewerId: Int) {
+            override fun onRoomReady(role: String, viewerId: Int, token: String) {
                 runOnUiThread {
                     if (role == "created") {
+                        // 服务器签发的房间口令：分享给观看方（分享链接自动携带），断线重连复用
+                        signalRoomToken = token
+                        if (token.isNotEmpty()) saveMeetingResumeToken(token)
                         updateUI("✅ 会议已创建，等待对方加入...")
-                        binding.tvScanResult.text = "会议号: $signalCode\n让对方输入会议号即可观看"
+                        val tokenHint =
+                            if (token.isNotEmpty()) "\n房间口令: $token（分享链接已自带，无需手动告知）" else ""
+                        binding.tvScanResult.text = "会议号: $signalCode$tokenHint\n让对方输入会议号即可观看"
                         binding.tvScanResult.visibility = View.VISIBLE
                         // 立即申请屏幕采集权限（不必等对方加入），授权后共享随时就绪，
                         // 对方加入时立即交换 SDP，避免"对方已加入但还没授权"的等待
@@ -2345,6 +2363,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         authorizationRequested = true
                         ScreenCapturerFactory.requestPermission(this@MainActivity)
                     } else {
+                        // viewer：记住本次口令，断线/自动重连复用（服务器 REQUIRE_TOKEN=1 时必需）
+                        if (pendingJoinToken.isNotEmpty()) saveMeetingResumeToken(pendingJoinToken)
                         updateUI("✅ 已加入会议，等待共享方就绪...")
                     }
                 }
@@ -2481,7 +2501,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
         })
         signalClient = client
-        client.connect(code, asHost)
+        client.connect(code, asHost, if (asHost) "" else joinToken)
     }
 
     /**
@@ -4109,15 +4129,23 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 结束会议：清理会话并返回会议连接页 */
     /** 持久化最近一次未结束的会议（action+code），用于冷启动自动重连 */
-    private fun saveMeetingResume(action: String, code: String) {
+    private fun saveMeetingResume(action: String, code: String, token: String = "") {
         getSharedPreferences("meeting_resume", MODE_PRIVATE)
             .edit()
             .putString("action", action)
             .putString("code", code)
+            // 每次显式写入：create 时为空（签发后用 saveMeetingResumeToken 补），避免残留上次口令
+            .putString("token", token)
             .putLong("ts", System.currentTimeMillis())
             .apply()
         // 同步记入最近会议历史（连接页展示，点击快速复用）
         MeetingActivity.recordMeetingHistory(this, action, code)
+    }
+
+    /** 服务器签发/确认房间口令后补写恢复记录，断线重连与自动重连复用 */
+    private fun saveMeetingResumeToken(token: String) {
+        getSharedPreferences("meeting_resume", MODE_PRIVATE).edit()
+            .putString("token", token).apply()
     }
 
     /** 会议已结束/失败：清除自动重连记录 */

@@ -22,8 +22,9 @@ class SignalClient(
     private val listener: Listener
 ) {
     interface Listener {
-        /** 服务器创建/加入房间成功，可以开始屏幕采集与 SDP 交换 */
-        fun onRoomReady(role: String, viewerId: Int)
+        /** 服务器创建/加入房间成功，可以开始屏幕采集与 SDP 交换。
+         *  token 仅 host（role=created）时有值：线下告知观看方，配合服务器 REQUIRE_TOKEN 认证 */
+        fun onRoomReady(role: String, viewerId: Int, token: String)
         /** 对端已加入房间，等待/开始交换信令 */
         fun onPeerReady()
         /** 收到对端转发的信令数据（SDP/ICE 编码串）；viewerId 标识来源/目标 viewer（host 多路用） */
@@ -74,6 +75,8 @@ class SignalClient(
     private var attempt = 0
     /** V4: 本端在房间中的 viewerId（host 恒为 0；viewer 为服务器分配） */
     private var myViewerId = 0
+    /** 加入房间口令（服务器 REQUIRE_TOKEN=1 时必需；来自分享链接或上次记忆） */
+    private var joinToken = ""
     // 信令待发队列：WS 未就绪（断开/重连中）时缓存 relay 消息，连接恢复后统一补发，
     // 避免网络波动瞬间 SDP/ICE 发送静默丢失导致连接卡死
     private val pendingRelays = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -100,11 +103,12 @@ class SignalClient(
         }
     }
 
-    /** 创建房间（共享方）或加入房间（观看方）。code 为 4 位口令。 */
-    fun connect(code: String, asHost: Boolean) {
+    /** 创建房间（共享方）或加入房间（观看方）。code 为 4 位口令，joinToken 为房间口令（可空）。 */
+    fun connect(code: String, asHost: Boolean, joinToken: String = "") {
         closedByUs = false
         this.code = code
         this.asHost = asHost
+        this.joinToken = joinToken
         attempt = 0
         myViewerId = 0
         pendingRelays.clear()
@@ -122,6 +126,8 @@ class SignalClient(
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")
                     put("code", code)
+                    // 加入房间口令：服务器 REQUIRE_TOKEN=1 时校验，缺失/错误会被拒绝
+                    if (!asHost && joinToken.isNotEmpty()) put("token", joinToken)
                 }
                 webSocket.send(msg.toString())
                 // V3.1: 连接成功后启动应用层心跳
@@ -167,13 +173,13 @@ class SignalClient(
         val vid = json.optInt("viewerId", myViewerId)
         when (json.optString("type")) {
             "created" -> {
-                // host：房间创建成功，等待 viewer 加入
-                listener.onRoomReady("created", 0)
+                // host：房间创建成功，等待 viewer 加入；token 供分享给观看方
+                listener.onRoomReady("created", 0, json.optString("token", ""))
                 flushPending()
             }
             "joined" -> {
                 myViewerId = json.optInt("viewerId", 0)
-                listener.onRoomReady("joined", myViewerId)
+                listener.onRoomReady("joined", myViewerId, "")
                 flushPending()
             }
             "join-pending" -> listener.onJoinPending()

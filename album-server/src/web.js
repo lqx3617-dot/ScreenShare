@@ -48,7 +48,7 @@ body{margin:0;background:#111;font-family:-apple-system,sans-serif}
 ${idx ? `<div class="grid">${idx}</div>` : `<div class="none">${done ? "相册是空的" : "照片正在上传，请稍后刷新"}</div>`}
 <div id="ov" onclick="closeView()"><div id="ovtip">加载高清大图中…</div><img id="ovimg" alt=""><video id="ovvideo" controls style="display:none" onclick="event.stopPropagation()"></video></div>
 <script>
-var TOKEN="${session.token}", DONE=${done}, RECEIVED=${session.received.size}, ALBUM_KEY="${key ? jsString(key) : ""}";
+var TOKEN="${jsString(session.token)}", DONE=${done}, RECEIVED=${session.received.size}, ALBUM_KEY="${key ? jsString(key) : ""}";
 function K(){return ALBUM_KEY?"?key="+encodeURIComponent(ALBUM_KEY):"";}
 function KQ(){return ALBUM_KEY?"&key="+encodeURIComponent(ALBUM_KEY):"";}
 function openView(i,isV){
@@ -131,10 +131,12 @@ function render() {
   var html = "";
   TOKEN_ARR.forEach(function (a) {
     var videos = (a.videos || []);
+    // 纵深防御：token 仅允许十六进制字符，防拼接进 onclick 属性时逃逸
+    var tok = String(a.token || "").replace(/[^0-9a-f]/g, "");
     a.received.forEach(function (i) {
       var isV = videos.indexOf(i) >= 0;
       html +=
-        '<a class="p' + (isV ? " v" : "") + '" href="javascript:void(0)" onclick="openView(\'' + a.token + '\',' + i + ',' + isV + ')"><img loading="lazy" src="/' + a.token + "/" + pad(i) + '.jpg' + K() + '" alt=""><span class="vb">▶</span></a>';
+        '<a class="p' + (isV ? " v" : "") + '" href="javascript:void(0)" onclick="openView(\'' + tok + '\',' + i + ',' + isV + ')"><img loading="lazy" src="/' + tok + "/" + pad(i) + '.jpg' + K() + '" alt=""><span class="vb">▶</span></a>';
     });
   });
   grid.innerHTML = html;
