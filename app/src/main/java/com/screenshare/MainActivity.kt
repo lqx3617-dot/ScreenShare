@@ -3174,6 +3174,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     private fun setupCameraPip(track: VideoTrack) {
         try {
+            // onAddTrack 与 onTrack 会对同一轨各回调一次（旧/新 API 双投递），
+            // renderer 已建成且 track 未变时跳过，避免重复重建 renderer 闪烁
+            if (cameraPipTrack === track && cameraPipRenderer != null) return
             val eglCtx = eglBaseContext
             if (eglCtx == null) {
                 Log.e(TAG, "setupCameraPip: eglBaseContext 未就绪，跳过摄像头 PIP 渲染")

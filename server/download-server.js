@@ -41,6 +41,29 @@ function publishAuthorized(req) {
 let currentTask = null;
 const taskHistory = new Map();
 
+// 发布历史落盘：进程重启后 /api/publish/status 仍可查询历史任务
+// （进行中的任务随进程退出丢失，构建子进程无法恢复，只能事后查记录）
+const HISTORY_FILE = path.join(__dirname, "data", "publish-history.json");
+function persistHistory() {
+  try {
+    const arr = Array.from(taskHistory.values()).map((t) => ({
+      id: t.id, state: t.state, phase: t.phase, versionName: t.versionName,
+      changelog: t.changelog, app: t.app, error: t.error, createdAt: t.createdAt,
+    }));
+    fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(arr));
+  } catch (e) {
+    console.error("persist publish history failed:", e.message);
+  }
+}
+try {
+  const raw = fs.readFileSync(HISTORY_FILE, "utf8");
+  const arr = JSON.parse(raw);
+  if (Array.isArray(arr)) arr.forEach((t) => { if (t && t.id) taskHistory.set(t.id, t); });
+} catch (e) {
+  // 首次启动或历史文件损坏：忽略，空历史启动
+}
+
 /** 分享链接兜底页 HTML：会议号 + 打开 App + 下载 App */
 function renderSharePage(code, token) {
   if (!code) {
@@ -208,8 +231,24 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       return;
     }
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 1024 * 64) req.destroy(); });
+    let tooLarge = false;
+    // 超大请求体：优雅返回 413 并断开，而非直接 destroy（客户端收到 ECONNRESET 无法区分网络故障）
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 1024 * 64) {
+        if (!tooLarge) {
+          tooLarge = true;
+          try {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "请求体过大" }));
+            done(413);
+          } catch (e) {}
+        }
+        req.destroy();
+      }
+    });
     req.on("end", () => {
+      if (tooLarge) return;
       let payload;
       try { payload = JSON.parse(body || "{}"); } catch (e) { payload = {}; }
       const versionName = String(payload.versionName || "").trim();
@@ -266,6 +305,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
           const oldest = taskHistory.keys().next().value;
           if (oldest) taskHistory.delete(oldest);
         }
+        persistHistory();
       }).catch((e) => {
         console.error("publish task error", e);
         currentTask = null;
@@ -274,6 +314,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
           const oldest = taskHistory.keys().next().value;
           if (oldest) taskHistory.delete(oldest);
         }
+        persistHistory();
       });
     });
     return;

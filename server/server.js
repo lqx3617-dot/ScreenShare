@@ -54,6 +54,10 @@ const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
 const HEARTBEAT_TIMEOUT = 45 * 1000;
 // 所有 ws 连接（用于心跳扫描）
 const allClients = new Set();
+// 并发连接上限：防单 IP 打开大量 ws 耗尽服务端 FD/内存（DoS 兜底）
+const MAX_TOTAL_CLIENTS = 200;
+const MAX_CLIENTS_PER_IP = 10;
+const ipClientCount = new Map();
 
   // 轻量限流：同一 IP 每分钟最多 create/join/room-status 20 次，防 4 位会议号枚举爆破。
   // 不引入额外口令，不改变客户端使用流程。
@@ -135,7 +139,9 @@ const server = http.createServer((req, res) => {
         const dir = path.join(__dirname, "crashes");
         fs.mkdirSync(dir, { recursive: true });
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        fs.writeFileSync(path.join(dir, `crash-${stamp}.log`), body);
+        // 同一毫秒多个崩溃上报会覆盖同名文件，加随机后缀保数据不丢
+        const crashFile = path.join(dir, `crash-${stamp}-${Math.random().toString(36).slice(2, 8)}.log`);
+        fs.writeFileSync(crashFile, body);
         console.log(`[crash] ${stamp} len=${body.length}`);
       } catch (e) {
         console.error("[crash] 写入失败:", e.message);
@@ -251,6 +257,15 @@ wss.on("connection", (ws, request) => {
   ws.lastSeen = Date.now();
   ws._socketId = ws._socket && ws._socket.remotePort;
   ws._headers = request && request.headers;
+  // 连接数兜底：全局 200 / 单 IP 10，超限直接拒接（1013 客户端会重试）
+  ws._ip = remoteIp({ _socket: request && request.socket, _headers: request && request.headers });
+  const perIp = (ipClientCount.get(ws._ip) || 0) + 1;
+  if (allClients.size >= MAX_TOTAL_CLIENTS || perIp > MAX_CLIENTS_PER_IP) {
+    console.log(`[ws] reject ${ws._ip} (total=${allClients.size}, perIp=${perIp})`);
+    try { ws.close(1013, "try again later"); } catch (e) {}
+    return;
+  }
+  ipClientCount.set(ws._ip, perIp);
   allClients.add(ws);
 
   ws.on("message", (raw) => {
@@ -441,6 +456,8 @@ wss.on("connection", (ws, request) => {
 
   ws.on("close", () => {
     allClients.delete(ws);
+    const n = (ipClientCount.get(ws._ip) || 1) - 1;
+    if (n <= 0) ipClientCount.delete(ws._ip); else ipClientCount.set(ws._ip, n);
     if (!roomCode) return;
     const r = rooms.onDisconnect(roomCode, role, viewerId);
     if (r.removedHost) {

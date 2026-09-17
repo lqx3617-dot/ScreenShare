@@ -59,9 +59,12 @@ class RoomManager {
       return { ok: false, error: "会议号不存在或会议已结束" };
     }
     if (room.viewers.size > 0) {
-      // 清理已断开但尚未走完 close 清理的僵尸 viewer，避免新 viewer 被死连接挡住
+      // 清理已断开但尚未走完 close 清理的僵尸 viewer，避免新 viewer 被死连接挡住。
+      // 除 readyState 外加 lastSeen 判据：客户端每 10s ping，15s 无消息即为半开死连接
+      // （TCP 半开时 readyState 仍为 OPEN，只有心跳能判定），缩短重连被拒的窗口期。
+      const now = Date.now();
       for (const [vid, vws] of room.viewers) {
-        if (vws.readyState !== 1) room.viewers.delete(vid);
+        if (vws.readyState !== 1 || now - (vws.lastSeen || 0) > 15 * 1000) room.viewers.delete(vid);
       }
       if (room.viewers.size > 0) {
         return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };

@@ -848,4 +848,9 @@ Entries discovered by the Agent during task execution should follow this format:
   - 第三轮 album-server 修复（2026-09）：视频分块 offset 竞态用文件级串行锁 serializeVideoWrite（Map<file,Promise> 链式排队 + finally 比较自身后删引用防泄漏）；legacy meta.json 迁移必须补全所有 Set 字段（缺 videos 时 session.videos.add 抛 TypeError）；列表型读接口（/api/status、/api/pending、/api/devices、/api/albums）挂 readLimiter，单文件流式接口（/api/video、/api/original）不挂防网页批量加载被限流
   - 测试封装陷阱：http.request 的 path 传 undefined 会默认打到 "/" 收到全局 404；post 封装函数必须给默认 path 且 JSON.parse 容错（先打印 raw 再解析，否则错误信息被 SyntaxError 吞掉）
   - spawn 的测试子进程 SIGTERM 后可能不立即退出占用端口，下次测试会连到旧实例产生困惑；测试启动前先 `ss -ltnp | grep 端口` 确认空闲，finally 里 kill 后多等几秒
+  - 第四轮修复（2026-09，v1.269/273）：信令服务加连接数上限（全局 MAX_TOTAL_CLIENTS=200 / 单 IP MAX_CLIENTS_PER_IP=10，超限 ws.close(1013)）；RoomManager 僵尸 viewer 清理加 lastSeen 判据（TCP 半开时 readyState 仍为 OPEN 查不出，客户端 10s ping → 15s 无消息即视为死连接，缩短重连被旧连接挡住的窗口）；crash 上报文件名加随机后缀防同毫秒覆盖；download-server 超大请求改回 413 + destroy（原直接 destroy 客户端只收到 ECONNRESET）；publish 任务历史落盘 server/data/publish-history.json（进程重启后仍可查询）
+  - Android WebRTC onAddTrack 与 onTrack 会对同一轨各回调一次（旧/新 API 双投递），消费侧必须用 track 引用相等做幂等（如 setupCameraPip：cameraPipTrack === track && renderer != null 时 return），否则重复重建 renderer 闪烁
+  - negotiating/compareAndSet 这类协商锁必须配超时兜底（mainHandler.postDelayed 15s 强制 CAS 释放）：WebRTC 回调可能既不调 onSuccess 也不调 onFailure，锁永久占用后该连接再也无法重新协商，画面卡死只能重建
+  - download-server 的 /version.json 实时读 build.gradle.kts 并算 APK md5（改版本号后立即生效）；网页的「MD5 校验」卡片读 MAIN_MD5/ALBUM_MD5 环境变量，配在 /tmp/opencode/supervise-server.sh 的 check 行里
+  - supervise-server.sh 的 check/restart 是 bash 函数，修改文件后必须 kill 守护进程（background_terminal_kill）再重新 background_terminal_create 拉起，运行中的 bash 不会重载函数定义；重启守护时需同步 kill 四个服务进程，否则新守护检测到端口仍 listening 不会用新 env 拉起
   - 审查用并行子 agent 分模块读完全文、每条带 file:line 与推理依据，再人工复核（读上下文确认是真 bug 还是误报），避免误改

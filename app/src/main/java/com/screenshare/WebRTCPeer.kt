@@ -662,6 +662,14 @@ class WebRTCPeer(
             Log.d(TAG, "viewer#$viewerId 正在协商中，跳过重复 createOffer")
             return
         }
+        // 超时兜底：WebRTC 内部竞态可能导致 createOffer/setLocalDescription 的回调
+        // 从不触发（既无 onSuccess 也无 onFailure），negotiating 永久为 true 后该
+        // viewer 再也无法重新协商（画面卡死只能重建连接）。15s 后强制释放锁。
+        mainHandler.postDelayed({
+            if (conn.negotiating.compareAndSet(true, false)) {
+                Log.w(TAG, "viewer#$viewerId 协商超时，强制释放 negotiating 锁")
+            }
+        }, 15000)
         val pc = conn.pc
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
