@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 珊瑚渐变次按钮：珊瑚渐变，按下提亮 -->
+<!-- 珊瑚渐变次按钮：珊瑚渐变，按下提亮，禁用降亮 45% -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <layer-list>
+            <item
+                android:drawable="@drawable/bg_btn_neon_violet_n"
+                android:alpha="0.45" />
+        </layer-list>
+    </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="20dp" />
@@ -10,13 +17,5 @@
                 android:endColor="#FFF97C6A" />
         </shape>
     </item>
-    <item>
-        <shape android:shape="rectangle">
-            <corners android:radius="20dp" />
-            <gradient
-                android:angle="0"
-                android:startColor="#FFFA8E75"
-                android:endColor="#FFF9705F" />
-        </shape>
-    </item>
+    <item android:drawable="@drawable/bg_btn_neon_violet_n" />
 </selector>

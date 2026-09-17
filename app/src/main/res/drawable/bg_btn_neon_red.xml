@@ -1,22 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 沉稳红渐变按钮（结束会议/危险操作）：红色渐变，按下提亮（去霓虹外发光） -->
+<!-- 沉稳红渐变按钮（结束会议/危险操作）：红色渐变，按下提亮，禁用降亮 45% -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <layer-list>
+            <item
+                android:drawable="@drawable/bg_btn_neon_red_n"
+                android:alpha="0.45" />
+        </layer-list>
+    </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="18dp" />
             <gradient
                 android:angle="0"
                 android:startColor="#FFFF8A8A"
-                android:endColor="#FFEF5252" />
+                android:endColor="@color/danger_bright" />
         </shape>
     </item>
-    <item>
-        <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
-            <gradient
-                android:angle="0"
-                android:startColor="#FFEF5252"
-                android:endColor="#FFD63B3B" />
-        </shape>
-    </item>
+    <item android:drawable="@drawable/bg_btn_neon_red_n" />
 </selector>

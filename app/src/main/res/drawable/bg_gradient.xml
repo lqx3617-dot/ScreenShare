@@ -23,8 +23,8 @@
             <gradient
                 android:type="radial"
                 android:gradientRadius="210dp"
-                android:startColor="#26E85D8D"
-                android:centerColor="#19E85D8D"
+                android:startColor="@color/glass_rose"
+                android:centerColor="@color/glass_rose_mid"
                 android:endColor="#00E85D8D" />
         </shape>
     </item>
@@ -40,8 +40,8 @@
             <gradient
                 android:type="radial"
                 android:gradientRadius="190dp"
-                android:startColor="#2AFAB49B"
-                android:centerColor="#19FAB49B"
+                android:startColor="@color/glass_peach"
+                android:centerColor="@color/glass_peach_mid"
                 android:endColor="#00FAB49B" />
         </shape>
     </item>

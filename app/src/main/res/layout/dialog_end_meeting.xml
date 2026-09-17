@@ -54,7 +54,7 @@
         android:background="@drawable/bg_btn_neon_red"
         android:text="结束会议"
         android:textAllCaps="false"
-        android:textColor="#FFFFFFFF"
+        android:textColor="@color/surface"
         android:textSize="16sp"
         android:textStyle="bold" />
 

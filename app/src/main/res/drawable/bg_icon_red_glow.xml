@@ -3,7 +3,7 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="oval">
-            <solid android:color="#FFE05566" />
+            <solid android:color="@color/danger" />
         </shape>
     </item>
     <item
@@ -24,7 +24,7 @@
             <gradient
                 android:angle="0"
                 android:startColor="#FFF0707C"
-                android:endColor="#FFE05566" />
+                android:endColor="@color/danger" />
         </shape>
     </item>
 </layer-list>

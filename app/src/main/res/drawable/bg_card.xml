@@ -8,7 +8,7 @@
         android:bottom="0dp">
         <shape android:shape="rectangle">
             <corners android:radius="22dp" />
-            <solid android:color="#1FDF9BB0" />
+            <solid android:color="@color/glass_shadow_card" />
         </shape>
     </item>
     <item>

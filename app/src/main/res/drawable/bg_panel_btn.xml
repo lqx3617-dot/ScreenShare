@@ -9,7 +9,7 @@
         android:bottom="0dp">
         <shape android:shape="rectangle">
             <corners android:radius="16dp" />
-            <solid android:color="#14DF9BB0" />
+            <solid android:color="@color/glass_shadow_sm" />
         </shape>
     </item>
     <!-- 顶部高光 -->
@@ -24,7 +24,7 @@
                 android:angle="270"
                 android:startColor="#2CFFFFFF"
                 android:centerColor="#0CFFFFFF"
-                android:endColor="#00FFFFFF" />
+                android:endColor="@color/glass_highlight_end" />
         </shape>
     </item>
     <!-- 玻璃主体 -->

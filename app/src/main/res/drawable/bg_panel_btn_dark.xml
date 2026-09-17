@@ -10,7 +10,7 @@
         android:bottom="0dp">
         <shape android:shape="rectangle">
             <corners android:radius="16dp" />
-            <solid android:color="#66000000" />
+            <solid android:color="@color/scrim" />
         </shape>
     </item>
     <!-- 顶部高光（玻璃质感） -->
@@ -23,8 +23,8 @@
             <gradient
                 android:angle="270"
                 android:startColor="#33FFFFFF"
-                android:centerColor="#10FFFFFF"
-                android:endColor="#00FFFFFF" />
+                android:centerColor="@color/glass_highlight_soft"
+                android:endColor="@color/glass_highlight_end" />
         </shape>
     </item>
     <!-- 深色玻璃主体 -->

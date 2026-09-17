@@ -80,7 +80,7 @@
         android:background="@drawable/bg_btn_neon_cyan"
         android:text="复制会议号"
         android:textAllCaps="false"
-        android:textColor="#FFFFFFFF"
+        android:textColor="@color/surface"
         android:textSize="16sp"
         android:textStyle="bold" />
 
@@ -92,7 +92,7 @@
         android:background="@drawable/bg_btn_neon_violet"
         android:text="分享链接"
         android:textAllCaps="false"
-        android:textColor="#FFFFFFFF"
+        android:textColor="@color/surface"
         android:textSize="16sp"
         android:textStyle="bold" />
 

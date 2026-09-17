@@ -10,7 +10,7 @@
                 android:bottom="0dp">
                 <shape android:shape="rectangle">
                     <corners android:radius="18dp" />
-                    <solid android:color="#14DF9BB0" />
+                    <solid android:color="@color/glass_shadow_sm" />
                 </shape>
             </item>
             <item>
@@ -19,7 +19,7 @@
                     <solid android:color="#FAFFFFFF" />
                     <stroke
                         android:width="1.5dp"
-                        android:color="#FFE85D8D" />
+                        android:color="@color/brand_rose" />
                 </shape>
             </item>
         </layer-list>

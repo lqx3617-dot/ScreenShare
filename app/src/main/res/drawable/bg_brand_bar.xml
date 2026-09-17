@@ -10,7 +10,7 @@
         android:gravity="bottom">
         <shape android:shape="rectangle">
             <size android:height="1dp" />
-            <solid android:color="#29D98AA6" />
+            <solid android:color="@color/glass_border" />
         </shape>
     </item>
 </layer-list>

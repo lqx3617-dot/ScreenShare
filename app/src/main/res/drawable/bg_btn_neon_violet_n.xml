@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 珊瑚渐变次按钮 · 常常态形状（供 selector 复用，含 disabled 降亮） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="20dp" />
+    <gradient
+        android:angle="0"
+        android:startColor="#FFFA8E75"
+        android:endColor="#FFF9705F" />
+</shape>

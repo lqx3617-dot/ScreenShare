@@ -1,22 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 玫瑰渐变主按钮：玫瑰渐变 + 柔和高光，按下提亮 -->
+<!-- 玫瑰渐变主按钮：玫瑰渐变 + 柔和高光，按下提亮，禁用降亮 45% -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <layer-list>
+            <item
+                android:drawable="@drawable/bg_btn_neon_cyan_n"
+                android:alpha="0.45" />
+        </layer-list>
+    </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <corners android:radius="20dp" />
             <gradient
                 android:angle="0"
-                android:startColor="#FFF794B4"
-                android:endColor="#FFEE7BA2" />
+                android:startColor="@color/brand_rose_light"
+                android:endColor="@color/brand_rose_start" />
         </shape>
     </item>
-    <item>
-        <shape android:shape="rectangle">
-            <corners android:radius="20dp" />
-            <gradient
-                android:angle="0"
-                android:startColor="#FFEE7BA2"
-                android:endColor="#FFE45C8C" />
-        </shape>
-    </item>
+    <item android:drawable="@drawable/bg_btn_neon_cyan_n" />
 </selector>
