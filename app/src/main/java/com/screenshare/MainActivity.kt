@@ -1166,14 +1166,31 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 同步视频通话按钮文案与颜色：开启=绿色，关闭=默认 */
     private fun updateVideoCallButton() {
+        // v1.265: 共享页深色玻璃上用亮色变体，避免状态色覆盖纯白后看不清
+        val p = peer
+        val dark = darkGlass
+        val on = p?.isMicOn() == true
         binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
         binding.btnCamera.setTextColor(
-            if (videoCallOn) Color.parseColor("#FF2F9E77") else Color.parseColor("#FF4A3B44")
+            if (videoCallOn) Color.parseColor("#FF3ECF9E")
+            else if (dark) Color.WHITE
+            else Color.parseColor("#FF4A3B44")
         )
         // 视频通话增强按钮随通话状态显示/隐藏；切换前后摄入口默认跟随父容器可见
         binding.btnFlipCamera.visibility = if (videoCallOn) View.VISIBLE else View.GONE
         // 视频通话增强控件仅通话中显示
-        binding.llCallExtras.visibility = if (videoCallOn) View.VISIBLE else View.GONE
+        binding.btnMic.text = when {
+            !on -> "麦克风"
+            micMuted -> "已静音"
+            else -> "对讲中"
+        }
+        binding.btnMic.setTextColor(
+            when {
+                !on -> if (dark) Color.WHITE else Color.parseColor("#FF4A3B44")
+                micMuted -> Color.parseColor("#FFFF7A8A")
+                else -> Color.parseColor("#FF3ECF9E")
+            }
+        )
     }
 
     // ======================== 视频通话增强功能 ========================
@@ -1861,6 +1878,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateMicButton() {
         val p = peer
         val on = p?.isMicOn() == true
+        val dark = darkGlass
         binding.btnMic.text = when {
             !on -> "麦克风"
             micMuted -> "已静音"
@@ -1868,9 +1886,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         binding.btnMic.setTextColor(
             when {
-                !on -> Color.parseColor("#FF4A3B44")
-                micMuted -> Color.parseColor("#FFE05566")
-                else -> Color.parseColor("#FF2F9E77")
+                !on -> if (dark) Color.WHITE else Color.parseColor("#FF4A3B44")
+                micMuted -> Color.parseColor("#FFFF7A8A")
+                else -> Color.parseColor("#FF3ECF9E")
             }
         )
     }
@@ -4196,17 +4214,23 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     /** 共享页深色玻璃浮层：状态胶囊 / 工具条 / 面板按钮统一换深色玻璃 + 浅色文字 */
+    private var darkGlass = false
+
     private fun applyDarkGlassStyle() {
+        darkGlass = true
         binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill_dark)
         binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar_dark)
         swapPanelBtnDark(binding.llMorePanel, toDark = true)
         listOf(binding.llStatus, binding.llToolbar, binding.llMorePanel).forEach { c ->
             if (c is ViewGroup) applyLightText(c)
         }
+        // 状态按钮（麦克风/视频）颜色由 updateVideoCallButton 接管，这里同步一次
+        updateVideoCallButton()
     }
 
     /** 还原连接页浅色玻璃与深色文字 */
     private fun restoreGlassStyle() {
+        darkGlass = false
         binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill)
         binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar)
         swapPanelBtnDark(binding.llMorePanel, toDark = false)
