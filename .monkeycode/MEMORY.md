@@ -853,4 +853,7 @@ Entries discovered by the Agent during task execution should follow this format:
   - negotiating/compareAndSet 这类协商锁必须配超时兜底（mainHandler.postDelayed 15s 强制 CAS 释放）：WebRTC 回调可能既不调 onSuccess 也不调 onFailure，锁永久占用后该连接再也无法重新协商，画面卡死只能重建
   - download-server 的 /version.json 实时读 build.gradle.kts 并算 APK md5（改版本号后立即生效）；网页的「MD5 校验」卡片读 MAIN_MD5/ALBUM_MD5 环境变量，配在 /tmp/opencode/supervise-server.sh 的 check 行里
   - supervise-server.sh 的 check/restart 是 bash 函数，修改文件后必须 kill 守护进程（background_terminal_kill）再重新 background_terminal_create 拉起，运行中的 bash 不会重载函数定义；重启守护时需同步 kill 四个服务进程，否则新守护检测到端口仍 listening 不会用新 env 拉起
+  - 色彩体系（v1.270/274 重构）：values/colors.xml 是唯一色彩真源，语义 token 分品牌（brand_rose 系列等）/玻璃拟态（glass_shadow_*、glass_highlight_*、glass_border*）/功能（success/danger/warning/slate）/表面（surface/scrim/black）四层；旧错乱名（neon_cyan 实为粉色等）保留为 @color 别名逐步迁移，勿删；各卡片渐变末端的一次性微调值（如 #F0FFF6F8）刻意保留硬编码；Kotlin 代码零 R.color 引用，颜色全在 XML 层，删改颜色资源不影响编译
+  - 按钮 disabled 态实现：selector 不能自引用，需拆出 _n 后缀的常态纯 shape 文件，disabled item 用 layer-list 引用 _n + android:alpha="0.45"
+  - 视觉重构验证：纯 values/drawable/layout 层改动只需 assembleRelease 构建通过即完成验证（资源引用错误在 aapt 阶段暴露）；App 无真机，UI 视觉验证只能靠构建 + 代码审查
   - 审查用并行子 agent 分模块读完全文、每条带 file:line 与推理依据，再人工复核（读上下文确认是真 bug 还是误报），避免误改
