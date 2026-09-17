@@ -34,7 +34,13 @@ class RoomManager {
 
   /** host 创建房间。返回空串表示成功，否则返回错误文案 */
   create(code, hostWs) {
-    if (this.rooms.has(code)) return "会议号已被占用，请重试";
+    const existing = this.rooms.get(code);
+    if (existing) {
+      // host 连接已关闭（close 事件与房间清理的时序竞态、或网络黑洞后被 terminate）
+      // 时回收死房间，否则真 host 重连会被自己的房间号锁死最多 45s
+      if (existing.host.readyState === 1) return "会议号已被占用，请重试";
+      this.rooms.delete(code);
+    }
     this.rooms.set(code, { host: hostWs, viewers: new Map(), pending: new Map() });
     return "";
   }
@@ -47,8 +53,19 @@ class RoomManager {
   requestJoin(code, viewerWs) {
     const room = this.rooms.get(code);
     if (!room) return { ok: false, error: "会议号不存在或会议已结束" };
+    // host 已断开（close 清理时序竞态）时当作会议已结束，避免 viewer 加入空房间白等
+    if (room.host.readyState !== 1) {
+      this.rooms.delete(code);
+      return { ok: false, error: "会议号不存在或会议已结束" };
+    }
     if (room.viewers.size > 0) {
-      return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };
+      // 清理已断开但尚未走完 close 清理的僵尸 viewer，避免新 viewer 被死连接挡住
+      for (const [vid, vws] of room.viewers) {
+        if (vws.readyState !== 1) room.viewers.delete(vid);
+      }
+      if (room.viewers.size > 0) {
+        return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };
+      }
     }
     const viewerId = ++this.viewerSeq;
     room.viewers.set(viewerId, viewerWs);

@@ -121,6 +121,9 @@ class SignalClient(
         val request = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // disconnect() 在连接建立前调用（弱网/服务器慢）时，close 可能赶不上握手完成；
+                // 此时不得再注册房间，否则回调会打到已销毁的 Activity 并在服务器残留僵尸会话
+                if (closedByUs) return
                 attempt = 0
                 Log.d(TAG, "WS 已连接，发送 create/join: code=$code asHost=$asHost")
                 val msg = JSONObject().apply {
@@ -169,6 +172,7 @@ class SignalClient(
     }
 
     private fun handleMessage(text: String) {
+        if (closedByUs) return
         val json = try { JSONObject(text) } catch (e: Exception) { return }
         val vid = json.optInt("viewerId", myViewerId)
         when (json.optString("type")) {

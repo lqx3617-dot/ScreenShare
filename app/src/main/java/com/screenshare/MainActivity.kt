@@ -636,6 +636,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Toast.makeText(this, "已退出会议", Toast.LENGTH_SHORT).show()
             leavingMeeting = true
             clearMeetingResume()
+            // 与 leaveMeeting/handleMeetingFailure 对齐：退出前恢复通知模式（B9）
+            restoreNotificationFilter()
             cleanupPeer()
             resetUI()
             restoreSystemBars()
@@ -970,17 +972,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         "text-failed" -> "文本输入失败"
                         else -> "控制指令执行失败"
                     }
-                    runOnUiThread { Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
+                    runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; Toast.makeText(this, tip, Toast.LENGTH_SHORT).show() }
                 }
                 "album-result" -> {
                     val ack = obj.optString("ack")
                     if (ack.isNotBlank()) {
                         when (ack) {
-                            "camera" -> runOnUiThread { Toast.makeText(this, "共享方已收到拍照请求", Toast.LENGTH_SHORT).show() }
-                            "capturing" -> runOnUiThread { Toast.makeText(this, "共享方正在后台拍照...", Toast.LENGTH_SHORT).show() }
+                            "camera" -> runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; Toast.makeText(this, "共享方已收到拍照请求", Toast.LENGTH_SHORT).show() }
+                            "capturing" -> runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; Toast.makeText(this, "共享方正在后台拍照...", Toast.LENGTH_SHORT).show() }
                             "shot-failed" -> {
                                 val reason = obj.optString("error", "未知错误")
-                                runOnUiThread {
+                                runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread;
                                     android.app.AlertDialog.Builder(this)
                                         .setTitle("共享方拍照失败")
                                         .setMessage("失败原因：\n$reason")
@@ -988,22 +990,22 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                         .show()
                                 }
                             }
-                            else -> runOnUiThread { Toast.makeText(this, "共享方处理中", Toast.LENGTH_SHORT).show() }
+                            else -> runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; Toast.makeText(this, "共享方处理中", Toast.LENGTH_SHORT).show() }
                         }
                         return
                     }
                     val url = obj.optString("url")
                     if (url.isNotBlank()) {
-                        runOnUiThread {
+                        runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread;
                             Toast.makeText(this, "照片已上传", Toast.LENGTH_SHORT).show()
                         }
                     } else {
-                        runOnUiThread { Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
+                        runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread; Toast.makeText(this, "相册上传失败: ${obj.optString("error", "未知错误")}", Toast.LENGTH_LONG).show() }
                     }
                 }
                 "video-call-off" -> {
                     // 共享方关闭视频通话：同步关闭本端（观看方）摄像头与 PIP 小窗，避免画面卡住残留
-                    runOnUiThread {
+                    runOnUiThread { if (isFinishing || isDestroyed) return@runOnUiThread;
                         playTone(android.media.ToneGenerator.TONE_PROP_ACK, 150)
                         closeVideoCall(notify = false)
                     }
@@ -2123,6 +2125,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.tvScanResult.text = "② 创建 PeerConnection..."
         val pc = p.createPeerConnection()
         if (pc == null) {
+            // 失败时必须置空，否则 peer 指向无 PeerConnection 的废对象：
+            // 后续 relay 消息的 setRemoteDescription 等调用静默无操作，会话永远建不起来（B4）
+            peer = null
             binding.tvScanResult.text = "❌ PeerConnection 创建失败"
             updateUI("❌ PeerConnection 创建失败")
             return
@@ -2156,6 +2161,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateVideoCallButton()
             binding.llCtrlStatus.visibility = View.VISIBLE
             updateRemoteControlStatus()
+            // 免打扰：原放在 onConnected() 的 host 分支，但 host 主连接 ICE 永不 CONNECTED
+            //（该分支是死代码），通知屏蔽从未生效。共享开始时即应用（B2 修复）
+            applyNotificationFilter()
         }
         binding.tvScanResult.text = "④ 启动系统音频内录..."
         // 系统音频内录：启动内录（复用 MediaProjection 授权）；DataChannel 由各 viewer 连接随 Offer 协商创建
@@ -2718,8 +2726,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** host：新 viewer 加入——创建独立连接并发送 Offer */
     private fun handleViewerJoined(viewerId: Int) {
         if (!isHost) return
-        // 采集未就绪时等待（startSessionCore 完成后 sendPendingViewerOffers 兜底）
-        val p = peer ?: return
+        // peer 为 null 时（授权框/启动采集的异步窗口期）先把 viewerId 暂存，
+        // startSessionCore 的 sendPendingViewerOffers 会兜底补发 Offer；
+        // 直接 return 会让该 viewer 永久卡在"等待画面"（B1 修复）
+        val p = peer ?: run {
+            pendingViewerIds.add(viewerId)
+            return
+        }
         val pc = p.createViewerConnection(viewerId)
         if (pc == null) {
             updateUI("⚠️ 与对方建立连接失败")
@@ -3965,6 +3978,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         android.util.Log.w(TAG, "自适应轮询异常: ${t.message}")
                     }
                 }
+                // 会话已结束（peer 已释放）时停止自调度并退出工作线程；
+                // 否则 Activity 销毁后该循环仍每 1.5s 空转，HandlerThread 永久泄漏（B8）
+                if (peer == null) {
+                    runOnUiThread { stopAdaptiveLoop() }
+                    return
+                }
                 handler.postDelayed(this, 1500)
             }
         }
@@ -4514,6 +4533,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         setTalkPolling(false)
         // v1.259: 同时停止闪避循环（UI 重置路径兜底）
         stopDuckLoop()
+        // 会话级标志重置：screenCaptureReady 只在 startSessionCore 置 true，
+        // 不重置会导致下一场会话在采集未完成时提前发无画面的 Offer（B5）
+        screenCaptureReady = false
+        // 呼吸灯动画随会话结束停止，避免 INFINITE ValueAnimator 泄漏（B6）
+        stopStatusBreathing()
         binding.llCallExtras.visibility = View.GONE
         if (keepScreenOnForCall) {
             keepScreenOnForCall = false
@@ -4552,6 +4576,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         super.onDestroy()
         // v1.259: 兜底停止闪避循环，避免 Activity 销毁后主线程 Runnable 残留
         stopDuckLoop()
+        // v1.266: 兜底停止对讲轮询线程，避免 HandlerThread 在 Activity 销毁后残留（B7）
+        setTalkPolling(false)
         // v1.262: 兜底恢复通知模式，避免 Activity 销毁后免打扰残留
         restoreNotificationFilter()
         albumWebView?.let { wv ->

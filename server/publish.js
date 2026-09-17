@@ -127,8 +127,9 @@ function bumpVersion(task) {
     const cfg = APPS[key];
     const cur = readGradleVersion(cfg.gradle);
     const nextCode = cur.versionCode + 1;
-    writeGradleVersion(cfg.gradle, nextCode, task.versionName);
+    // 备份必须在写入之前，否则 rollback 恢复的是已 bump 的内容，等于空操作
     task.bumpedBackup.push({ gradle: cfg.gradle, content: fs.readFileSync(cfg.gradle, "utf8") });
+    writeGradleVersion(cfg.gradle, nextCode, task.versionName);
     task.log.push(`版本号 ${cur.versionName}(${cur.versionCode}) -> ${task.versionName}(${nextCode}) ${cfg.label}`);
   }
 }

@@ -404,7 +404,9 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
         "Content-Disposition": `attachment; filename="${urlPath.split("/").pop()}"`,
         "Accept-Ranges": "bytes",
       });
-      fs.createReadStream(apkPath).pipe(res);
+      const full = fs.createReadStream(apkPath);
+      full.on("error", () => { try { res.destroy(); } catch (_) {} });
+      full.pipe(res);
       done(200);
       return;
     }

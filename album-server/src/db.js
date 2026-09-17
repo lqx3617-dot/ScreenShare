@@ -12,6 +12,16 @@ const DB_PATH = path.join(DATA_DIR, "albums.db");
 
 let db = null;
 
+/** 安全解析 JSON 数组列：损坏行降级为空集合，绝不因单条坏数据拖垮整个服务 */
+function parseJsonArray(json) {
+  try {
+    const arr = JSON.parse(json || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 function getDb() {
   if (db) return db;
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -53,9 +63,9 @@ function loadSession(token) {
     device: row.device || "",
     total: row.total,
     done: !!row.done,
-    received: new Set(JSON.parse(row.received || "[]")),
-    originals: new Set(JSON.parse(row.originals || "[]")),
-    videos: new Set(JSON.parse(row.videos || "[]")),
+    received: new Set(parseJsonArray(row.received)),
+    originals: new Set(parseJsonArray(row.originals)),
+    videos: new Set(parseJsonArray(row.videos)),
   };
 }
 
@@ -94,9 +104,9 @@ function listAll() {
       device: r.device || "",
       total: r.total,
       done: !!r.done,
-      received: JSON.parse(r.received || "[]"),
-      originals: JSON.parse(r.originals || "[]"),
-      videos: JSON.parse(r.videos || "[]"),
+      received: parseJsonArray(r.received),
+      originals: parseJsonArray(r.originals),
+      videos: parseJsonArray(r.videos),
     }));
 }
 

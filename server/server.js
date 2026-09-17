@@ -262,6 +262,11 @@ wss.on("connection", (ws, request) => {
       send(ws, { type: "error", message: "无效的消息格式" });
       return;
     }
+    // JSON.parse("null") 返回 null、原始值自动装箱不报错但无 .type，统一拒绝非对象消息
+    if (msg === null || typeof msg !== "object" || Array.isArray(msg)) {
+      send(ws, { type: "error", message: "无效的消息格式" });
+      return;
+    }
 
     switch (msg.type) {
       case "create": {

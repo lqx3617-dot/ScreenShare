@@ -492,8 +492,14 @@ class WebRTCPeer(
             }
             override fun onIceConnectionReceivingChange(receiving: Boolean) {
                 if (!receiving) {
-                    AppLogger.network("viewer#$viewerId receiving stopped, restarting")
-                    restartViewer(viewerId)
+                    // CHECKING 阶段（首个数据包到达前）receiving 正常为 false，此时重建会打断
+                    // 正在建立的连接，弱网/TURN 中继下可能 5 次重连耗尽后被放弃（H3 修复）
+                    val st = viewerConnections[viewerId]?.pc?.iceConnectionState()
+                    AppLogger.network("viewer#$viewerId receiving stopped (ice=$st)")
+                    if (st == PeerConnection.IceConnectionState.CONNECTED ||
+                        st == PeerConnection.IceConnectionState.COMPLETED) {
+                        restartViewer(viewerId)
+                    }
                 }
             }
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
@@ -766,6 +772,8 @@ class WebRTCPeer(
         val conn = viewerConnections.remove(viewerId) ?: return
         pendingViewerCandidates.remove(viewerId)
         viewerRestartCounts.remove(viewerId)
+        // 摄像头发送器同随连接移除，否则统计线程会遍历到已 dispose 的 RtpSender（H4）
+        cameraViewerSenders.remove(viewerId)
         mainHandler.post {
             try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
             try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
@@ -1135,6 +1143,9 @@ class WebRTCPeer(
      */
     fun restartConnection() {
         if (disposed) return
+        // 上一次 ICE restart 的 offer 尚未返回时，DISCONNECTED/FAILED/receiving-stopped
+        // 可能接连触发；此时不重复发起、不重复计数，否则计数被空转耗尽过早放弃连接（H5）
+        if (restartInFlight) return
         if (reconnectCount >= maxReconnectAttempts) {
             AppLogger.webrtc("Reconnect failed (超过${maxReconnectAttempts}次)")
             connectionStatus = ConnectionStatus.FAILED
