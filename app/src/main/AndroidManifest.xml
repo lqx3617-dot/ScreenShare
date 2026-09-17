@@ -28,15 +28,10 @@
 
         <activity
             android:name=".MeetingActivity"
-            android:exported="true"
+            android:exported="false"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:screenOrientation="fullSensor">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:screenOrientation="fullSensor" />
 
         <activity
             android:name=".MainActivity"
@@ -54,10 +49,15 @@
         </activity>
         <activity
             android:name=".LiquidHomeActivity"
-            android:exported="false"
+            android:exported="true"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:screenOrientation="fullSensor" />
+            android:screenOrientation="fullSensor">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <service
             android:name=".ScreenProjectionService"
             android:exported="false"
