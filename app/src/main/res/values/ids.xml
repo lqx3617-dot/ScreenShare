@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- v1.264: 深色玻璃浮层切换时暂存 TextView 原始文字色，供还原使用 -->
+    <item name="tag_text_dark" type="id" />
+</resources>

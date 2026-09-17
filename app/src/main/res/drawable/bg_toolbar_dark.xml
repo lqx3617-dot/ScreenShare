@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色玻璃：共享页浮层（工具条/面板/状态胶囊）浮在视频上时使用。
+     浅色文字在任何明暗的视频画面上都可读，深色半透明底保留视频透感。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 柔和投影 -->
+    <item
+        android:left="2dp"
+        android:top="6dp"
+        android:right="2dp"
+        android:bottom="0dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="26dp" />
+            <solid android:color="#66000000" />
+        </shape>
+    </item>
+    <!-- 顶部高光（玻璃质感） -->
+    <item
+        android:left="8dp"
+        android:right="8dp"
+        android:top="0dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="26dp" />
+            <gradient
+                android:angle="270"
+                android:startColor="#33FFFFFF"
+                android:centerColor="#10FFFFFF"
+                android:endColor="#00FFFFFF" />
+        </shape>
+    </item>
+    <!-- 深色玻璃主体 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="26dp" />
+            <gradient
+                android:angle="90"
+                android:startColor="#E61A1216"
+                android:endColor="#B3151013" />
+            <stroke
+                android:width="1dp"
+                android:color="#2EFFFFFF" />
+        </shape>
+    </item>
+</layer-list>

@@ -4182,6 +4182,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // v1.263: 工具条与面板按钮统一按压回弹反馈
         PressEffect.bindChildren(binding.llToolbar)
         PressEffect.bindChildren(binding.llMorePanel)
+        // v1.264: 深色玻璃浮层——视频背景上深色文字不可读，统一换成深色玻璃 + 浅色文字
+        applyDarkGlassStyle()
         // 根布局兜底：工具条隐藏后点击任意空白区唤出（覆盖 host 无视频、renderer 不可见场景）
         binding.root.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -4191,6 +4193,64 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             false
         }
         startToolbarAutoHide()
+    }
+
+    /** 共享页深色玻璃浮层：状态胶囊 / 工具条 / 面板按钮统一换深色玻璃 + 浅色文字 */
+    private fun applyDarkGlassStyle() {
+        binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill_dark)
+        binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar_dark)
+        swapPanelBtnDark(binding.llMorePanel, toDark = true)
+        listOf(binding.llStatus, binding.llToolbar, binding.llMorePanel).forEach { c ->
+            if (c is ViewGroup) applyLightText(c)
+        }
+    }
+
+    /** 还原连接页浅色玻璃与深色文字 */
+    private fun restoreGlassStyle() {
+        binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill)
+        binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar)
+        swapPanelBtnDark(binding.llMorePanel, toDark = false)
+        listOf(binding.llStatus, binding.llToolbar, binding.llMorePanel).forEach { c ->
+            if (c is ViewGroup) restoreDarkText(c)
+        }
+    }
+
+    /** 面板内所有 bg_panel_btn 背景与深色版互换（按钮 + llCtrlKeys 各自带背景） */
+    private fun swapPanelBtnDark(v: View, toDark: Boolean) {
+        if (v !is ViewGroup) return
+        val light = ContextCompat.getDrawable(v.context, R.drawable.bg_panel_btn)
+        val dark = ContextCompat.getDrawable(v.context, R.drawable.bg_panel_btn_dark)
+        for (i in 0 until v.childCount) {
+            val c = v.getChildAt(i) ?: continue
+            val state = c.background?.constantState
+            if (state != null && (state == light?.constantState || state == dark?.constantState)) {
+                c.setBackgroundResource(if (toDark) R.drawable.bg_panel_btn_dark else R.drawable.bg_panel_btn)
+            }
+            swapPanelBtnDark(c, toDark)
+        }
+    }
+
+    private fun applyLightText(vg: ViewGroup) {
+        for (i in 0 until vg.childCount) {
+            val child = vg.getChildAt(i) ?: continue
+            if (child is TextView) {
+                if (child.getTag(R.id.tag_text_dark) == null) {
+                    child.setTag(R.id.tag_text_dark, child.currentTextColor)
+                }
+                child.setTextColor(0xFFF3E9ED.toInt())
+            }
+            if (child is ViewGroup) applyLightText(child)
+        }
+    }
+
+    private fun restoreDarkText(vg: ViewGroup) {
+        for (i in 0 until vg.childCount) {
+            val child = vg.getChildAt(i) ?: continue
+            if (child is TextView) {
+                (child.getTag(R.id.tag_text_dark) as? Int)?.let { child.setTextColor(it) }
+            }
+            if (child is ViewGroup) restoreDarkText(child)
+        }
     }
 
     /** 退出会议沉浸（返回连接页前恢复系统栏） */
@@ -4371,6 +4431,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         releaseFullscreenRenderer()
         releaseCameraPip()
         releaseLocalPreview()
+        restoreGlassStyle()
         binding.btnStop.visibility = View.GONE
         binding.llToolbar.visibility = View.GONE
         binding.llMorePanel.visibility = View.GONE
