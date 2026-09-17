@@ -2,26 +2,24 @@ package com.screenshare
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
-import android.widget.FrameLayout
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -40,6 +38,20 @@ class LiquidHomeActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var toastRunnable: Runnable? = null
     private val codeEdits = ArrayList<EditText>()
+
+    companion object {
+        private const val TAG = "LiquidHome"
+    }
+
+    /** 特性级容错：任一视觉特性失败不影响界面打开，并落盘日志便于定位 */
+    private fun safe(name: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            Log.e(TAG, "特性[$name]初始化失败", t)
+            AppLogger.app("LiquidHome 特性[$name]失败: ${Log.getStackTraceString(t)}")
+        }
+    }
 
     /** 光斑规格：颜色 / 直径dp / 位置（Gravity + 偏移dp）/ 透明度 / 漂浮参数 */
     private data class Blob(
@@ -70,14 +82,16 @@ class LiquidHomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityLiquidBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        setupImmersive()
-        setupBlobs()
-        setupCodeInputs()
-        setupRecentList()
-        setupClicks()
-        animateEntrance()
-        // 静默自动检查更新（12h 节流，与 MainActivity 行为一致）
-        UpdateChecker.check(this)
+        safe("沉浸式状态栏") { setupImmersive() }
+        safe("背景光斑") { setupBlobs() }
+        safe("数字输入联动") { setupCodeInputs() }
+        safe("最近会议列表") { setupRecentList() }
+        safe("点击交互") { setupClicks() }
+        safe("入场动画") { animateEntrance() }
+        safe("检查更新") {
+            // 静默自动检查更新（12h 节流，与 MainActivity 行为一致）
+            UpdateChecker.check(this)
+        }
     }
 
     /** 沉浸式状态栏：透明背景 + 深色底配白色图标 */
@@ -104,10 +118,6 @@ class LiquidHomeActivity : AppCompatActivity() {
             }
             view.background = gd
             view.alpha = b.alpha
-            // Android 12+ 用 RenderEffect 模拟 CSS filter:blur(70px)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                view.setRenderEffect(RenderEffect.createBlurEffect(70f, 70f, Shader.TileMode.DECAL))
-            }
             val lp = FrameLayout.LayoutParams(size, size, b.gravity)
             lp.setMargins((b.dxDp * density).toInt(), (b.dyDp * density).toInt(), 0, 0)
             binding.flBlobs.addView(view, lp)
