@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 数字输入格三态：默认 / 激活（粉色描边+光环）/ 已填充 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <layer-list>
+            <!-- 外光环（模拟 box-shadow 0 0 0 3px rgba(255,107,181,0.25)） -->
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="16dp" />
+                    <solid android:color="#40FF6BB5" />
+                </shape>
+            </item>
+            <!-- 激活底色 + 粉色描边 -->
+            <item
+                android:left="3dp"
+                android:top="3dp"
+                android:right="3dp"
+                android:bottom="3dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="13dp" />
+                    <solid android:color="#33FF6BB5" />
+                    <stroke android:width="1.5dp" android:color="#E6FF6BB5" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item android:state_activated="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <solid android:color="#26FFFFFF" />
+            <stroke android:width="1.5dp" android:color="#73FFFFFF" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <solid android:color="#1AFFFFFF" />
+            <stroke android:width="1.5dp" android:color="#47FFFFFF" />
+        </shape>
+    </item>
+</selector>

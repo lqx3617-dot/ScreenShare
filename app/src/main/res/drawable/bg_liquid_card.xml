@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 液态玻璃卡片：28dp 圆角 + 渐变白玻璃主体 + 渐变高光描边（对应 .glass-card） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 渐变描边（从亮白到淡紫再回亮白，模拟边缘高光） -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="28dp" />
+            <gradient
+                android:angle="135"
+                android:startColor="#80FFFFFF"
+                android:centerColor="#1AC896FF"
+                android:endColor="#66FFFFFF" />
+        </shape>
+    </item>
+    <!-- 玻璃主体（内缩 1dp 露出描边） -->
+    <item
+        android:left="1dp"
+        android:top="1dp"
+        android:right="1dp"
+        android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="27dp" />
+            <gradient
+                android:angle="135"
+                android:startColor="#38FFFFFF"
+                android:centerColor="#14FFFFFF"
+                android:endColor="#26FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

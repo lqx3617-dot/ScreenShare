@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 最近会议列表项：图标格 + 房间号 + 时间 + 删除 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="12dp">
+
+    <FrameLayout
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:background="@drawable/bg_recent_icon">
+
+        <ImageView
+            android:id="@+id/ivRecentIcon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_liquid_login"
+            app:tint="#CCFFFFFF"
+            xmlns:app="http://schemas.android.com/apk/res-auto" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="12dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvRecentCode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="1314"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF" />
+
+        <TextView
+            android:id="@+id/tvRecentMeta"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="加入 · 16分钟前"
+            android:textSize="12sp"
+            android:textColor="#99FFFFFF" />
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/ivRecentDelete"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:background="@drawable/bg_recent_delete"
+        android:src="@drawable/ic_liquid_close"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="删除该记录" />
+</LinearLayout>

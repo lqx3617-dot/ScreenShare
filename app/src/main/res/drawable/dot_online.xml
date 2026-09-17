@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 在线状态点：实心绿 + 外发光（对应 .status-dot 的 box-shadow） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#554ADE80" />
+            <size android:width="20dp" android:height="20dp" />
+        </shape>
+    </item>
+    <item
+        android:left="5dp"
+        android:top="5dp"
+        android:right="5dp"
+        android:bottom="5dp">
+        <shape android:shape="oval">
+            <solid android:color="#FF4ADE80" />
+        </shape>
+    </item>
+</layer-list>

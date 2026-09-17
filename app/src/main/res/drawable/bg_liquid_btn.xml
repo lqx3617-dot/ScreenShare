@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 液态玻璃主按钮：粉紫渐变 + 白描边 + 涟漪（对应 .btn-primary） -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40FFFFFF">
+    <item>
+        <layer-list>
+            <!-- 白描边层 -->
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="18dp" />
+                    <solid android:color="#66FFFFFF" />
+                </shape>
+            </item>
+            <!-- 渐变主体（内缩 1dp） -->
+            <item
+                android:left="1dp"
+                android:top="1dp"
+                android:right="1dp"
+                android:bottom="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="17dp" />
+                    <gradient
+                        android:angle="135"
+                        android:startColor="#80FF6BB5"
+                        android:endColor="#80A855F7" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</ripple>

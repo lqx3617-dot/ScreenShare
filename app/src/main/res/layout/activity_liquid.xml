@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 液态玻璃主界面（对应 HTML 原型「共享屏界」）：深紫渐变背景 + 漂浮光斑 + 玻璃卡片 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_liquid_root"
+    android:fitsSystemWindows="true">
+
+    <!-- 光斑层（6 个彩色模糊圆盘，代码添加 + 平移动画） -->
+    <FrameLayout
+        android:id="@+id/flBlobs"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:overScrollMode="never"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="120dp">
+
+            <!-- ===== 顶部栏 ===== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="8dp"
+                android:paddingBottom="22dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <FrameLayout
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:layout_marginEnd="12dp"
+                        android:background="@drawable/bg_liquid_logo">
+
+                        <ImageView
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_heart_fill"
+                            app:tint="#FFFFFFFF" />
+                    </FrameLayout>
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="共享屏界"
+                            android:textSize="23sp"
+                            android:textStyle="bold"
+                            android:textColor="#FFFFFFFF"
+                            android:letterSpacing="0.02" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="3dp"
+                            android:text="和TA的专属共享空间"
+                            android:textSize="12sp"
+                            android:textColor="#B3FFFFFF" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvCheckUpdate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingTop="9dp"
+                    android:paddingBottom="9dp"
+                    android:background="@drawable/bg_liquid_pill"
+                    android:text="检查更新"
+                    android:textSize="13sp"
+                    android:textColor="#D9FFFFFF"
+                    android:drawableStart="@drawable/ic_liquid_refresh"
+                    android:drawablePadding="6dp"
+                    android:clickable="true"
+                    android:focusable="true" />
+            </LinearLayout>
+
+            <!-- ===== 卡片1：创建 / 加入 ===== -->
+            <LinearLayout
+                android:id="@+id/cardJoin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:orientation="vertical"
+                android:padding="24dp"
+                android:background="@drawable/bg_liquid_card"
+                android:elevation="8dp">
+
+                <TextView
+                    android:id="@+id/btnCreate"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:gravity="center"
+                    android:background="@drawable/bg_liquid_btn"
+                    android:text="创建房间"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFFFF"
+                    android:drawableStart="@drawable/ic_liquid_plus"
+                    android:drawablePadding="8dp"
+                    android:drawableTint="#FFFFFFFF"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+                <!-- 分隔线 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:layout_marginBottom="20dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_divider_line" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_marginEnd="12dp"
+                        android:text="或输入房间号"
+                        android:textSize="13sp"
+                        android:textColor="#B3FFFFFF" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_divider_line" />
+                </LinearLayout>
+
+                <!-- 4 位数字输入 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="20dp"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/etCode0"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@null"
+                        android:imeOptions="actionNext"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+
+                    <EditText
+                        android:id="@+id/etCode1"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="5dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@null"
+                        android:imeOptions="actionNext"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+
+                    <EditText
+                        android:id="@+id/etCode2"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="5dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@null"
+                        android:imeOptions="actionNext"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+
+                    <EditText
+                        android:id="@+id/etCode3"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@null"
+                        android:imeOptions="actionDone"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btnJoin"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:gravity="center"
+                    android:background="@drawable/bg_liquid_btn"
+                    android:text="加入会议"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFFFFFFF"
+                    android:drawableStart="@drawable/ic_liquid_login"
+                    android:drawablePadding="8dp"
+                    android:drawableTint="#FFFFFFFF"
+                    android:clickable="true"
+                    android:focusable="true" />
+            </LinearLayout>
+
+            <!-- ===== 卡片2：专属房间 ===== -->
+            <LinearLayout
+                android:id="@+id/cardRoom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:orientation="vertical"
+                android:padding="24dp"
+                android:background="@drawable/bg_liquid_card"
+                android:elevation="8dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="18dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:layout_marginEnd="8dp"
+                            android:src="@drawable/ic_heart_fill"
+                            app:tint="#FFFF6BB5" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="我们的专属房间"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="#FFFFFFFF" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="换角色  |  换一个"
+                        android:textSize="13sp"
+                        android:textColor="#BFFFFFFF" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="10dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <View
+                        android:id="@+id/viewStatusDot"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginEnd="16dp"
+                        android:background="@drawable/dot_offline" />
+
+                    <TextView
+                        android:id="@+id/tvRoomNumber"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="1314"
+                        android:textSize="40sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:letterSpacing="0.1" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvRoomStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="你是观看方（你看TA的屏幕）· 对方不在线"
+                    android:textSize="13sp"
+                    android:textColor="#B3FFFFFF" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:id="@+id/btnCopy"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center_vertical"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="7dp"
+                        android:paddingBottom="7dp"
+                        android:background="@drawable/bg_liquid_pill"
+                        android:text="复制房间号"
+                        android:textSize="12sp"
+                        android:textColor="#B3FFFFFF"
+                        android:drawableStart="@drawable/ic_liquid_copy"
+                        android:drawablePadding="5dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/btnCallTa"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:paddingStart="22dp"
+                        android:paddingEnd="22dp"
+                        android:paddingTop="9dp"
+                        android:paddingBottom="9dp"
+                        android:background="@drawable/bg_liquid_outline"
+                        android:text="喊TA"
+                        android:textSize="13sp"
+                        android:textColor="#FFFFFFFF"
+                        android:clickable="true"
+                        android:focusable="true" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ===== 卡片3：最近会议 ===== -->
+            <LinearLayout
+                android:id="@+id/cardRecent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="24dp"
+                android:background="@drawable/bg_liquid_card"
+                android:elevation="8dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="10dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="最近会议"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF" />
+
+                    <TextView
+                        android:id="@+id/btnClearRecent"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp"
+                        android:text="清空"
+                        android:textSize="13sp"
+                        android:textColor="#A6FFFFFF"
+                        android:clickable="true"
+                        android:focusable="true" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llRecentList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+    <!-- ===== 底部毛玻璃导航 ===== -->
+    <LinearLayout
+        android:id="@+id/tabBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="20dp"
+        android:padding="10dp"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_liquid_tab"
+        android:elevation="8dp">
+
+        <LinearLayout
+            android:id="@+id/tabHome"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="@drawable/bg_liquid_tab_item"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_liquid_home"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="首页"
+                android:textSize="10sp"
+                android:textColor="#FFFFFFFF" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tabFriends"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="@drawable/bg_liquid_tab_item"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_liquid_users"
+                app:tint="#99FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="好友"
+                android:textSize="10sp"
+                android:textColor="#99FFFFFF" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tabSettings"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="8dp"
+            android:background="@drawable/bg_liquid_tab_item"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_liquid_settings"
+                app:tint="#99FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="设置"
+                android:textSize="10sp"
+                android:textColor="#99FFFFFF" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- toast -->
+    <TextView
+        android:id="@+id/tvToast"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="96dp"
+        android:maxWidth="280dp"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp"
+        android:background="@drawable/bg_liquid_toast"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:visibility="gone" />
+</FrameLayout>

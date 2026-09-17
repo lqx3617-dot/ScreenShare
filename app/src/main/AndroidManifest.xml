@@ -52,6 +52,12 @@
                 <data android:scheme="screenshare" android:host="join" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".LiquidHomeActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
+            android:screenOrientation="fullSensor" />
         <service
             android:name=".ScreenProjectionService"
             android:exported="false"

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 液态玻璃根背景：深紫→紫→粉的 135deg 渐变（对应 HTML 160deg 五色渐变，三色近似） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="135"
+        android:startColor="#FF0A0620"
+        android:centerColor="#FF4D1A75"
+        android:endColor="#FFC44A90" />
+</shape>

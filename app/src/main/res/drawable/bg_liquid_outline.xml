@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 描边按钮（喊TA）：半透明白底 + 描边 + 涟漪（对应 .btn-outline） -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#33FFFFFF">
+    <item>
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="14dp" />
+                    <solid android:color="#59FFFFFF" />
+                </shape>
+            </item>
+            <item
+                android:left="1dp"
+                android:top="1dp"
+                android:right="1dp"
+                android:bottom="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="13dp" />
+                    <solid android:color="#1FFFFFFF" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</ripple>
