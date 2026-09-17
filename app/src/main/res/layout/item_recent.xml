@@ -56,7 +56,7 @@
         android:background="@drawable/bg_recent_delete"
         android:src="@drawable/ic_liquid_close"
         android:clickable="true"
-        android:foreground="@android:attr/selectableItemBackgroundBorderless"
+        android:foreground="?android:attr/selectableItemBackground"
         android:focusable="true"
         android:contentDescription="删除该记录" />
 </LinearLayout>

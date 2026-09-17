@@ -1,4 +1,4 @@
 {
-  "changelog": "修复崩溃日志未上报问题：此前崩溃上报只在主界面注册，新界面启动崩溃时服务器收不到。现统一在 Application 层注册——任何崩溃都会先写入日志并上报服务器，再自动回到旧界面。更新后若仍闪退，请点一次「检查更新」后再打开，开发者会从服务器收到完整堆栈。",
+  "changelog": "修复新界面启动崩溃（根因已定位）：按钮涟漪属性误写为 @android:attr/...，编译期不校验、运行时把 attr 当资源解析抛 Resources$NotFoundException。已改为正确的主题引用格式 ?android:attr/selectableItemBackground。两个自带 ripple 的渐变大按钮去掉重复涟漪。",
   "forced": false
 }
