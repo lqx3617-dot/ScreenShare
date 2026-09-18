@@ -564,7 +564,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val code = intent?.getStringExtra(EXTRA_MEETING_CODE)
         if (action == ACTION_CREATE && !code.isNullOrEmpty()) {
             if (hostSessionActive || signalMode) {
-                // 已在会议中：不重复创建
+                // 已在会议中：提示用户先结束当前会议
+                Toast.makeText(this, "当前会议进行中，请先结束会议", Toast.LENGTH_SHORT).show()
                 return
             }
             saveMeetingResume(ACTION_CREATE, code)
@@ -589,6 +590,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         if (action == ACTION_JOIN && !code.isNullOrEmpty()) {
             if (hostSessionActive || signalMode) {
+                Toast.makeText(this, "当前会议进行中，请先结束会议", Toast.LENGTH_SHORT).show()
                 return
             }
             binding.llStatus.visibility = View.VISIBLE

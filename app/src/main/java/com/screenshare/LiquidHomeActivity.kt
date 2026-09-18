@@ -2,7 +2,7 @@ package com.screenshare
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
-import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -18,7 +18,10 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import com.screenshare.databinding.ActivityLiquidBinding
 import kotlin.random.Random
 
@@ -60,9 +63,9 @@ class LiquidHomeActivity : AppCompatActivity() {
         Blob(0xFFEC4899.toInt(), 200, Gravity.TOP or Gravity.START, 110, 320, 0.40f, 60f, 50f, 0.95f, 18000)
     )
 
-    private val homeFragment = HomeFragment()
-    private val friendsFragment = FriendsFragment()
-    private val settingsFragment = SettingsFragment()
+    private var homeFragment: HomeFragment? = null
+    private var friendsFragment: FriendsFragment? = null
+    private var settingsFragment: SettingsFragment? = null
     private var currentTab = -1
 
     /** 全部无限动画引用，销毁时统一取消防泄漏 */
@@ -72,6 +75,14 @@ class LiquidHomeActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityLiquidBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // 复用 FragmentManager 恢复的 Fragment 实例（进程被杀重建时保留用户已输入内容与当前页）
+        supportFragmentManager.findFragmentById(R.id.contentArea)?.let { restored ->
+            when (restored) {
+                is HomeFragment -> { homeFragment = restored; currentTab = 0 }
+                is FriendsFragment -> { friendsFragment = restored; currentTab = 1 }
+                is SettingsFragment -> { settingsFragment = restored; currentTab = 2 }
+            }
+        }
         safe("沉浸式状态栏") { setupImmersive() }
         safe("背景光斑") { setupBlobs() }
         safe("底部导航") { setupTabs() }
@@ -79,19 +90,54 @@ class LiquidHomeActivity : AppCompatActivity() {
         safe("检查更新") { UpdateChecker.check(this) }
     }
 
-    /** 沉浸式状态栏：透明背景 + 深色底配白色图标 */
+    /** 沉浸式状态栏：透明背景 + 深色底配浅色图标，背景铺满系统栏区 */
     private fun setupImmersive() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        val flags = window.decorView.systemUiVisibility and
-                android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-        window.decorView.systemUiVisibility = flags
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        setupInsets()
+    }
+
+    /** 内容区/导航栏/toast 单独应用系统栏 inset；光斑层保持全屏铺满 */
+    private fun setupInsets() {
+        val bars = WindowInsetsCompat.Type.systemBars()
+        ViewCompat.setOnApplyWindowInsetsListener(binding.contentArea) { v, insets ->
+            val s = insets.getInsets(bars)
+            v.setPadding(0, s.top, 0, s.bottom)
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.tabBar) { v, insets ->
+            v.updatePadding(bottom = insets.getInsets(bars).bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.tvToast) { v, insets ->
+            v.updatePadding(bottom = insets.getInsets(bars).bottom)
+            WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 声明了 configChanges 不重建 Activity，背景层坐标仍是旧尺寸，需要重建
+        rebuildBackground()
+    }
+
+    /** 旋转/折叠后用新尺寸重建光斑层 */
+    private fun rebuildBackground() {
+        infiniteAnimators.forEach { it.cancel() }
+        infiniteAnimators.clear()
+        binding.flBlobs.removeAllViews()
+        binding.flBlobs.post { if (!isDestroyed) setupBlobs() }
     }
 
     /** 4 个彩色光斑 + 背景颗粒 + 漂浮爱心 */
     private fun setupBlobs() {
+        if (isDestroyed) return
         val density = resources.displayMetrics.density
         for (b in blobs) {
             val view = View(this)
@@ -172,22 +218,26 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
     }
 
-    /** 底部 tab：点击切换内容区 Fragment，当前项粉色高亮 */
+    /** 底部 tab：点击切换内容区 Fragment，当前项高亮 */
     private fun setupTabs() {
         val tabs = arrayOf(binding.tabHome, binding.tabFriends, binding.tabSettings)
         tabs.forEachIndexed { index, tab ->
             tab.setOnClickListener { switchTab(index) }
         }
-        // 默认显示首页（首次不加切换动画）
-        switchTab(0, animate = false)
+        // 恢复场景：FragmentManager 已 attach 旧 Fragment，只更新高亮；否则显示首页
+        if (currentTab == -1) {
+            switchTab(0, animate = false)
+        } else {
+            updateTabHighlight(currentTab)
+        }
     }
 
     private fun switchTab(index: Int, animate: Boolean = true) {
         if (index == currentTab) return
         val frag = when (index) {
-            0 -> homeFragment
-            1 -> friendsFragment
-            else -> settingsFragment
+            0 -> homeFragment ?: HomeFragment().also { homeFragment = it }
+            1 -> friendsFragment ?: FriendsFragment().also { friendsFragment = it }
+            else -> settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         }
         val ft = supportFragmentManager.beginTransaction()
         if (animate) {
@@ -195,7 +245,12 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
         ft.replace(R.id.contentArea, frag)
         ft.commit()
-        // tab 高亮：图标与文字颜色随选中态切换
+        updateTabHighlight(index)
+        currentTab = index
+    }
+
+    /** tab 高亮：图标与文字颜色随选中态切换 */
+    private fun updateTabHighlight(index: Int) {
         val tabs = arrayOf(binding.tabHome, binding.tabFriends, binding.tabSettings)
         tabs.forEachIndexed { i, t ->
             t.isActivated = i == index
@@ -203,7 +258,6 @@ class LiquidHomeActivity : AppCompatActivity() {
             (t.getChildAt(0) as ImageView).setColorFilter(color)
             (t.getChildAt(1) as TextView).setTextColor(color)
         }
-        currentTab = index
     }
 
     /** toast：底部滑入，2 秒后滑出；供三个 Fragment 共用 */

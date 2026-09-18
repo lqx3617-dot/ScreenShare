@@ -5,7 +5,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/bg_liquid_root"
-    android:fitsSystemWindows="true">
+    android:fitsSystemWindows="false">
 
     <!-- 光斑层（6 个彩色模糊圆盘，代码添加 + 平移动画） -->
     <FrameLayout
