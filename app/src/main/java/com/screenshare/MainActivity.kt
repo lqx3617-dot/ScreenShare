@@ -615,8 +615,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 leavingMeeting = true
                 cleanupPeer()
                 resetUI()
+                startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 finish()
-                startActivity(Intent(this, LiquidHomeActivity::class.java))
             }
         }
     }
@@ -641,7 +641,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             cleanupPeer()
             resetUI()
             restoreSystemBars()
-            startActivity(Intent(this, LiquidHomeActivity::class.java))
+            startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
             finish()
         } else {
             super.onBackPressed()
@@ -2111,6 +2111,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // v1.261: 新连接开始，清除上次会议的终止/重连标记
         connectionTerminated = false
         reconnecting = false
+        leavingMeeting = false
         // 启用 WebRTC 原生日志，便于诊断采集/信令问题
         ScreenCapturerFactory.enableDiagnosticLogging()
         val p = WebRTCPeer(this, eglBaseContext!!, this)
@@ -2348,7 +2349,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             resetUI()
             if (!isFinishing && !isDestroyed) {
                 restoreSystemBars()
-                startActivity(Intent(this, LiquidHomeActivity::class.java))
+                startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 finish()
             }
             return
@@ -2937,7 +2938,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 // 会议异常断开：返回连接页（主动离开时不重复跳转）
                 if (!leavingMeeting && !isFinishing && !isDestroyed) {
                     restoreSystemBars()
-                    startActivity(Intent(this, LiquidHomeActivity::class.java))
+                    startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                     finish()
                 }
                 return@runOnUiThread
@@ -4196,7 +4197,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         updateUI(message)
         if (isFinishing || isDestroyed) return
         restoreSystemBars()
-        startActivity(Intent(this, LiquidHomeActivity::class.java))
+        startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         finish()
     }
 
@@ -4210,7 +4211,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         resetUI()
         if (isFinishing || isDestroyed) return
         restoreSystemBars()
-        startActivity(Intent(this, LiquidHomeActivity::class.java))
+        startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         finish()
     }
 
@@ -4416,7 +4417,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("❌ 未授权屏幕共享")
             if (!isFinishing && !isDestroyed) {
                 restoreSystemBars()
-                startActivity(Intent(this, LiquidHomeActivity::class.java))
+                startActivity(Intent(this, LiquidHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 finish()
             }
         }

@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.EditText
 import androidx.fragment.app.Fragment
 import com.screenshare.BuildConfig
@@ -121,6 +122,8 @@ class HomeFragment : Fragment() {
 
     /** 输满自动跳下一格，Backspace 空格回退；最后一格输满自动加入 */
     private fun setupCodeInputs() {
+        // 视图重建时先清空旧引用（replace 复用 Fragment 实例会再次进入 onViewCreated）
+        codeEdits.clear()
         codeEdits.apply {
             add(binding.etCode0); add(binding.etCode1); add(binding.etCode2); add(binding.etCode3)
         }
@@ -234,7 +237,8 @@ class HomeFragment : Fragment() {
         prefillCode: String? = null,
         prefillRole: String = MeetingActivity.ACTION_CREATE,
         title: String = "设置专属房间",
-        positive: String = "进入"
+        positive: String = "进入",
+        enterAfterSave: Boolean = true
     ) {
         val ctx = requireContext()
         val dialog = Dialog(ctx)
@@ -244,6 +248,11 @@ class HomeFragment : Fragment() {
             setBackgroundDrawableResource(android.R.color.transparent)
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
+            // 弹键盘时重排布局，避免输入框/按钮被遮挡
+            setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            )
         }
         dv.tvDialogTitle.text = title
         dv.btnEnter.text = positive
@@ -274,7 +283,7 @@ class HomeFragment : Fragment() {
             dialog.dismiss()
             renderFavoriteCard()
             // 首次设置直接进入会议室；「换一个」只保存不进入
-            if (positive == "进入") {
+            if (enterAfterSave) {
                 enterMeeting(chosenRole, code)
             } else {
                 toast("已更换房间号 $code")
@@ -330,7 +339,10 @@ class HomeFragment : Fragment() {
                     val onlineHint = json.optBoolean("online", false)
                     if (onlineHint != favOnline) {
                         favOnline = onlineHint
-                        activity?.runOnUiThread { renderFavoriteCard() }
+                        // 视图可能已销毁（切 Tab/退后台），回调时必须判空
+                        activity?.runOnUiThread {
+                            if (_binding != null) renderFavoriteCard()
+                        }
                     }
                 }
             } catch (t: Throwable) {
@@ -341,8 +353,8 @@ class HomeFragment : Fragment() {
 
     /** 从 BuildConfig.SIGNAL_URL（wss://.../ws）推导 HTTP base（https://...） */
     private fun signalHttpBase(): String? {
-        val s = BuildConfig.SIGNAL_URL
-        if (s.isNullOrBlank()) return null
+        val s = BuildConfig.SIGNAL_URL.trimEnd('/')
+        if (s.isBlank()) return null
         return when {
             s.startsWith("wss://") -> "https://" + s.removePrefix("wss://").removeSuffix("/ws")
             s.startsWith("ws://") -> "http://" + s.removePrefix("ws://").removeSuffix("/ws")
@@ -491,7 +503,8 @@ class HomeFragment : Fragment() {
                 prefillCode = fav.first,
                 prefillRole = fav.second,
                 title = "更换房间号",
-                positive = "确定"
+                positive = "确定",
+                enterAfterSave = false
             )
         }
 
@@ -507,7 +520,11 @@ class HomeFragment : Fragment() {
     }
 
     /** 状态点脉冲（在线时呼吸提示） */
+    private var pulseAnimator: ObjectAnimator? = null
     private fun pulseStatusDot() {
+        // 已在脉冲则不重复创建（renderFavoriteCard 可能多次调用）
+        pulseAnimator?.let { if (it.isRunning) return }
+        pulseAnimator?.cancel()
         ObjectAnimator.ofPropertyValuesHolder(
             binding.viewStatusDot,
             PropertyValuesHolder.ofFloat("scaleX", 1f, 1.3f, 1f),
@@ -518,6 +535,7 @@ class HomeFragment : Fragment() {
             repeatCount = ObjectAnimator.INFINITE
             interpolator = android.view.animation.AccelerateDecelerateInterpolator()
             start()
+            pulseAnimator = this
         }
     }
 
@@ -544,6 +562,8 @@ class HomeFragment : Fragment() {
         super.onDestroyView()
         handler.removeCallbacksAndMessages(null)
         stopFavPolling()
+        pulseAnimator?.cancel()
+        pulseAnimator = null
         _binding = null
     }
 }

@@ -73,7 +73,7 @@ class App : Application() {
                 Log.e("App", "崩溃处理失败", t)
             }
             try {
-                val intent = Intent(this, MeetingActivity::class.java)
+                val intent = Intent(this, LiquidHomeActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
                 startActivity(intent)
             } catch (ignored: Throwable) {

@@ -65,6 +65,9 @@ class LiquidHomeActivity : AppCompatActivity() {
     private val settingsFragment = SettingsFragment()
     private var currentTab = -1
 
+    /** 全部无限动画引用，销毁时统一取消防泄漏 */
+    private val infiniteAnimators = ArrayList<ObjectAnimator>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLiquidBinding.inflate(layoutInflater)
@@ -113,6 +116,7 @@ class LiquidHomeActivity : AppCompatActivity() {
                 repeatMode = ObjectAnimator.REVERSE
                 repeatCount = ObjectAnimator.INFINITE
                 interpolator = AccelerateDecelerateInterpolator()
+                infiniteAnimators.add(this)
                 start()
             }
         }
@@ -154,6 +158,7 @@ class LiquidHomeActivity : AppCompatActivity() {
                 startDelay = delay
                 repeatCount = ObjectAnimator.INFINITE
                 interpolator = LinearInterpolator()
+                infiniteAnimators.add(this)
                 start()
             }
             ObjectAnimator.ofFloat(iv, "rotation", 0f, 360f).apply {
@@ -161,6 +166,7 @@ class LiquidHomeActivity : AppCompatActivity() {
                 startDelay = delay
                 repeatCount = ObjectAnimator.INFINITE
                 interpolator = LinearInterpolator()
+                infiniteAnimators.add(this)
                 start()
             }
         }
@@ -237,5 +243,9 @@ class LiquidHomeActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         toastRunnable?.let { handler.removeCallbacks(it) }
+        // 取消全部无限动画，避免 Activity 销毁后视图树被动画器永久持有
+        infiniteAnimators.forEach { it.cancel() }
+        infiniteAnimators.clear()
+        handler.removeCallbacksAndMessages(null)
     }
 }
