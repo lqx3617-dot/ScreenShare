@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置专属房间弹窗：房间号输入 + 角色选择 + 进入/取消 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="28dp"
+    android:layout_marginEnd="28dp"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:background="@drawable/bg_liquid_dialog">
+
+    <!-- 标题 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="设置专属房间"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFFFF" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="双方约定同一个房间号，各自选好角色，之后一键进入"
+        android:textSize="13sp"
+        android:lineSpacingExtra="3dp"
+        android:textColor="#B0FFFFFF" />
+
+    <!-- 房间号输入 -->
+    <EditText
+        android:id="@+id/etRoomCode"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/bg_code_box"
+        android:hint="输入 4 位数字房间号"
+        android:textColorHint="#59FFFFFF"
+        android:textColor="#FFFFFFFF"
+        android:textSize="17sp"
+        android:letterSpacing="0.3"
+        android:gravity="center"
+        android:inputType="number"
+        android:maxLength="4"
+        android:maxLines="1"
+        android:cursorVisible="true"
+        android:textCursorDrawable="@drawable/cursor_liquid" />
+
+    <!-- 角色选择 -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:layout_marginBottom="10dp"
+        android:text="选择角色"
+        android:textSize="13sp"
+        android:textColor="#99FFFFFF" />
+
+    <LinearLayout
+        android:id="@+id/roleCreate"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="14dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?android:attr/selectableItemBackground"
+        android:background="@drawable/bg_liquid_tab_item">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:src="@drawable/ic_liquid_cast"
+            app:tint="#FFFFFFFF" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="我是共享方"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="TA 看我的屏幕"
+            android:textSize="12sp"
+            android:textColor="#99FFFFFF" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/roleJoin"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="14dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?android:attr/selectableItemBackground"
+        android:background="@drawable/bg_liquid_tab_item">
+
+        <ImageView
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:src="@drawable/ic_liquid_login"
+            app:tint="#FFFFFFFF" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="我是观看方"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="我看 TA 的屏幕"
+            android:textSize="12sp"
+            android:textColor="#99FFFFFF" />
+    </LinearLayout>
+
+    <!-- 按钮区 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btnCancel"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="48dp"
+            android:layout_marginEnd="10dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:background="@drawable/bg_liquid_outline"
+            android:text="取消"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#CCFFFFFF" />
+
+        <TextView
+            android:id="@+id/btnEnter"
+            android:layout_width="0dp"
+            android:layout_weight="1.4"
+            android:layout_height="48dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:background="@drawable/bg_liquid_btn"
+            android:text="进入"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF" />
+    </LinearLayout>
+</LinearLayout>

@@ -609,14 +609,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             handleShareLink(intent)
             return
         }
-        // 无会议意图：兜底返回连接页（正常不会发生，MainActivity 仅由 MeetingActivity 或分享链接进入）
+        // 无会议意图：兜底返回液态主界面（正常不会发生，MainActivity 仅由会议入口或分享链接进入）
         binding.root.post {
             if (!isFinishing && !isDestroyed) {
                 leavingMeeting = true
                 cleanupPeer()
                 resetUI()
                 finish()
-                startActivity(Intent(this, MeetingActivity::class.java))
+                startActivity(Intent(this, LiquidHomeActivity::class.java))
             }
         }
     }
@@ -641,7 +641,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             cleanupPeer()
             resetUI()
             restoreSystemBars()
-            startActivity(Intent(this, MeetingActivity::class.java))
+            startActivity(Intent(this, LiquidHomeActivity::class.java))
             finish()
         } else {
             super.onBackPressed()
@@ -2348,7 +2348,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             resetUI()
             if (!isFinishing && !isDestroyed) {
                 restoreSystemBars()
-                startActivity(Intent(this, MeetingActivity::class.java))
+                startActivity(Intent(this, LiquidHomeActivity::class.java))
                 finish()
             }
             return
@@ -2937,7 +2937,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 // 会议异常断开：返回连接页（主动离开时不重复跳转）
                 if (!leavingMeeting && !isFinishing && !isDestroyed) {
                     restoreSystemBars()
-                    startActivity(Intent(this, MeetingActivity::class.java))
+                    startActivity(Intent(this, LiquidHomeActivity::class.java))
                     finish()
                 }
                 return@runOnUiThread
@@ -4196,7 +4196,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         updateUI(message)
         if (isFinishing || isDestroyed) return
         restoreSystemBars()
-        startActivity(Intent(this, MeetingActivity::class.java))
+        startActivity(Intent(this, LiquidHomeActivity::class.java))
         finish()
     }
 
@@ -4210,7 +4210,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         resetUI()
         if (isFinishing || isDestroyed) return
         restoreSystemBars()
-        startActivity(Intent(this, MeetingActivity::class.java))
+        startActivity(Intent(this, LiquidHomeActivity::class.java))
         finish()
     }
 
@@ -4416,7 +4416,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("❌ 未授权屏幕共享")
             if (!isFinishing && !isDestroyed) {
                 restoreSystemBars()
-                startActivity(Intent(this, MeetingActivity::class.java))
+                startActivity(Intent(this, LiquidHomeActivity::class.java))
                 finish()
             }
         }

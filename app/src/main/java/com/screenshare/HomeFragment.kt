@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -12,13 +13,15 @@ import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import com.screenshare.BuildConfig
+import com.screenshare.databinding.DialogLiquidConfirmBinding
+import com.screenshare.databinding.DialogLiquidRoomBinding
 import com.screenshare.databinding.FragmentHomeBinding
 import com.screenshare.databinding.ItemRecentBinding
 import okhttp3.OkHttpClient
@@ -212,47 +215,87 @@ class HomeFragment : Fragment() {
             val isHostRole = fav.second == MeetingActivity.ACTION_CREATE
             val online = favOnline
             if (online == false && !isHostRole) {
-                AlertDialog.Builder(ctx)
-                    .setTitle("对方不在线")
-                    .setMessage("TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？")
-                    .setPositiveButton("进入等待") { _, _ -> enterMeeting(fav.second, fav.first) }
-                    .setNegativeButton("取消", null)
-                    .show()
+                showConfirmDialog(
+                    title = "对方不在线",
+                    message = "TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？",
+                    positive = "进入等待",
+                    negative = "取消"
+                ) { enterMeeting(fav.second, fav.first) }
                 return
             }
             enterMeeting(fav.second, fav.first)
             return
         }
-        // 未设置：预填一个随机 4 位房间号，双方约定即可
-        val input = EditText(ctx).apply {
-            hint = "输入 4 位数字房间号"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            maxLines = 1
-            setText(generateMeetingCode())
-            setSelection(text.length)
+        showRoomDialog()
+    }
+
+    /** 液态玻璃「设置专属房间」弹窗：房间号输入 + 角色选择 */
+    private fun showRoomDialog() {
+        val ctx = requireContext()
+        val dialog = Dialog(ctx)
+        val dv = DialogLiquidRoomBinding.inflate(layoutInflater)
+        dialog.setContentView(dv.root)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
         }
-        val roles = arrayOf("我是共享方（TA 看我的屏幕）", "我是观看方（我看 TA 的屏幕）")
+        // 预填随机 4 位房间号
         var chosenRole = MeetingActivity.ACTION_CREATE
-        AlertDialog.Builder(ctx)
-            .setTitle("设置专属房间")
-            .setMessage("双方约定同一个房间号，各自选好角色，之后一键进入")
-            .setView(input)
-            .setSingleChoiceItems(roles, 0) { _, which ->
-                chosenRole = if (which == 0) MeetingActivity.ACTION_CREATE else MeetingActivity.ACTION_JOIN
+        dv.etRoomCode.setText(generateMeetingCode())
+        dv.etRoomCode.setSelection(dv.etRoomCode.text.length)
+        dv.roleCreate.isActivated = true
+
+        val pickRole = { create: Boolean ->
+            chosenRole = if (create) MeetingActivity.ACTION_CREATE else MeetingActivity.ACTION_JOIN
+            dv.roleCreate.isActivated = create
+            dv.roleJoin.isActivated = !create
+        }
+        dv.roleCreate.setOnClickListener { pickRole(true) }
+        dv.roleJoin.setOnClickListener { pickRole(false) }
+
+        dv.btnEnter.setOnClickListener {
+            val code = dv.etRoomCode.text.toString().trim()
+            if (!Regex("^[0-9]{4}$").matches(code)) {
+                toast("房间号需为 4 位数字")
+                return@setOnClickListener
             }
-            .setPositiveButton("进入") { _, _ ->
-                val code = input.text.toString().trim()
-                if (!Regex("^[0-9]{4}$").matches(code)) {
-                    toast("房间号需为 4 位数字")
-                    return@setPositiveButton
-                }
-                MeetingActivity.setFavoriteRoom(ctx, chosenRole, code)
-                favOnline = null
-                renderFavoriteCard()
-                enterMeeting(chosenRole, code)
-            }
-            .setNegativeButton("取消", null)
-            .show()
+            MeetingActivity.setFavoriteRoom(ctx, chosenRole, code)
+            favOnline = null
+            dialog.dismiss()
+            renderFavoriteCard()
+            enterMeeting(chosenRole, code)
+        }
+        dv.btnCancel.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+    }
+
+    /** 液态玻璃通用确认弹窗（换角色 / 不在线提示等场景复用） */
+    private fun showConfirmDialog(
+        title: String,
+        message: String,
+        positive: String,
+        negative: String,
+        onPositive: () -> Unit
+    ) {
+        val dialog = Dialog(requireContext())
+        val dv = DialogLiquidConfirmBinding.inflate(layoutInflater)
+        dialog.setContentView(dv.root)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
+        dv.tvDialogTitle.text = title
+        dv.tvDialogMessage.text = message
+        dv.btnPositive.text = positive
+        dv.btnNegative.text = negative
+        dv.btnPositive.setOnClickListener {
+            dialog.dismiss()
+            onPositive()
+        }
+        dv.btnNegative.setOnClickListener { dialog.dismiss() }
+        dialog.show()
     }
 
     /** 查询专属房间在线状态并刷新 UI */
@@ -410,17 +453,17 @@ class HomeFragment : Fragment() {
                 MeetingActivity.ACTION_JOIN else MeetingActivity.ACTION_CREATE
             val newRoleText = if (newRole == MeetingActivity.ACTION_CREATE)
                 "共享方（TA 看我的屏幕）" else "观看方（我看 TA 的屏幕）"
-            AlertDialog.Builder(ctx)
-                .setTitle("切换角色")
-                .setMessage("房间号 ${fav.first} 保持不变，切换后你成为：$newRoleText")
-                .setPositiveButton("切换") { _, _ ->
-                    MeetingActivity.setFavoriteRoom(ctx, newRole, fav.first)
-                    favOnline = null
-                    renderFavoriteCard()
-                    toast("已切换为$newRoleText")
-                }
-                .setNegativeButton("取消", null)
-                .show()
+            showConfirmDialog(
+                title = "切换角色",
+                message = "房间号 ${fav.first} 保持不变\n切换后你成为：$newRoleText",
+                positive = "切换",
+                negative = "取消"
+            ) {
+                MeetingActivity.setFavoriteRoom(ctx, newRole, fav.first)
+                favOnline = null
+                renderFavoriteCard()
+                toast("已切换为$newRoleText")
+            }
         }
 
         // 换一个：生成新的 4 位房间号
