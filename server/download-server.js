@@ -72,7 +72,77 @@ function purgeOldLogs() {
     console.error("[logs] purge failed:", e.message);
   }
 }
+// 从日志首部提取设备键（诊断ID+型号）：客户端每次上传的是本地累积日志的
+// 完整快照，历史内容已包含在最新快照中，同设备旧文件纯属重复占用。
+// 旧版日志头无诊断ID时退化为仅型号
+function deviceKeyOf(head) {
+  const m = /设备=(\S+)\s+(\S+)/.exec(head);
+  if (!m) return null;
+  const d = /诊断ID=([^\s]+)/.exec(head);
+  return (d ? d[1] : "nodiag") + "|" + m[1] + " " + m[2];
+}
+// 只读文件首部 1KB 提取设备键，避免对大日志全量 IO
+function logFileHead(f) {
+  let fd;
+  try {
+    fd = fs.openSync(f, "r");
+    const buf = Buffer.alloc(1024);
+    const n = fs.readSync(fd, buf, 0, 1024, 0);
+    return buf.subarray(0, n).toString("utf8");
+  } catch (e) {
+    return "";
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) {} }
+  }
+}
+// 删除同设备的旧日志（保留本次新上传的）
+function dedupeDeviceLogs(newName, key) {
+  if (!key) return;
+  try {
+    for (const name of fs.readdirSync(LOGS_DIR)) {
+      if (!name.endsWith(".log") || name === newName) continue;
+      const f = path.join(LOGS_DIR, name);
+      if (deviceKeyOf(logFileHead(f)) === key) {
+        try {
+          fs.unlinkSync(f);
+          console.log(`[logs] dedupe removed ${name}`);
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.error("[logs] dedupe failed:", e.message);
+  }
+}
+// 启动时全量去重：同设备键只留 mtime 最新的一份
+function dedupeAllLogs() {
+  try {
+    const entries = [];
+    for (const name of fs.readdirSync(LOGS_DIR)) {
+      if (!name.endsWith(".log")) continue;
+      const f = path.join(LOGS_DIR, name);
+      const key = deviceKeyOf(logFileHead(f));
+      if (!key) continue;
+      try { entries.push({ f, name, key, mtime: fs.statSync(f).mtimeMs }); } catch (e) {}
+    }
+    const keep = new Map();
+    for (const e of entries) {
+      const prev = keep.get(e.key);
+      if (!prev || e.mtime > prev.mtime) keep.set(e.key, e);
+    }
+    for (const e of entries) {
+      if (keep.get(e.key) !== e) {
+        try {
+          fs.unlinkSync(e.f);
+          console.log(`[logs] dedupe removed ${e.name}`);
+        } catch (err) {}
+      }
+    }
+  } catch (e) {
+    console.error("[logs] dedupeAll failed:", e.message);
+  }
+}
 purgeOldLogs();
+dedupeAllLogs();
 setInterval(purgeOldLogs, LOG_MAX_AGE_MS);
 
 // 当前正在执行的发布任务（单任务互斥）+ 已完成任务历史（供状态查询）
@@ -417,6 +487,8 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
         const rand = crypto.randomBytes(4).toString("hex");
         const name = `log-${ts}-${rand}.log`;
         fs.writeFileSync(path.join(LOGS_DIR, name), body);
+        // 同设备旧快照已完整包含本次内容，去重删除
+        dedupeDeviceLogs(name, deviceKeyOf(body.subarray(0, 1024).toString("utf8")));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, file: name, size: body.length }));
         done(200);
