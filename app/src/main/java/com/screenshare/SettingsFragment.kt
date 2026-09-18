@@ -1,37 +1,137 @@
 package com.screenshare
 
+import android.app.Dialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
-import com.screenshare.databinding.FragmentPlaceholderBinding
+import com.screenshare.databinding.DialogSettingsAudioBinding
+import com.screenshare.databinding.FragmentSettingsBinding
 
-/** 设置页（占位 + 日志导出入口，日志功能按用户要求放在设置里） */
+/**
+ * 设置页：音频设置 / 检查更新 / 导出日志 / 关于 / 服务器地址。
+ * 音频偏好持久化在 "audio_settings"，会议中 MainActivity 读取同一份 prefs 生效。
+ */
 class SettingsFragment : Fragment() {
 
-    private var _binding: FragmentPlaceholderBinding? = null
+    private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
+
+    private val audioPrefs by lazy {
+        requireContext().getSharedPreferences("audio_settings", Context.MODE_PRIVATE)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        _binding = FragmentPlaceholderBinding.inflate(inflater, container, false)
+        _binding = FragmentSettingsBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        binding.tvPlaceholderTitle.text = "设置"
-        binding.ivPlaceholderIcon.setImageResource(R.drawable.ic_liquid_settings)
-        binding.btnExportLog.visibility = View.VISIBLE
-        binding.btnExportLog.setOnClickListener { exportLogFile() }
+
+        val versionName = try {
+            requireContext().packageManager.getPackageInfo(
+                requireContext().packageName, 0
+            ).versionName
+        } catch (t: Throwable) {
+            BuildConfig.VERSION_NAME
+        }
+        binding.tvVersion.text = "ScreenShare v$versionName"
+        binding.tvAboutSub.text = "Android ${Build.VERSION.RELEASE} · ${Build.MANUFACTURER} ${Build.MODEL}"
+        binding.tvUpdateSub.text = "当前 v$versionName · 点击检查新版本"
+
+        // 服务器地址（BuildConfig 注入；空显示未配置）
+        binding.tvSignalUrl.text = BuildConfig.SIGNAL_URL.ifEmpty { "未配置" }
+        binding.tvUpdateServerUrl.text = BuildConfig.UPDATE_URL.ifEmpty { "未配置" }
+        binding.tvAlbumServerUrl.text = BuildConfig.ALBUM_URL.ifEmpty { "未配置" }
+
+        updateAudioSummary()
+
+        binding.rowAudio.setOnClickListener { showAudioDialog() }
+        binding.rowUpdate.setOnClickListener {
+            Toast.makeText(requireContext(), "正在检查更新…", Toast.LENGTH_SHORT).show()
+            // UpdateChecker 内部用 context as? Activity 切主线程弹窗，须传 Activity
+            UpdateChecker.check(requireActivity(), manual = true)
+        }
+        binding.rowExportLog.setOnClickListener { exportLogFile() }
+        binding.rowAbout.setOnClickListener { copyAboutInfo() }
+
+        binding.rowSignal.setOnClickListener { copyText("信号服务器地址", BuildConfig.SIGNAL_URL) }
+        binding.rowUpdateServer.setOnClickListener { copyText("更新服务地址", BuildConfig.UPDATE_URL) }
+        binding.rowAlbumServer.setOnClickListener { copyText("相册服务地址", BuildConfig.ALBUM_URL) }
+    }
+
+    /** 音频设置摘要行 */
+    private fun updateAudioSummary() {
+        val media = audioPrefs.getInt("media_volume", 100).coerceIn(0, 100)
+        val talk = audioPrefs.getInt("talk_volume", 100).coerceIn(0, 100)
+        val duck = if (audioPrefs.getBoolean("duck_enabled", true)) "开" else "关"
+        binding.tvAudioSub.text = "媒体 $media · 对讲 $talk · 闪避 $duck"
+    }
+
+    /** 音频设置弹窗（液态玻璃风格） */
+    private fun showAudioDialog() {
+        val ctx = context ?: return
+        val dialog = Dialog(ctx).apply {
+            requestWindowFeature(Window.FEATURE_NO_TITLE)
+            window?.setBackgroundDrawableResource(android.R.color.transparent)
+            window?.setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val av = DialogSettingsAudioBinding.inflate(LayoutInflater.from(ctx)).also {
+            dialog.setContentView(it.root)
+        }
+
+        av.sbMedia.progress = audioPrefs.getInt("media_volume", 100).coerceIn(0, 100)
+        av.sbTalk.progress = audioPrefs.getInt("talk_volume", 100).coerceIn(0, 100)
+        av.swDuck.isChecked = audioPrefs.getBoolean("duck_enabled", true)
+        av.tvMedia.text = av.sbMedia.progress.toString()
+        av.tvTalk.text = av.sbTalk.progress.toString()
+
+        av.sbMedia.setOnSeekBarChangeListener(object :
+            android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                av.tvMedia.text = p.toString()
+            }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
+                audioPrefs.edit().putInt("media_volume", sb?.progress ?: 100).apply()
+                updateAudioSummary()
+            }
+        })
+        av.sbTalk.setOnSeekBarChangeListener(object :
+            android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                av.tvTalk.text = p.toString()
+            }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
+                audioPrefs.edit().putInt("talk_volume", sb?.progress ?: 100).apply()
+                updateAudioSummary()
+            }
+        })
+        av.swDuck.setOnCheckedChangeListener { _, isChecked ->
+            audioPrefs.edit().putBoolean("duck_enabled", isChecked).apply()
+            updateAudioSummary()
+        }
+
+        dialog.show()
     }
 
     /** 导出运行日志：系统分享面板发送，便于反馈崩溃等问题 */
@@ -56,6 +156,41 @@ class SettingsFragment : Fragment() {
         } catch (t: Throwable) {
             Log.e("SettingsFragment", "导出日志失败", t)
             Toast.makeText(requireContext(), "导出日志失败，请稍后重试", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 复制完整诊断信息（版本 / 设备 / 诊断 ID） */
+    private fun copyAboutInfo() {
+        val versionName = try {
+            requireContext().packageManager.getPackageInfo(
+                requireContext().packageName, 0
+            ).versionName
+        } catch (t: Throwable) {
+            BuildConfig.VERSION_NAME
+        }
+        val diagId = BuildConfig.DIAG_TOKEN
+        val info = buildString {
+            append("ScreenShare v$versionName\n")
+            append("Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n")
+            append("${Build.MANUFACTURER} ${Build.MODEL}\n")
+            if (diagId.isNotEmpty()) append("诊断ID: $diagId")
+        }
+        copyText("诊断信息", info)
+    }
+
+    private fun copyText(label: String, content: String) {
+        if (content.isEmpty()) {
+            Toast.makeText(requireContext(), "$label 未配置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val cm = requireContext()
+                .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText(label, content))
+            Toast.makeText(requireContext(), "已复制$label", Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Log.e("SettingsFragment", "复制失败", t)
+            Toast.makeText(requireContext(), "复制失败", Toast.LENGTH_SHORT).show()
         }
     }
 
