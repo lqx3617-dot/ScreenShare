@@ -27,8 +27,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-versionCode = 297
-versionName = "1.292"
+versionCode = 310
+versionName = "1.305"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -131,4 +131,7 @@ dependencies {
 
     // 信令 WebSocket / 崩溃上报直接使用
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // 账号系统：加密存储登录令牌
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }
