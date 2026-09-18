@@ -229,8 +229,13 @@ class HomeFragment : Fragment() {
         showRoomDialog()
     }
 
-    /** 液态玻璃「设置专属房间」弹窗：房间号输入 + 角色选择 */
-    private fun showRoomDialog() {
+    /** 液态玻璃「专属房间」弹窗：房间号输入 + 角色选择（首次设置 / 换一个 复用） */
+    private fun showRoomDialog(
+        prefillCode: String? = null,
+        prefillRole: String = MeetingActivity.ACTION_CREATE,
+        title: String = "设置专属房间",
+        positive: String = "进入"
+    ) {
         val ctx = requireContext()
         val dialog = Dialog(ctx)
         val dv = DialogLiquidRoomBinding.inflate(layoutInflater)
@@ -240,11 +245,15 @@ class HomeFragment : Fragment() {
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
         }
-        // 预填随机 4 位房间号
-        var chosenRole = MeetingActivity.ACTION_CREATE
-        dv.etRoomCode.setText(generateMeetingCode())
+        dv.tvDialogTitle.text = title
+        dv.btnEnter.text = positive
+        // 预填房间号：有则沿用，无则随机生成
+        dv.etRoomCode.setText(prefillCode ?: generateMeetingCode())
         dv.etRoomCode.setSelection(dv.etRoomCode.text.length)
-        dv.roleCreate.isActivated = true
+        // 预选角色
+        var chosenRole = prefillRole
+        dv.roleCreate.isActivated = prefillRole == MeetingActivity.ACTION_CREATE
+        dv.roleJoin.isActivated = prefillRole == MeetingActivity.ACTION_JOIN
 
         val pickRole = { create: Boolean ->
             chosenRole = if (create) MeetingActivity.ACTION_CREATE else MeetingActivity.ACTION_JOIN
@@ -264,7 +273,12 @@ class HomeFragment : Fragment() {
             favOnline = null
             dialog.dismiss()
             renderFavoriteCard()
-            enterMeeting(chosenRole, code)
+            // 首次设置直接进入会议室；「换一个」只保存不进入
+            if (positive == "进入") {
+                enterMeeting(chosenRole, code)
+            } else {
+                toast("已更换房间号 $code")
+            }
         }
         dv.btnCancel.setOnClickListener { dialog.dismiss() }
         dialog.show()
@@ -466,19 +480,19 @@ class HomeFragment : Fragment() {
             }
         }
 
-        // 换一个：生成新的 4 位房间号
+        // 换一个：弹窗自定义新房间号（沿用当前角色）
         binding.tvChangeRoom.setOnClickListener {
-            val ctx = requireContext()
-            val fav = MeetingActivity.getFavoriteRoom(ctx)
+            val fav = MeetingActivity.getFavoriteRoom(requireContext())
             if (fav == null) {
                 toast("请先设置专属房间")
                 return@setOnClickListener
             }
-            val newCode = generateMeetingCode()
-            MeetingActivity.setFavoriteRoom(ctx, fav.second, newCode)
-            favOnline = null
-            renderFavoriteCard()
-            toast("已更换房间号 $newCode")
+            showRoomDialog(
+                prefillCode = fav.first,
+                prefillRole = fav.second,
+                title = "更换房间号",
+                positive = "确定"
+            )
         }
 
         binding.btnClearRecent.setOnClickListener {
