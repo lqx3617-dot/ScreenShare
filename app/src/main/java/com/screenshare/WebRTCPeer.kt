@@ -577,27 +577,40 @@ class WebRTCPeer(
             return
         }
         conn.videoSender = rtp
+        // v1.292: 新连接必须继承当前自适应档位，不能固定用高档初始值。
+        // 此前固定 4M/48fps，弱网期间（档位6=800k/15fps）新 viewer 一接入就把
+        // 该连接的 maxBitrateBps/maxFramerate 抬回 4M/48；而 applyNetworkAdaptation
+        // 因 targetFps==captureFps 且 profile 未变跳过整个切换块、不会纠正，
+        // 导致档位6 名义上限 800k、实发却 1~1.9Mbps、编码 48fps（真机日志实测）。
+        val cap = minOf(adaptBitrateCaps[curAdaptLevel], maxBitrateCap)
+        val fps = captureFpsForLevel(curAdaptLevel)
         val params = rtp.parameters
         params.encodings?.firstOrNull()?.let { enc ->
             // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
             // 高动态画面/弱网下拥塞控制起步更平缓，减少开头几秒的积压掉帧
             // v1.249: 低端机进一步截到 6M（maxBitrateCap）
             // v1.251: 初始上限再降到 4M——与初始档位 2 一致，弱 WiFi 开局不再瞬间打满空口队列
-            enc.maxBitrateBps = minOf(4_000_000, maxBitrateCap)
-            enc.minBitrateBps = 600_000
+            enc.maxBitrateBps = cap
+            enc.minBitrateBps = minOf(60_000, cap)
             // v1.246: 与 host 侧 highMotionFpsCap 保持一致
-            enc.maxFramerate = highMotionFpsCap
+            enc.maxFramerate = fps
             enc.networkPriority = 4
             enc.bitratePriority = 4.0
         }
         try {
-            params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            params.degradationPreference = if (curAdaptLevel > 0) {
+                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+            } else {
+                RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            }
         } catch (t: Throwable) {}
         rtp.parameters = params
-        // 初始带宽 2.8M 起步（与初始档位 2 一致），弱网由自适应继续降档
+        // 初始带宽按当前档位（与 applyNetworkAdaptation 的下发值一致）
         try {
-            conn.pc.setBitrate(600_000, 2_800_000, 4_000_000)
-            Log.d(TAG, "viewer#$viewerId 初始带宽 0.6/2.8/4 Mbps")
+            conn.pc.setBitrate(minOf(60_000, cap), (cap * 0.7).toInt(), cap)
+            lastAdaptBitrateCap = cap
+            lastEncoderTargetBps = (cap * 0.7).toInt()
+            Log.d(TAG, "viewer#$viewerId 初始带宽 ${minOf(60_000, cap) / 1000}/${(cap * 0.7).toInt() / 1000}/${cap / 1000} kbps (档位$curAdaptLevel)")
         } catch (t: Throwable) {
             Log.w(TAG, "viewer#$viewerId setBitrate 失败: ${t.message}")
         }
