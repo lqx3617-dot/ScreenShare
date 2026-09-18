@@ -16,7 +16,7 @@ import androidx.fragment.app.Fragment
 import com.screenshare.databinding.FragmentSettingsBinding
 
 /**
- * 设置页：音频设置 / 检查更新 / 导出日志 / 关于 / 服务器地址。
+ * 设置页：音频设置 / 检查更新 / 导出日志 / 关于。
  * 音频偏好持久化在 "audio_settings"，会议中 MainActivity 读取同一份 prefs 生效。
  */
 class SettingsFragment : Fragment() {
@@ -51,10 +51,7 @@ class SettingsFragment : Fragment() {
         binding.tvAboutSub.text = "Android ${Build.VERSION.RELEASE} · ${Build.MANUFACTURER} ${Build.MODEL}"
         binding.tvUpdateSub.text = "当前 v$versionName · 点击检查新版本"
 
-        // 服务器地址（BuildConfig 注入；空显示未配置）
-        binding.tvSignalUrl.text = BuildConfig.SIGNAL_URL.ifEmpty { "未配置" }
-        binding.tvUpdateServerUrl.text = BuildConfig.UPDATE_URL.ifEmpty { "未配置" }
-        binding.tvAlbumServerUrl.text = BuildConfig.ALBUM_URL.ifEmpty { "未配置" }
+        // 服务器地址不在此展示（BuildConfig 注入，用户无需感知）
 
         updateAudioSummary()
 
@@ -69,10 +66,6 @@ class SettingsFragment : Fragment() {
         }
         binding.rowExportLog.setOnClickListener { exportLogFile() }
         binding.rowAbout.setOnClickListener { copyAboutInfo() }
-
-        binding.rowSignal.setOnClickListener { copyText("信号服务器地址", BuildConfig.SIGNAL_URL) }
-        binding.rowUpdateServer.setOnClickListener { copyText("更新服务地址", BuildConfig.UPDATE_URL) }
-        binding.rowAlbumServer.setOnClickListener { copyText("相册服务地址", BuildConfig.ALBUM_URL) }
     }
 
     /** 音频摘要行：供子页面返回时刷新 */
