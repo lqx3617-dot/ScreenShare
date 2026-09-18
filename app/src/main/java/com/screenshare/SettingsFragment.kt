@@ -74,7 +74,9 @@ class SettingsFragment : Fragment() {
     }
 
     /** 音频摘要行：供子页面返回时刷新 */
-    fun refreshAudioSummary() = updateAudioSummary()
+    fun refreshAudioSummary() {
+        if (_binding != null) updateAudioSummary()
+    }
 
     /** 音频设置摘要行 */
     private fun updateAudioSummary() {

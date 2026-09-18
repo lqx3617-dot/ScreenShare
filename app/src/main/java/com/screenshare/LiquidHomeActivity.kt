@@ -268,8 +268,6 @@ class LiquidHomeActivity : AppCompatActivity() {
         ft.replace(R.id.contentArea, target)
         ft.commit()
         binding.tabBar.visibility = View.VISIBLE
-        // 回到设置页后刷新音频摘要行
-        (target as? SettingsFragment)?.refreshAudioSummary()
     }
 
     override fun onBackPressed() {

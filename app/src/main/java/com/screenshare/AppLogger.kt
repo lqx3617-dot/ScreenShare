@@ -32,7 +32,7 @@ object AppLogger {
 
     @Volatile private var logFile: File? = null
     private val lock = Any()
-    private val timeFmt = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
+    private val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
     /**
      * 初始化日志文件并写入设备信息头部（机型验证：型号/系统/分辨率/内存/诊断ID）。幂等。
