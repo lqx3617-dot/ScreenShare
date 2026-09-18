@@ -37,6 +37,44 @@ function publishAuthorized(req) {
   }
 }
 
+// 客户端运行日志上传：存 server/logs/，保留 12 小时，超期自动清理
+const LOGS_DIR = path.join(__dirname, "logs");
+const LOG_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
+const DIAG_TOKEN = process.env.DIAG_TOKEN || "";
+function diagAuthorized(req) {
+  if (!DIAG_TOKEN) return false;
+  const presented = req.headers["x-diag-token"] || "";
+  if (!presented || presented.length !== DIAG_TOKEN.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(DIAG_TOKEN));
+  } catch (e) {
+    return false;
+  }
+}
+// 删除 mtime 超过 12 小时的日志；启动时执行一次，之后每 12 小时巡检
+function purgeOldLogs() {
+  try {
+    fs.mkdirSync(LOGS_DIR, { recursive: true });
+    const cut = Date.now() - LOG_MAX_AGE_MS;
+    for (const name of fs.readdirSync(LOGS_DIR)) {
+      if (!name.endsWith(".log")) continue;
+      const f = path.join(LOGS_DIR, name);
+      try {
+        const st = fs.statSync(f);
+        if (st.mtimeMs < cut) {
+          fs.unlinkSync(f);
+          console.log(`[logs] purged ${name} (age=${Math.round((Date.now() - st.mtimeMs) / 3600000)}h)`);
+        }
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.error("[logs] purge failed:", e.message);
+  }
+}
+purgeOldLogs();
+setInterval(purgeOldLogs, LOG_MAX_AGE_MS);
+
 // 当前正在执行的发布任务（单任务互斥）+ 已完成任务历史（供状态查询）
 let currentTask = null;
 const taskHistory = new Map();
@@ -339,6 +377,55 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       res.end(JSON.stringify({ error: "任务不存在" }));
       done(404);
     }
+    return;
+  }
+  // 客户端运行日志上传：raw body 存盘，便于开发者分析 bug（12 小时后自动清理）
+  if (urlPath === "/api/upload-log" && req.method === "POST") {
+    if (!diagAuthorized(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden" }));
+      done(403);
+      return;
+    }
+    const chunks = [];
+    let tooLarge = false;
+    req.on("data", (c) => {
+      chunks.push(c);
+      const total = chunks.reduce((a, b) => a + b.length, 0);
+      if (total > LOG_MAX_BYTES && !tooLarge) {
+        tooLarge = true;
+        try {
+          res.writeHead(413, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "日志过大" }));
+          done(413);
+        } catch (e) {}
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (tooLarge) return;
+      const body = Buffer.concat(chunks);
+      if (body.length === 0) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "日志为空" }));
+        done(400);
+        return;
+      }
+      try {
+        fs.mkdirSync(LOGS_DIR, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const rand = crypto.randomBytes(4).toString("hex");
+        const name = `log-${ts}-${rand}.log`;
+        fs.writeFileSync(path.join(LOGS_DIR, name), body);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, file: name, size: body.length }));
+        done(200);
+      } catch (e) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "保存失败" }));
+        done(500);
+      }
+    });
     return;
   }
   if (urlPath === "/version.json") {

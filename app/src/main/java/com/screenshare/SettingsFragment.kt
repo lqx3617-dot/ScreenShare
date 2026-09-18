@@ -14,6 +14,11 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import com.screenshare.databinding.FragmentSettingsBinding
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.util.concurrent.TimeUnit
 
 /**
  * 设置页：音频设置 / 检查更新 / 导出日志 / 关于。
@@ -79,15 +84,64 @@ class SettingsFragment : Fragment() {
         binding.tvAudioSub.text = "媒体 $media · 对讲 $talk · 闪避 $duck"
     }
 
-    /** 导出运行日志：系统分享面板发送，便于反馈崩溃等问题 */
+    /** 上传运行日志到云端，便于开发者分析 bug；失败时回退系统分享 */
     private fun exportLogFile() {
-        try {
-            val f = AppLogger.logFile()
-            if (f == null || !f.exists() || f.length() == 0L) {
-                Toast.makeText(requireContext(), "暂无日志可导出", Toast.LENGTH_SHORT).show()
-                return
+        val f = AppLogger.logFile()
+        if (f == null || !f.exists() || f.length() == 0L) {
+            Toast.makeText(requireContext(), "暂无日志可导出", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val ctx = context ?: return
+        Toast.makeText(ctx, "正在上传日志…", Toast.LENGTH_SHORT).show()
+        Thread {
+            var uploaded = false
+            var errMsg: String? = null
+            try {
+                val body = f.readText()
+                // UPDATE_URL 形如 https://host/version.json，提取基址拼上传端点
+                val u = java.net.URI(BuildConfig.UPDATE_URL)
+                val base = buildString {
+                    append(u.scheme).append("://").append(u.host)
+                    if (u.port != -1) append(":").append(u.port)
+                }
+                val url = "$base/api/upload-log"
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .writeTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build()
+                val req = Request.Builder()
+                    .url(url)
+                    .header("X-Diag-Token", BuildConfig.DIAG_TOKEN)
+                    .post(body.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        uploaded = true
+                        AppLogger.app("用户上传日志到云端 (${f.length()}B)")
+                    } else {
+                        errMsg = "服务器响应 ${resp.code}"
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.e("SettingsFragment", "上传日志失败", t)
+                errMsg = t.message
             }
-            AppLogger.app("用户导出日志文件 (${f.length()}B)")
+            if (!isAdded || _binding == null) return@Thread
+            requireActivity().runOnUiThread {
+                if (uploaded) {
+                    Toast.makeText(ctx, "日志已上传，开发者可查看", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(ctx, "上传失败${errMsg?.let { "：$it" } ?: ""}，可改用分享", Toast.LENGTH_LONG).show()
+                    shareLogFile(f)
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /** 回退方案：系统分享发送日志文件 */
+    private fun shareLogFile(f: java.io.File) {
+        try {
             val uri = FileProvider.getUriForFile(
                 requireContext(), "${requireContext().packageName}.fileprovider", f
             )
@@ -99,8 +153,7 @@ class SettingsFragment : Fragment() {
             }
             startActivity(Intent.createChooser(send, "导出日志"))
         } catch (t: Throwable) {
-            Log.e("SettingsFragment", "导出日志失败", t)
-            Toast.makeText(requireContext(), "导出日志失败，请稍后重试", Toast.LENGTH_SHORT).show()
+            Log.e("SettingsFragment", "分享日志失败", t)
         }
     }
 

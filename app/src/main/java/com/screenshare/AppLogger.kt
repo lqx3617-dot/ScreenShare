@@ -35,7 +35,7 @@ object AppLogger {
     private val timeFmt = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
 
     /**
-     * 初始化日志文件并写入设备信息头部。幂等，可在 Application/Activity onCreate 调用。
+     * 初始化日志文件并写入设备信息头部（机型验证：型号/系统/分辨率/内存/诊断ID）。幂等。
      */
     fun init(context: Context) {
         synchronized(lock) {
@@ -50,13 +50,27 @@ object AppLogger {
                 logFile = f
                 writeLine(
                     "==== 应用启动 v${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) " +
-                        "设备=${Build.MANUFACTURER} ${Build.MODEL} Android${Build.VERSION.RELEASE}(${Build.VERSION.SDK_INT}) ===="
+                        "设备=${Build.MANUFACTURER} ${Build.MODEL} Android${Build.VERSION.RELEASE}(${Build.VERSION.SDK_INT}) " +
+                        "分辨率=${screenSize(context)} 内存=${totalMemMb(context)}MB " +
+                        "诊断ID=${BuildConfig.DIAG_TOKEN} ===="
                 )
             } catch (t: Throwable) {
                 Log.w("AppLogger", "日志文件初始化失败: ${t.message}")
             }
         }
     }
+
+    private fun screenSize(context: Context): String = try {
+        val dm = context.resources.displayMetrics
+        "${dm.widthPixels}x${dm.heightPixels}"
+    } catch (_: Throwable) { "unknown" }
+
+    private fun totalMemMb(context: Context): Long = try {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        mi.totalMem / (1024 * 1024)
+    } catch (_: Throwable) { -1 }
 
     fun webrtc(msg: String) = d(TAG_WEBRTC, msg)
 
