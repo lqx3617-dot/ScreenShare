@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 沉稳红渐变按钮（结束会议/危险操作）：红色渐变，按下提亮，禁用降亮 45% -->
+<!-- 结束会议按钮：红粉渐变 + 圆角 20，按下提亮，禁用降亮 45% -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_enabled="false">
         <layer-list>
@@ -10,11 +10,11 @@
     </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <gradient
-                android:angle="0"
+                android:angle="135"
                 android:startColor="#FFFF8A8A"
-                android:endColor="@color/danger_bright" />
+                android:endColor="#FFFF2D55" />
         </shape>
     </item>
     <item android:drawable="@drawable/bg_btn_neon_red_n" />

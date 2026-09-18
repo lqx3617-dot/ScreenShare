@@ -1,17 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 顶部状态胶囊：柔和投影 + 白玻璃 + 顶部高光（v1.258 美化版） -->
+<!-- 液态玻璃状态胶囊：深紫半透明 + 圆角胶囊 + 描边 + 顶部高光（浮于视频画面之上） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 柔和暖粉投影 -->
-    <item
-        android:left="1dp"
-        android:top="4dp"
-        android:right="1dp"
-        android:bottom="0dp">
-        <shape android:shape="rectangle">
-            <corners android:radius="999dp" />
-            <solid android:color="@color/scrim" />
-        </shape>
-    </item>
     <!-- 顶部高光 -->
     <item
         android:left="10dp"
@@ -22,22 +11,23 @@
             <corners android:radius="999dp" />
             <gradient
                 android:angle="270"
-                android:startColor="#33FFFFFF"
-                android:centerColor="@color/glass_highlight_mid"
-                android:endColor="@color/glass_highlight_end" />
+                android:startColor="#44FFFFFF"
+                android:centerColor="#14FFFFFF"
+                android:endColor="#00000000" />
         </shape>
     </item>
-    <!-- 玻璃主体 -->
+    <!-- 深紫玻璃主体 -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="999dp" />
             <gradient
-                android:angle="90"
-                android:startColor="#F21A1216"
-                android:endColor="#D8151013" />
+                android:angle="135"
+                android:startColor="#E6331F4C"
+                android:centerColor="#E03A2570"
+                android:endColor="#DB483083" />
             <stroke
                 android:width="1dp"
-                android:color="@color/glass_border_soft" />
+                android:color="#33FFFFFF" />
         </shape>
     </item>
 </layer-list>

@@ -4281,15 +4281,16 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         updateVideoCallButton()
     }
 
-    /** 还原连接页浅色玻璃与深色文字 */
+    /** 还原时保持深色玻璃风格（v1.286 起内屏统一液态深色，不再回退浅色） */
     private fun restoreGlassStyle() {
-        darkGlass = false
-        binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill)
-        binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar)
-        swapPanelBtnDark(binding.llMorePanel, toDark = false)
+        darkGlass = true
+        binding.llStatus.setBackgroundResource(R.drawable.bg_status_pill_dark)
+        binding.llToolbar.setBackgroundResource(R.drawable.bg_toolbar_dark)
+        swapPanelBtnDark(binding.llMorePanel, toDark = true)
         listOf(binding.llStatus, binding.llToolbar, binding.llMorePanel).forEach { c ->
-            if (c is ViewGroup) restoreDarkText(c)
+            if (c is ViewGroup) applyLightText(c)
         }
+        updateVideoCallButton()
     }
 
     /** 面板内所有 bg_panel_btn 背景与深色版互换（按钮 + llCtrlKeys 各自带背景） */
