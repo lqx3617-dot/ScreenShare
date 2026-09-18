@@ -4,7 +4,8 @@
   "description": "ScreenShare WebRTC signaling server (password-based pairing)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

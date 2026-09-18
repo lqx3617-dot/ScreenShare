@@ -34,11 +34,20 @@
 "use strict";
 
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
 const RoomManager = require("./RoomManager");
 const AuthManager = require("./AuthManager");
+const { openDb } = require("./db");
+const { VerificationStore } = require("./VerificationStore");
+const { Mailer } = require("./Mailer");
+const { RateLimiter } = require("./RateLimiter");
+const { AccountManager } = require("./AccountManager");
+const { FriendManager } = require("./FriendManager");
+const { PresenceManager } = require("./PresenceManager");
+const { AccountRouter } = require("./AccountRouter");
 
 const PORT = process.env.PORT || 8080;
 // 诊断模式：DIAG=1 时打印 SDP/候选统计（默认关闭，转发零解析零日志最快）
@@ -124,7 +133,26 @@ function diagAuthorized(req) {
   return t === DIAG_TOKEN || (DIAG_TOKEN_OLD !== "" && t === DIAG_TOKEN_OLD);
 }
 
+// 账号/好友系统：账号库、验证码、限流与 REST 路由（与信令同进程，在线状态与房间同内存）
+const accountDb = openDb();
+const rateLimiter = new RateLimiter();
+const verificationStore = new VerificationStore(accountDb);
+const mailer = new Mailer();
+const accountManager = new AccountManager(accountDb, { verificationStore, rateLimiter, mailer });
+const friendManager = new FriendManager(accountDb);
+const presenceManager = new PresenceManager();
+const accountRouter = new AccountRouter({
+  accountManager,
+  friendManager,
+  rateLimiter,
+  presence: presenceManager,
+  notifyUser: (userId, obj) => sendToUser(userId, obj),
+});
+setInterval(() => rateLimiter.sweep(), 60 * 1000).unref();
+
 const server = http.createServer((req, res) => {
+  // 账号/好友 REST：命中 /account 或 /friends 时由 AccountRouter 接管（自带鉴权与限流）
+  if (accountRouter.handle(req, res)) return;
   // 崩溃日志上报：App Java 层崩溃 POST 到这里落盘
   if (req.method === "POST" && req.url.startsWith("/crash")) {
     if (!diagAuthorized(req)) {
@@ -250,10 +278,32 @@ function normalizeCode(code) {
   return String(code || "").trim().toUpperCase();
 }
 
+// 向某用户的全部在线设备投递消息（多设备同时在线时每台设备都收到）
+function sendToUser(userId, obj) {
+  for (const target of presenceManager.socketsOf(userId)) send(target, obj);
+}
+
+// 用户上下线时向其好友广播在线状态
+function broadcastPresence(userId, online) {
+  for (const f of friendManager.list(userId)) {
+    sendToUser(f.userId, { type: "presence", userId, online });
+  }
+}
+
+// 待处理共享邀请：inviteId -> { fromUserId, toUserId, code, createdAt }，5 分钟未处理自动过期
+const pendingInvites = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, inv] of pendingInvites) {
+    if (now - inv.createdAt > 5 * 60 * 1000) pendingInvites.delete(id);
+  }
+}, 60 * 1000).unref();
+
 wss.on("connection", (ws, request) => {
   let roomCode = null;
   let role = null; // "host" | "viewer"
   let viewerId = null;
+  let userId = null; // 账号身份（收到 auth 消息后认领）
   ws.lastSeen = Date.now();
   ws._socketId = ws._socket && ws._socket.remotePort;
   ws._headers = request && request.headers;
@@ -422,6 +472,74 @@ wss.on("connection", (ws, request) => {
         break;
       }
 
+      case "auth": {
+        if (userId) {
+          send(ws, { type: "auth-ok", userId });
+          break;
+        }
+        try {
+          userId = accountManager.authenticate(msg.token);
+        } catch (e) {
+          send(ws, { type: "auth-error", reason: "unauthenticated" });
+          break;
+        }
+        const cameOnline = presenceManager.attach(userId, ws);
+        send(ws, { type: "auth-ok", userId });
+        if (cameOnline) broadcastPresence(userId, true);
+        console.log(`[account] ws authed user=${userId.slice(0, 8)}… ${cameOnline ? "(online)" : "(extra device)"}`);
+        break;
+      }
+
+      case "share-invite": {
+        if (!userId) {
+          send(ws, { type: "error", message: "请先登录" });
+          break;
+        }
+        const toUserId = String(msg.toUserId || "");
+        const inviteCode = normalizeCode(msg.code);
+        if (!rooms.isValidCode(inviteCode)) {
+          send(ws, { type: "error", message: "房间号需为 4 位数字" });
+          break;
+        }
+        if (!friendManager.list(userId).some((f) => f.userId === toUserId)) {
+          send(ws, { type: "error", message: "只能邀请好友" });
+          break;
+        }
+        const inviteId = crypto.randomUUID();
+        if (!presenceManager.isOnline(toUserId)) {
+          send(ws, { type: "share-invite-result", inviteId, accepted: false, reason: "offline" });
+          break;
+        }
+        const fromProfile = accountManager.getProfile(userId);
+        pendingInvites.set(inviteId, { fromUserId: userId, toUserId, code: inviteCode, createdAt: Date.now() });
+        sendToUser(toUserId, {
+          type: "share-invite",
+          inviteId,
+          code: inviteCode,
+          from: { userId, nickname: fromProfile ? fromProfile.nickname : "" },
+        });
+        console.log(`[invite] ${userId.slice(0, 8)}… -> ${toUserId.slice(0, 8)}… room=${inviteCode}`);
+        break;
+      }
+
+      case "share-invite-accept":
+      case "share-invite-reject": {
+        const inv = pendingInvites.get(String(msg.inviteId || ""));
+        if (!inv || inv.toUserId !== userId) {
+          send(ws, { type: "error", message: "邀请不存在或已过期" });
+          break;
+        }
+        const accepted = msg.type === "share-invite-accept";
+        pendingInvites.delete(inv.inviteId);
+        sendToUser(inv.fromUserId, {
+          type: "share-invite-result",
+          inviteId: inv.inviteId,
+          accepted,
+          reason: accepted ? "accepted" : "rejected",
+        });
+        break;
+      }
+
       case "ping": {
         send(ws, { type: "pong" });
         break;
@@ -456,6 +574,10 @@ wss.on("connection", (ws, request) => {
 
   ws.on("close", () => {
     allClients.delete(ws);
+    if (userId) {
+      const wentOffline = presenceManager.detach(userId, ws);
+      if (wentOffline) broadcastPresence(userId, false);
+    }
     const n = (ipClientCount.get(ws._ip) || 1) - 1;
     if (n <= 0) ipClientCount.delete(ws._ip); else ipClientCount.set(ws._ip, n);
     if (!roomCode) return;
@@ -480,5 +602,6 @@ wss.on("connection", (ws, request) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`ScreenShare signaling server listening on :${PORT} (ws://<host>:${PORT}/ws)`);
+  const actual = server.address().port;
+  console.log(`ScreenShare signaling server listening on :${actual} (ws://<host>:${actual}/ws)`);
 });
