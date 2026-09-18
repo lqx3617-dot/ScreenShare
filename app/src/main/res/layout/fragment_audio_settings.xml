@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 音频设置页：媒体音量 / 对讲音量 / 说话闪避（持久化 audio_settings prefs） -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:scrollbars="none"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="20dp"
+        android:paddingBottom="120dp"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp">
+
+        <!-- 顶部返回栏 -->
+        <LinearLayout
+            android:id="@+id/rowBack"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:layout_marginStart="-6dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_arrow_back" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="设置"
+                android:textSize="14sp"
+                android:textColor="#CCFFFFFF"
+                android:layout_marginStart="6dp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="音频设置"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="2"
+            android:shadowRadius="4"
+            android:layout_marginTop="8dp"
+            android:layout_marginStart="6dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="媒体音量影响观影剧情声，对讲音量影响双方通话声"
+            android:textSize="12sp"
+            android:textColor="#99FFFFFF"
+            android:layout_marginTop="6dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginBottom="22dp" />
+
+        <!-- 媒体音量 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_liquid_card"
+            android:padding="18dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="媒体音量"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    android:id="@+id/tvMedia"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="100"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFE85D8D" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/sbMedia"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:max="100"
+                android:progress="100"
+                android:theme="@style/Theme.ScreenShare.Dialog" />
+        </LinearLayout>
+
+        <!-- 对讲音量 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_liquid_card"
+            android:padding="18dp"
+            android:layout_marginTop="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="对讲音量"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    android:id="@+id/tvTalk"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="100"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#FFE85D8D" />
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/sbTalk"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:max="100"
+                android:progress="100"
+                android:theme="@style/Theme.ScreenShare.Dialog" />
+        </LinearLayout>
+
+        <!-- 说话闪避 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_liquid_card"
+            android:padding="18dp"
+            android:layout_marginTop="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="说话闪避"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="对讲说话时自动压低媒体音量"
+                    android:textSize="12sp"
+                    android:textColor="#99FFFFFF"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/swDuck"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:theme="@style/Theme.ScreenShare.Dialog" />
+        </LinearLayout>
+
+        <!-- 恢复默认 -->
+        <TextView
+            android:id="@+id/btnReset"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="center"
+            android:text="恢复默认设置"
+            android:textSize="14sp"
+            android:textColor="#FFFFFFFF"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:background="@drawable/bg_liquid_outline"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
+    </LinearLayout>
+</ScrollView>

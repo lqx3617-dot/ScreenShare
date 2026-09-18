@@ -19,6 +19,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
+import androidx.fragment.app.Fragment
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
@@ -67,6 +68,8 @@ class LiquidHomeActivity : AppCompatActivity() {
     private var friendsFragment: FriendsFragment? = null
     private var settingsFragment: SettingsFragment? = null
     private var currentTab = -1
+    /** 当前打开的子页面（如音频设置），非 null 时隐藏底部 tab */
+    private var subFragment: Fragment? = null
 
     /** 全部无限动画引用，销毁时统一取消防泄漏 */
     private val infiniteAnimators = ArrayList<ObjectAnimator>()
@@ -81,6 +84,11 @@ class LiquidHomeActivity : AppCompatActivity() {
                 is HomeFragment -> { homeFragment = restored; currentTab = 0 }
                 is FriendsFragment -> { friendsFragment = restored; currentTab = 1 }
                 is SettingsFragment -> { settingsFragment = restored; currentTab = 2 }
+                else -> {
+                    // 恢复的是设置子页面：保持子页面状态，tabBar 继续隐藏
+                    subFragment = restored
+                    currentTab = 2
+                }
             }
         }
         safe("沉浸式状态栏") { setupImmersive() }
@@ -225,10 +233,50 @@ class LiquidHomeActivity : AppCompatActivity() {
             tab.setOnClickListener { switchTab(index) }
         }
         // 恢复场景：FragmentManager 已 attach 旧 Fragment，只更新高亮；否则显示首页
-        if (currentTab == -1) {
+        if (subFragment != null) {
+            // 恢复到子页面：保持隐藏 tabBar，不切页
+            binding.tabBar.visibility = View.GONE
+            updateTabHighlight(currentTab)
+        } else if (currentTab == -1) {
             switchTab(0, animate = false)
         } else {
             updateTabHighlight(currentTab)
+        }
+    }
+
+    /** 打开设置子页面：替换内容区并隐藏底部 tab */
+    fun navigateToSubPage(fragment: Fragment) {
+        subFragment = fragment
+        val ft = supportFragmentManager.beginTransaction()
+        ft.setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
+        ft.replace(R.id.contentArea, fragment)
+        ft.commit()
+        binding.tabBar.visibility = View.GONE
+    }
+
+    /** 关闭子页面，回到当前 tab（默认设置页） */
+    fun popSubPage() {
+        if (subFragment == null) return
+        subFragment = null
+        val target = when (currentTab) {
+            0 -> homeFragment ?: HomeFragment().also { homeFragment = it }
+            1 -> friendsFragment ?: FriendsFragment().also { friendsFragment = it }
+            else -> settingsFragment ?: SettingsFragment().also { settingsFragment = it }
+        }
+        val ft = supportFragmentManager.beginTransaction()
+        ft.setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
+        ft.replace(R.id.contentArea, target)
+        ft.commit()
+        binding.tabBar.visibility = View.VISIBLE
+        // 回到设置页后刷新音频摘要行
+        (target as? SettingsFragment)?.refreshAudioSummary()
+    }
+
+    override fun onBackPressed() {
+        if (subFragment != null) {
+            popSubPage()
+        } else {
+            super.onBackPressed()
         }
     }
 

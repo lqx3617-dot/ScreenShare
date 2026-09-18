@@ -1,6 +1,5 @@
 package com.screenshare
 
-import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -11,11 +10,9 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
-import com.screenshare.databinding.DialogSettingsAudioBinding
 import com.screenshare.databinding.FragmentSettingsBinding
 
 /**
@@ -61,7 +58,10 @@ class SettingsFragment : Fragment() {
 
         updateAudioSummary()
 
-        binding.rowAudio.setOnClickListener { showAudioDialog() }
+        binding.rowAudio.setOnClickListener {
+            // 页面切换骨架：进入音频设置子页面（不使用弹窗）
+            (requireActivity() as? LiquidHomeActivity)?.navigateToSubPage(AudioSettingsFragment())
+        }
         binding.rowUpdate.setOnClickListener {
             Toast.makeText(requireContext(), "正在检查更新…", Toast.LENGTH_SHORT).show()
             // UpdateChecker 内部用 context as? Activity 切主线程弹窗，须传 Activity
@@ -75,63 +75,15 @@ class SettingsFragment : Fragment() {
         binding.rowAlbumServer.setOnClickListener { copyText("相册服务地址", BuildConfig.ALBUM_URL) }
     }
 
+    /** 音频摘要行：供子页面返回时刷新 */
+    fun refreshAudioSummary() = updateAudioSummary()
+
     /** 音频设置摘要行 */
     private fun updateAudioSummary() {
         val media = audioPrefs.getInt("media_volume", 100).coerceIn(0, 100)
         val talk = audioPrefs.getInt("talk_volume", 100).coerceIn(0, 100)
         val duck = if (audioPrefs.getBoolean("duck_enabled", true)) "开" else "关"
         binding.tvAudioSub.text = "媒体 $media · 对讲 $talk · 闪避 $duck"
-    }
-
-    /** 音频设置弹窗（液态玻璃风格） */
-    private fun showAudioDialog() {
-        val ctx = context ?: return
-        val dialog = Dialog(ctx).apply {
-            requestWindowFeature(Window.FEATURE_NO_TITLE)
-            window?.setBackgroundDrawableResource(android.R.color.transparent)
-            window?.setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val av = DialogSettingsAudioBinding.inflate(LayoutInflater.from(ctx)).also {
-            dialog.setContentView(it.root)
-        }
-
-        av.sbMedia.progress = audioPrefs.getInt("media_volume", 100).coerceIn(0, 100)
-        av.sbTalk.progress = audioPrefs.getInt("talk_volume", 100).coerceIn(0, 100)
-        av.swDuck.isChecked = audioPrefs.getBoolean("duck_enabled", true)
-        av.tvMedia.text = av.sbMedia.progress.toString()
-        av.tvTalk.text = av.sbTalk.progress.toString()
-
-        av.sbMedia.setOnSeekBarChangeListener(object :
-            android.widget.SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
-                av.tvMedia.text = p.toString()
-            }
-            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
-            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
-                audioPrefs.edit().putInt("media_volume", sb?.progress ?: 100).apply()
-                updateAudioSummary()
-            }
-        })
-        av.sbTalk.setOnSeekBarChangeListener(object :
-            android.widget.SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
-                av.tvTalk.text = p.toString()
-            }
-            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
-            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
-                audioPrefs.edit().putInt("talk_volume", sb?.progress ?: 100).apply()
-                updateAudioSummary()
-            }
-        })
-        av.swDuck.setOnCheckedChangeListener { _, isChecked ->
-            audioPrefs.edit().putBoolean("duck_enabled", isChecked).apply()
-            updateAudioSummary()
-        }
-
-        dialog.show()
     }
 
     /** 导出运行日志：系统分享面板发送，便于反馈崩溃等问题 */
