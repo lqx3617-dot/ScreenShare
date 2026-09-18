@@ -36,6 +36,8 @@ keystore.properties
 /server/crashes/
 # 诊断上报日志（运行时产物，不入库）
 /server/diag/
+# 客户端上传的运行日志（运行时产物，12h 自动清理，不入库）
+/server/logs/
 
 # 相册上传数据（用户隐私照片，不入库）
 /albums/
