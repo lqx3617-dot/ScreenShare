@@ -55,8 +55,9 @@ class FriendsAdapter(
             }
         }
         holder.b.btnStartShare.setOnClickListener { onStartShare(item) }
-        holder.b.btnStartShare.isEnabled = item.online
-        holder.b.btnStartShare.alpha = if (item.online) 1f else 0.45f
+        // 离线也可发起：邀请会存服务端并推送，对方上线后补投。按钮保持可点，仅用透明度区分
+        holder.b.btnStartShare.isEnabled = true
+        holder.b.btnStartShare.alpha = if (item.online) 1f else 0.6f
         holder.itemView.setOnLongClickListener { onEditRemark(item); true }
     }
 

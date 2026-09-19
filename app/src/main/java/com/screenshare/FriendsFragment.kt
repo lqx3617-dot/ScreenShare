@@ -379,10 +379,8 @@ class FriendsFragment : Fragment() {
 
     /** 一键发起共享：生成本地房间号 → 定向邀请好友 → 进会议室 */
     private fun startShareWith(friend: AccountClient.FriendItem) {
-        if (!friend.online) {
-            toast("对方不在线，无法发起共享")
-            return
-        }
+        // 离线好友也允许发起：服务端会暂存邀请（5 分钟）并尝试 FCM 推送，
+        // 对方上线时自动补投。结果经 share-invite-result 回来后另行提示。
         val code = generateCode()
         // PresenceClient 是进程级的，不依赖当前 Activity 是否存活
         val pc = App.instance.presenceClient
