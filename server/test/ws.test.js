@@ -11,7 +11,6 @@ const http = require("node:http");
 const path = require("node:path");
 const WebSocket = require("ws");
 
-const FIXED_CODE = "123456";
 const PASSWORD = "Passw0rd!";
 
 function startServer() {
@@ -21,8 +20,6 @@ function startServer() {
         ...process.env,
         PORT: "0",
         ACCOUNT_DB: ":memory:",
-        ACCOUNT_FIXED_CODE: FIXED_CODE,
-        MAIL_DEV_MODE: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -82,11 +79,9 @@ function httpJson(port, method, p, body, token) {
   });
 }
 
-async function registerUser(port, email) {
-  await httpJson(port, "POST", "/account/register/request-code", { email });
+async function registerUser(port, nickname) {
   const r = await httpJson(port, "POST", "/account/register", {
-    email,
-    code: FIXED_CODE,
+    nickname,
     password: PASSWORD,
   });
   assert.equal(r.status, 200, `注册失败: ${JSON.stringify(r.json)}`);
@@ -130,8 +125,8 @@ function waitFor(messages, predicate, timeoutMs = 5000) {
 test("WS 认领、在线广播与一键共享邀请闭环", async () => {
   const { proc, port } = await startServer();
   try {
-    const a = await registerUser(port, "ws-a@example.com");
-    const b = await registerUser(port, "ws-b@example.com");
+    const a = await registerUser(port, "测试甲");
+    const b = await registerUser(port, "测试乙");
 
     const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
     assert.equal(req.status, 200);
@@ -158,7 +153,7 @@ test("WS 认领、在线广播与一键共享邀请闭环", async () => {
     await waitFor(A.messages, (m) => m.type === "share-invite-result" && m.accepted === true);
 
     // 非好友邀请被拒
-    const c = await registerUser(port, "ws-c@example.com");
+    const c = await registerUser(port, "测试丙");
     const C = connectWs(port, c.token);
     await C.ready;
     C.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "9999" }));

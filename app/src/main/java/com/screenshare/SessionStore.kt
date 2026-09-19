@@ -14,7 +14,6 @@ object SessionStore {
     private const val FILE_NAME = "account"
     private const val K_TOKEN = "token"
     private const val K_USER_ID = "userId"
-    private const val K_EMAIL = "email"
     private const val K_NICKNAME = "nickname"
     private const val K_AVATAR = "avatar"
     private const val K_FRIEND_CODE = "friendCode"
@@ -43,7 +42,6 @@ object SessionStore {
 
     data class Profile(
         val userId: String,
-        val email: String,
         val nickname: String,
         val avatar: String,
         val friendCode: String
@@ -54,7 +52,6 @@ object SessionStore {
         context: Context,
         token: String,
         userId: String,
-        email: String,
         nickname: String,
         avatar: String,
         friendCode: String
@@ -62,7 +59,6 @@ object SessionStore {
         prefs(context).edit()
             .putString(K_TOKEN, token)
             .putString(K_USER_ID, userId)
-            .putString(K_EMAIL, email)
             .putString(K_NICKNAME, nickname)
             .putString(K_AVATAR, avatar)
             .putString(K_FRIEND_CODE, friendCode)
@@ -78,7 +74,6 @@ object SessionStore {
         val userId = p.getString(K_USER_ID, null) ?: return null
         return Profile(
             userId = userId,
-            email = p.getString(K_EMAIL, "") ?: "",
             nickname = p.getString(K_NICKNAME, "") ?: "",
             avatar = p.getString(K_AVATAR, "0") ?: "0",
             friendCode = p.getString(K_FRIEND_CODE, "") ?: ""

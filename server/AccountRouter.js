@@ -69,40 +69,23 @@ class AccountRouter {
     this.routes = [
       {
         method: "POST",
-        pattern: /^\/account\/register\/request-code$/,
-        auth: false,
-        handler: (req, body) => this.accounts.requestRegisterCode(body.email),
-      },
-      {
-        method: "POST",
         pattern: /^\/account\/register$/,
         auth: false,
         handler: (req, body) =>
-          this.accounts.register(body.email, body.code, body.password, req.headers["user-agent"] || ""),
+          this.accounts.register(body.nickname, body.password, req.headers["user-agent"] || ""),
       },
       {
         method: "POST",
         pattern: /^\/account\/login$/,
         auth: false,
-        handler: (req, body) => this.accounts.login(body.email, body.password, req.headers["user-agent"] || ""),
+        handler: (req, body) =>
+          this.accounts.login(body.nickname, body.password, req.headers["user-agent"] || ""),
       },
       {
         method: "POST",
         pattern: /^\/account\/logout$/,
         auth: true,
         handler: (req, body, ctx) => this.accounts.logout(ctx.token),
-      },
-      {
-        method: "POST",
-        pattern: /^\/account\/password\/request-reset$/,
-        auth: false,
-        handler: (req, body) => this.accounts.requestResetCode(body.email),
-      },
-      {
-        method: "POST",
-        pattern: /^\/account\/password\/reset$/,
-        auth: false,
-        handler: (req, body) => this.accounts.resetPassword(body.email, body.code, body.newPassword),
       },
       {
         method: "GET",

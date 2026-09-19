@@ -27,8 +27,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-versionCode = 310
-versionName = "1.305"
+versionCode = 311
+versionName = "1.306"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -127,6 +127,7 @@ dependencies {
 
     // material/lifecycle 的传递依赖，直接声明以固定已缓存版本
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     // 信令 WebSocket / 崩溃上报直接使用

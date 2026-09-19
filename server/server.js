@@ -41,8 +41,7 @@ const { WebSocketServer } = require("ws");
 const RoomManager = require("./RoomManager");
 const AuthManager = require("./AuthManager");
 const { openDb } = require("./db");
-const { VerificationStore } = require("./VerificationStore");
-const { Mailer } = require("./Mailer");
+
 const { RateLimiter } = require("./RateLimiter");
 const { AccountManager } = require("./AccountManager");
 const { FriendManager } = require("./FriendManager");
@@ -133,12 +132,10 @@ function diagAuthorized(req) {
   return t === DIAG_TOKEN || (DIAG_TOKEN_OLD !== "" && t === DIAG_TOKEN_OLD);
 }
 
-// 账号/好友系统：账号库、验证码、限流与 REST 路由（与信令同进程，在线状态与房间同内存）
+// 账号/好友系统：账号库、限流与 REST 路由（与信令同进程，在线状态与房间同内存）
 const accountDb = openDb();
 const rateLimiter = new RateLimiter();
-const verificationStore = new VerificationStore(accountDb);
-const mailer = new Mailer();
-const accountManager = new AccountManager(accountDb, { verificationStore, rateLimiter, mailer });
+const accountManager = new AccountManager(accountDb);
 const friendManager = new FriendManager(accountDb);
 const presenceManager = new PresenceManager();
 const accountRouter = new AccountRouter({

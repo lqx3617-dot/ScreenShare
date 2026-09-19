@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 好友卡片：20dp 圆角玻璃（结构对齐 bg_liquid_card，圆角更小） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 渐变描边：压暗避免暗背景上的亮边 -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="20dp" />
+            <gradient
+                android:angle="135"
+                android:startColor="#59FFFFFF"
+                android:centerColor="#26C896FF"
+                android:endColor="#4DFFFFFF" />
+        </shape>
+    </item>
+    <!-- 玻璃主体（内缩 1dp 露出描边）：统一 20% 半透明白 -->
+    <item
+        android:left="1dp"
+        android:top="1dp"
+        android:right="1dp"
+        android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="19dp" />
+            <solid android:color="#33FFFFFF" />
+        </shape>
+    </item>
+    <!-- 顶部高光线 -->
+    <item
+        android:left="20dp"
+        android:right="20dp"
+        android:top="0dp"
+        android:bottom="-1dp"
+        android:height="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:startColor="#00FFFFFF"
+                android:centerColor="#99FFFFFF"
+                android:endColor="#00FFFFFF" />
+        </shape>
+    </item>
+</layer-list>

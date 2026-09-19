@@ -5,7 +5,6 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 
 const { openDb } = require("../db");
-const { VerificationStore } = require("../VerificationStore");
 const { RateLimiter } = require("../RateLimiter");
 const { AccountManager, AccountError } = require("../AccountManager");
 const { FriendManager } = require("../FriendManager");
@@ -16,30 +15,21 @@ const PASSWORD = "Passw0rd!";
 
 function makeEnv() {
   const db = openDb(":memory:");
-  const verificationStore = new VerificationStore(db);
   const rateLimiter = new RateLimiter();
-  const sent = new Map();
-  const mailer = {
-    sendCode: async (email, code, purpose) => {
-      sent.set(`${email}:${purpose}`, code);
-      return { ok: true };
-    },
-  };
-  const accounts = new AccountManager(db, { verificationStore, rateLimiter, mailer });
+  const accounts = new AccountManager(db);
   const friends = new FriendManager(db);
   const presence = new PresenceManager();
-  return { db, rateLimiter, sent, accounts, friends, presence };
+  return { db, rateLimiter, accounts, friends, presence };
 }
 
-async function register(env, email) {
-  await env.accounts.requestRegisterCode(email);
-  return env.accounts.register(email, env.sent.get(`${email}:register`), PASSWORD);
+async function register(env, nickname) {
+  return env.accounts.register(nickname, PASSWORD);
 }
 
 test("好友申请经对方接受后双向成立", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
-  const b = await register(env, "b@example.com");
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
 
   const r = env.friends.request(a.userId, b.profile.friendCode);
   assert.equal(r.accepted, false);
@@ -56,8 +46,8 @@ test("好友申请经对方接受后双向成立", async () => {
 
 test("重复申请幂等；已是好友再申请被拒", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
-  const b = await register(env, "b@example.com");
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
 
   const r1 = env.friends.request(a.userId, b.profile.friendCode);
   const r2 = env.friends.request(a.userId, b.profile.friendCode);
@@ -72,8 +62,8 @@ test("重复申请幂等；已是好友再申请被拒", async () => {
 
 test("反向申请直接互为好友", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
-  const b = await register(env, "b@example.com");
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
 
   env.friends.request(a.userId, b.profile.friendCode);
   const back = env.friends.request(b.userId, a.profile.friendCode);
@@ -84,7 +74,7 @@ test("反向申请直接互为好友", async () => {
 
 test("无效好友码与添加自己被拒", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
+  const a = await register(env, "小南");
   assert.throws(
     () => env.friends.request(a.userId, "ZZZZZZ"),
     (e) => e instanceof AccountError && e.code === "invalid_code"
@@ -97,8 +87,8 @@ test("无效好友码与添加自己被拒", async () => {
 
 test("拒绝后申请方可再次申请；删除好友双向解除", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
-  const b = await register(env, "b@example.com");
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
 
   const r = env.friends.request(a.userId, b.profile.friendCode);
   env.friends.reject(b.userId, r.requestId);
@@ -126,8 +116,8 @@ test("PresenceManager 多连接聚合在线状态", () => {
 
 test("REST 好友流程与在线状态注入", async () => {
   const env = makeEnv();
-  const a = await register(env, "a@example.com");
-  const b = await register(env, "b@example.com");
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
 
   const router = new AccountRouter({
     accountManager: env.accounts,

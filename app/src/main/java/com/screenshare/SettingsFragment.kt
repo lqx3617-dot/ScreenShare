@@ -13,7 +13,11 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.screenshare.databinding.FragmentSettingsBinding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,6 +60,17 @@ class SettingsFragment : Fragment() {
         binding.tvAboutSub.text = "Android ${Build.VERSION.RELEASE} · ${Build.MANUFACTURER} ${Build.MODEL}"
         binding.tvUpdateSub.text = "当前 v$versionName · 点击检查新版本"
 
+        // 账号区：展示当前登录昵称与好友码
+        SessionStore.getProfile(requireContext())?.let { p ->
+            binding.tvAccountEmail.text = p.nickname.ifBlank { p.userId }
+            binding.tvAccountCode.text = "好友码 ${p.friendCode}"
+        } ?: run {
+            binding.tvAccountEmail.text = "未登录"
+            binding.tvAccountCode.text = ""
+        }
+
+        binding.rowLogout.setOnClickListener { logout() }
+
         // 服务器地址不在此展示（BuildConfig 注入，用户无需感知）
 
         updateAudioSummary()
@@ -76,6 +91,20 @@ class SettingsFragment : Fragment() {
     /** 音频摘要行：供子页面返回时刷新 */
     fun refreshAudioSummary() {
         if (_binding != null) updateAudioSummary()
+    }
+
+    /** 退出登录：通知服务端失效本设备令牌，清本地会话回登录页 */
+    private fun logout() {
+        val ctx = requireContext()
+        val token = SessionStore.getToken(ctx).orEmpty()
+        lifecycleScope.launch {
+            if (token.isNotEmpty()) AccountClient.logout(token)
+            SessionStore.clear(ctx)
+            withContext(Dispatchers.Main) {
+                startActivity(Intent(ctx, LoginActivity::class.java))
+                activity?.finish()
+            }
+        }
     }
 
     /** 音频设置摘要行 */

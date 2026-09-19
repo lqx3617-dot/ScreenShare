@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 好友卡片「发起共享」小按钮：粉紫半透明渐变 + 涟漪 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40FFFFFF">
+    <item>
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <corners android:radius="12dp" />
+                    <solid android:color="#59FF6BB5" />
+                </shape>
+            </item>
+            <item
+                android:left="1dp"
+                android:top="1dp"
+                android:right="1dp"
+                android:bottom="1dp">
+                <shape android:shape="rectangle">
+                    <corners android:radius="11dp" />
+                    <gradient
+                        android:angle="135"
+                        android:startColor="#668B5CF6"
+                        android:endColor="#66EC4899" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</ripple>

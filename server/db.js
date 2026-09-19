@@ -15,10 +15,10 @@ const DEFAULT_DB_PATH = process.env.ACCOUNT_DB || path.join(__dirname, "data", "
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
-  email         TEXT NOT NULL UNIQUE,
+  email         TEXT,
   password_hash TEXT NOT NULL,
   salt          TEXT NOT NULL,
-  nickname      TEXT NOT NULL,
+  nickname      TEXT NOT NULL UNIQUE,
   avatar        TEXT NOT NULL DEFAULT '0',
   friend_code   TEXT NOT NULL UNIQUE,
   created_at    INTEGER NOT NULL
@@ -51,16 +51,57 @@ CREATE TABLE IF NOT EXISTS friend_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_user, status);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_pair ON friend_requests(from_user, to_user);
-
-CREATE TABLE IF NOT EXISTS verification_codes (
-  email      TEXT NOT NULL,
-  purpose    TEXT NOT NULL,
-  code       TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  attempts   INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (email, purpose)
-);
 `;
+
+/**
+ * 历史库迁移：早期以邮箱为登录标识（email NOT NULL UNIQUE），改为昵称登录后需重建表。
+ * 迁移保留旧账号与密码哈希，昵称重复时追加好友码前缀去重。
+ */
+function migrateToNicknameLogin(db) {
+  const cols = db.prepare("PRAGMA table_info(users)").all();
+  const emailCol = cols.find((c) => c.name === "email");
+  if (!emailCol || emailCol.notnull === 0) return false;
+  db.exec("BEGIN");
+  try {
+    db.exec(`
+      CREATE TABLE users_new (
+        id            TEXT PRIMARY KEY,
+        email         TEXT,
+        password_hash TEXT NOT NULL,
+        salt          TEXT NOT NULL,
+        nickname      TEXT NOT NULL UNIQUE,
+        avatar        TEXT NOT NULL DEFAULT '0',
+        friend_code   TEXT NOT NULL UNIQUE,
+        created_at    INTEGER NOT NULL
+      );
+    `);
+    const rows = db.prepare("SELECT * FROM users").all();
+    const usedNicknames = new Set();
+    const insert = db.prepare(
+      `INSERT OR ROLLBACK INTO users_new (id, email, password_hash, salt, nickname, avatar, friend_code, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const r of rows) {
+      let nick = String(r.nickname || r.email || "").split("@")[0] || `用户${String(r.friend_code || "").slice(0, 4)}`;
+      if (!nick) nick = `用户${String(r.friend_code || "").slice(0, 4)}`;
+      let unique = nick;
+      let suffix = 1;
+      while (usedNicknames.has(unique)) {
+        unique = `${nick}${String(r.friend_code || "").slice(0, 2)}${suffix++}`;
+      }
+      usedNicknames.add(unique);
+      insert.run(r.id, r.email || null, r.password_hash, r.salt, unique, r.avatar || "0", r.friend_code, r.created_at);
+    }
+    db.exec("DROP TABLE users");
+    db.exec("ALTER TABLE users_new RENAME TO users");
+    db.exec("DROP TABLE IF EXISTS verification_codes");
+    db.exec("COMMIT");
+    return true;
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
 
 function initSchema(db) {
   db.exec(SCHEMA);
@@ -74,7 +115,8 @@ function openDb(filePath = DEFAULT_DB_PATH) {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   initSchema(db);
+  if (filePath !== ":memory:") migrateToNicknameLogin(db);
   return db;
 }
 
-module.exports = { openDb, initSchema, DEFAULT_DB_PATH };
+module.exports = { openDb, initSchema, migrateToNicknameLogin, DEFAULT_DB_PATH };

@@ -37,7 +37,6 @@ object AccountClient {
 
     data class Profile(
         val userId: String,
-        val email: String,
         val nickname: String,
         val avatar: String,
         val friendCode: String
@@ -103,7 +102,6 @@ object AccountClient {
 
     private fun parseProfile(o: JSONObject) = Profile(
         userId = o.getString("userId"),
-        email = o.optString("email"),
         nickname = o.optString("nickname"),
         avatar = o.optString("avatar").ifBlank { "0" },
         friendCode = o.optString("friendCode")
@@ -115,15 +113,11 @@ object AccountClient {
         profile = parseProfile(o.getJSONObject("profile"))
     )
 
-    suspend fun requestRegisterCode(email: String) =
-        call("POST", "/account/register/request-code", JSONObject().put("email", email))
-
-    suspend fun register(email: String, code: String, password: String): ApiResult<LoginResult> {
+    suspend fun register(nickname: String, password: String): ApiResult<LoginResult> {
         val r = call(
             "POST", "/account/register",
             JSONObject()
-                .put("email", email)
-                .put("code", code)
+                .put("nickname", nickname)
                 .put("password", password)
         )
         return when (r) {
@@ -132,10 +126,10 @@ object AccountClient {
         }
     }
 
-    suspend fun login(email: String, password: String): ApiResult<LoginResult> {
+    suspend fun login(nickname: String, password: String): ApiResult<LoginResult> {
         val r = call(
             "POST", "/account/login",
-            JSONObject().put("email", email).put("password", password)
+            JSONObject().put("nickname", nickname).put("password", password)
         )
         return when (r) {
             is ApiResult.Success -> ApiResult.Success(parseLogin(r.data))
@@ -144,18 +138,6 @@ object AccountClient {
     }
 
     suspend fun logout(token: String) = call("POST", "/account/logout", JSONObject(), token)
-
-    suspend fun requestResetCode(email: String) =
-        call("POST", "/account/password/request-reset", JSONObject().put("email", email))
-
-    suspend fun resetPassword(email: String, code: String, newPassword: String) =
-        call(
-            "POST", "/account/password/reset",
-            JSONObject()
-                .put("email", email)
-                .put("code", code)
-                .put("newPassword", newPassword)
-        )
 
     suspend fun getMe(token: String): ApiResult<Profile> {
         val r = call("GET", "/account/me", null, token)

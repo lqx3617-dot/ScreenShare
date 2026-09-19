@@ -5,7 +5,7 @@ Updated: 2026-09-18
 
 ## Description
 
-在现有「4 位房间号 + 临时会话」的屏幕共享体系上补齐用户身份层与好友层：邮箱密码注册登录、6 位好友码与二维码、好友申请与列表、在线状态、好友列表一键发起共享。服务端复用现有 8095 端口的 Node 进程，新增账号 HTTP 路由与信令 WS 消息类型，数据落盘 SQLite；客户端复用现有 okhttp 与信令连接，新增账号客户端与好友页数据层。
+在现有「4 位房间号 + 临时会话」的屏幕共享体系上补齐用户身份层与好友层：昵称密码注册登录、6 位好友码与二维码、好友申请与列表、在线状态、好友列表一键发起共享。服务端复用现有 8095 端口的 Node 进程，新增账号 HTTP 路由与信令 WS 消息类型，数据落盘 SQLite；客户端复用现有 okhttp 与信令连接，新增账号客户端与好友页数据层。
 
 本设计覆盖 `.monkeycode/specs/2026-09-18-account-friends/requirements.md` 的 9 个需求。
 
@@ -17,7 +17,6 @@ graph TD
     App -->|"WSS 信令+在线+邀请"| Signal["Signal WS (server.js /ws)"]
     Router --> AM["AccountManager"]
     Router --> FM["FriendManager"]
-    Router --> Mail["Mailer (开发模式: 写日志)"]
     Signal --> PM["PresenceManager"]
     Signal --> RM["RoomManager (现有, 内存)"]
     Signal --> FM
@@ -41,12 +40,13 @@ graph TD
 
 | 组件 | 职责 | 关键接口 |
 |------|------|----------|
-| `AccountManager.js` | 注册、登录、登出、改密、资料、好友码生成 | `register(email, code, password)`、`login(email, password)`、`logout(token)`、`resetPassword(email, code, newPassword)`、`updateProfile(userId, patch)` |
+| `AccountManager.js` | 注册、登录、登出、资料、好友码生成 | `register(nickname, password)`、`login(nickname, password)`、`logout(token)`、`updateProfile(userId, patch)` |
 | `FriendManager.js` | 好友申请、接受/拒绝、列表、删除 | `request(fromId, friendCode)`、`accept(userId, requestId)`、`reject(userId, requestId)`、`list(userId)`、`remove(userId, friendId)` |
 | `PresenceManager.js` | 维护 userId↔连接，广播在线状态 | `attach(userId, ws)`、`detach(userId, ws)`、`isOnline(userId)`、`friendsOf(userId)` 回调 |
-| `Mailer.js` | 发送验证码；开发模式写日志/固定码 | `sendCode(email, code, purpose)` |
-| `RateLimiter.js` | 接口与验证码限流 | `hit(key, limit, windowMs)` |
-| `VerificationStore.js` | 验证码签发校验（SQLite） | `issue(email, purpose)`、`verify(email, purpose, code)` |
+
+
+| `RateLimiter.js` | 接口限流 | `hit(key, limit, windowMs)` |
+
 | `AccountRouter`（server.js 内） | HTTP 路由分发与令牌鉴权 | `handle(req, res)` |
 | `SignalExtension`（server.js 内） | 扩展 WS 消息类型与鉴权认领 | `handleMessage(ws, msg)` |
 
@@ -172,11 +172,11 @@ CREATE TABLE verification_codes (
 
 | 场景 | 处理 |
 |------|------|
-| 邮箱已注册 / 好友码无效 / 昵称超长 | 返回具体错误码与可读文案，HTTP 4xx |
+| 昵称已占用 / 好友码无效 / 昵称超长 | 返回具体错误码与可读文案，HTTP 4xx |
 | 密码强度不足 | 返回规则说明，HTTP 400 |
-| 连续登录失败、验证码失败、接口高频 | `RateLimiter` 按邮箱与来源 IP 限流，HTTP 429 |
+| 连续登录失败、接口高频 | `RateLimiter` 按昵称与来源 IP 限流，HTTP 429 |
 | 令牌缺失/过期/登出后使用 | HTTP 401，客户端清除本地会话并跳登录 |
-| 邮件发送（开发模式） | 验证码写入服务端日志，接口返回成功，便于自测 |
+
 | 好友离线时发起共享 | 服务端拒绝并回 `share-invite-result{accepted:false, reason:"offline"}`，发起方提示 |
 | 好友申请重复 / 自己加自己 | 忽略重复申请返回当前关系；自己加自己返回 400 |
 | 网络异常 | `AccountClient` 返回失败结果，UI 提示并可重试；令牌 401 时统一跳登录 |
@@ -184,7 +184,7 @@ CREATE TABLE verification_codes (
 
 ## Test Strategy
 
-- **服务端单元测试**（`node:test`，`server/test/`）：`AccountManager`（注册/登录/改密/限流）、`FriendManager`（申请/接受/对称性/去重）、`PresenceManager`（多设备聚合）、`VerificationStore`（过期与尝试上限）。
+- **服务端单元测试**（`node:test`，`server/test/`）：`AccountManager`（注册/登录/改密/限流）、`FriendManager`（申请/接受/对称性/去重）、`PresenceManager`（多设备聚合）、`AccountManager` 登录限流。
 - **服务端集成测试**：以 `http` 直连 8095 跑完整注册→登录→加好友→列表流程；WS 测试覆盖 `auth` 认领与 `share-invite` 投递。
 - **客户端单元测试**：`SessionStore` 读写与清除、`AccountClient` 响应解析。
 - **端到端手测**：两设备（realme host / OPPO viewer）注册两个账号 → 互加好友 → 在线状态互通 → 一键发起共享 → 对方接受进入观看端；覆盖多设备同账号登录与登出。

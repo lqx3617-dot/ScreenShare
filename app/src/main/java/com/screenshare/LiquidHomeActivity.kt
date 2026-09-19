@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -11,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.LinearInterpolator
@@ -58,10 +60,11 @@ class LiquidHomeActivity : AppCompatActivity() {
     )
 
     private val blobs = arrayOf(
-        Blob(0xFFFF1493.toInt(), 380, Gravity.TOP or Gravity.START, -90, -100, 0.60f, 60f, 50f, 1.12f, 16000),
-        Blob(0xFF6B21A8.toInt(), 320, Gravity.TOP or Gravity.END, -90, 60, 0.55f, -50f, 60f, 1.08f, 20000),
-        Blob(0xFF0891B2.toInt(), 260, Gravity.BOTTOM or Gravity.START, 20, -40, 0.30f, 40f, -60f, 1.15f, 22000),
-        Blob(0xFFEC4899.toInt(), 200, Gravity.TOP or Gravity.START, 110, 320, 0.40f, 60f, 50f, 0.95f, 18000)
+        // v1.302: 夜空配色——冷色为主（品红/靛蓝/翡翠/亮品红），暖色比例降低
+        Blob(0xFFEC4899.toInt(), 420, Gravity.TOP or Gravity.START, -90, -100, 0.45f, 60f, 50f, 1.12f, 16000),
+        Blob(0xFF6366F1.toInt(), 360, Gravity.TOP or Gravity.END, -90, 60, 0.38f, -50f, 60f, 1.08f, 20000),
+        Blob(0xFF14B8A6.toInt(), 300, Gravity.BOTTOM or Gravity.START, 20, -40, 0.30f, 40f, -60f, 1.15f, 22000),
+        Blob(0xFFD946EF.toInt(), 240, Gravity.TOP or Gravity.START, 110, 320, 0.25f, 60f, 50f, 0.95f, 18000)
     )
 
     private var homeFragment: HomeFragment? = null
@@ -74,8 +77,18 @@ class LiquidHomeActivity : AppCompatActivity() {
     /** 全部无限动画引用，销毁时统一取消防泄漏 */
     private val infiniteAnimators = ArrayList<ObjectAnimator>()
 
+    /** 账号在线状态长连接（auth 认领后接收 presence/好友邀请/共享邀请） */
+    var presenceClient: PresenceClient? = null
+        private set
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 登录拦截：未登录先进登录页，避免主界面向服务端发起无身份的请求
+        if (!SessionStore.isLoggedIn(this)) {
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
         binding = ActivityLiquidBinding.inflate(layoutInflater)
         setContentView(binding.root)
         // 复用 FragmentManager 恢复的 Fragment 实例（进程被杀重建时保留用户已输入内容与当前页）
@@ -96,6 +109,95 @@ class LiquidHomeActivity : AppCompatActivity() {
         safe("底部导航") { setupTabs() }
         // 静默自动检查更新（12h 节流，与 MainActivity 行为一致）
         safe("检查更新") { UpdateChecker.check(this) }
+        // 账号在线状态长连接：auth 认领 + presence 广播 + 好友/共享邀请
+        safe("账号连接") { connectPresence() }
+    }
+
+    private val presenceListener = object : PresenceClient.Listener {
+        override fun onAuthed(userId: String) {
+            Log.d(TAG, "账号连接已认领: $userId")
+        }
+
+        override fun onAuthFailed() {
+            // 令牌无效/过期：清本地会话并跳登录页
+            Log.w(TAG, "账号令牌失效，需重新登录")
+            SessionStore.clear(this@LiquidHomeActivity)
+            startActivity(Intent(this@LiquidHomeActivity, LoginActivity::class.java))
+            finish()
+        }
+
+        override fun onPresence(userId: String, online: Boolean) {
+            runOnUiThread { friendsFragment?.onPresenceChanged(userId, online) }
+        }
+
+        override fun onFriendRequest(requestId: String, fromUserId: String, fromNickname: String) {
+            runOnUiThread {
+                showToast("收到 $fromNickname 的好友申请")
+                friendsFragment?.onFriendRequestReceived(requestId, fromUserId, fromNickname)
+            }
+        }
+
+        override fun onFriendAccepted(friendUserId: String, friendNickname: String) {
+            runOnUiThread {
+                showToast("已和 $friendNickname 成为好友")
+                friendsFragment?.refresh()
+            }
+        }
+
+        override fun onShareInvite(inviteId: String, code: String, fromUserId: String, fromNickname: String) {
+            runOnUiThread { showShareInviteDialog(inviteId, code, fromNickname) }
+        }
+
+        override fun onShareInviteResult(inviteId: String, accepted: Boolean, reason: String) {
+            runOnUiThread {
+                showToast(if (accepted) "对方已接受共享邀请" else "对方未接受邀请${if (reason.isNotEmpty()) "：$reason" else ""}")
+            }
+        }
+
+        override fun onRetrying(message: String) {
+            Log.d(TAG, message)
+        }
+
+        override fun onError(message: String) {
+            Log.e(TAG, "账号连接错误: $message")
+        }
+    }
+
+    private fun connectPresence() {
+        val token = SessionStore.getToken(this) ?: return
+        presenceClient = PresenceClient(BuildConfig.SIGNAL_URL, presenceListener).also {
+            it.connect(token)
+        }
+    }
+
+    /** 收到好友的共享邀请：接受则进观看端，拒绝则通知对方 */
+    private fun showShareInviteDialog(inviteId: String, code: String, fromNickname: String) {
+        val dialog = android.app.Dialog(this)
+        val dv = com.screenshare.databinding.DialogLiquidConfirmBinding.inflate(layoutInflater)
+        dialog.setContentView(dv.root)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
+        dv.tvDialogTitle.text = "共享邀请"
+        dv.tvDialogMessage.text = "$fromNickname 邀请你观看 TA 的屏幕\n房间号 $code"
+        dv.btnPositive.text = "观看"
+        dv.btnNegative.text = "拒绝"
+        dv.btnPositive.setOnClickListener {
+            dialog.dismiss()
+            presenceClient?.acceptShareInvite(inviteId)
+            val intent = android.content.Intent(this, MainActivity::class.java)
+                .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_JOIN)
+                .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            startActivity(intent)
+        }
+        dv.btnNegative.setOnClickListener {
+            dialog.dismiss()
+            presenceClient?.rejectShareInvite(inviteId)
+        }
+        dialog.show()
     }
 
     /** 沉浸式状态栏：透明背景 + 深色底配浅色图标，背景铺满系统栏区 */
@@ -347,5 +449,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         infiniteAnimators.forEach { it.cancel() }
         infiniteAnimators.clear()
         handler.removeCallbacksAndMessages(null)
+        presenceClient?.disconnect()
+        presenceClient = null
     }
 }
