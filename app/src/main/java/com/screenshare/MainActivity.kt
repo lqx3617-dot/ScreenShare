@@ -499,6 +499,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 进入画中画：隐藏所有非视频控件，视频通话中放大对方摄像头画面铺满小窗 */
     private fun onEnterPip() {
+        AppLogger.app("PiP 进入画中画（工具条按钮全部隐藏）")
         stopToolbarAutoHide()
         binding.llStatus.visibility = View.INVISIBLE
         binding.llToolbar.visibility = View.GONE
@@ -537,6 +538,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     /** 退出画中画：恢复摄像头小窗布局并按当前状态恢复控件显示 */
     private fun onExitPip() {
+        AppLogger.app("PiP 退出画中画（恢复工具条：peer=$peer videoCallOn=$videoCallOn）")
         restorePipLayout()
         // 全屏观看模式：保持全屏语义（flFullscreen 仍可见），工具条/状态胶囊等不覆盖视频
         if (isFullscreen) return
