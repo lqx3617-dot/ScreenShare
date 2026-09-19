@@ -12,30 +12,17 @@ import kotlinx.coroutines.launch
 object FcmRegistrar {
 
     private val scope = CoroutineScope(Dispatchers.IO)
-    // SERVICE_NOT_AVAILABLE 等瞬时可恢复错误：退避重试，避免离线推送长期失效
-    private const val MAX_RETRY = 3
-    private val RETRY_DELAYS_MS = longArrayOf(5_000, 20_000, 60_000)
 
     /** 取令牌并上报；未登录时跳过（服务端会 401） */
     fun register(context: android.content.Context) {
         val token = SessionStore.getToken(context) ?: return
-        fetchToken(token, 0)
-    }
-
-    private fun fetchToken(sessionToken: String, attempt: Int) {
         try {
             FirebaseMessaging.getInstance().token
                 .addOnSuccessListener { fcmToken ->
-                    if (fcmToken.isNotEmpty()) upload(sessionToken, fcmToken)
+                    if (fcmToken.isNotEmpty()) upload(token, fcmToken)
                 }
                 .addOnFailureListener { e ->
-                    AppLogger.app("[FCM] 取令牌失败(第${attempt + 1}次)：${e.message}")
-                    if (attempt < MAX_RETRY) {
-                        scope.launch {
-                            kotlinx.coroutines.delay(RETRY_DELAYS_MS[attempt])
-                            fetchToken(sessionToken, attempt + 1)
-                        }
-                    }
+                    AppLogger.app("[FCM] 取令牌失败：${e.message}")
                 }
         } catch (e: Throwable) {
             // google-services.json 缺失等极端情况下 Firebase 未初始化，不能影响主流程
