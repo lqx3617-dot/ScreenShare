@@ -899,3 +899,13 @@ Entries discovered by the Agent during task execution should follow this format:
      - v1.309(314) 修共享方卡授权弹窗（md5=266c65f61adab82996d7e6e6c2e78d2c）：屏幕采集权限看门狗（10 秒未授权重弹，最多 3 次）；观看端 25 秒等不到画面给提示。updateUI/SignalClient 全部改 AppLogger 落盘（会议状态机以前对上传日志不可见，排障全靠猜）
      - v1.310(315) 修观看端永久等画面（md5=75a0eb9e42c3204a6e84ebabd713be70）：根因=观看端在共享方授权前加入，handleViewerJoined 只暂存 viewerId 到 pendingViewerIds 没建连接；授权后 flush 只调 createOfferFor，其第一行 viewerConnections[vid] ?: return 直接返回，Offer 从未发出（服务端房间零条 relay），共享方却显示「屏幕共享进行中」。修复=startSessionCore 的 500ms flush 改为重走 handleViewerJoined 完整路径（建连接+发 Offer），createViewerConnection 幂等。验证成功 room 9523 全链路通 2.5 分钟
      - v1.311(316) 修观看端两个 UI 问题：(1) 25 秒提示误报——条件用 !signalPeerReady，但服务器只给 host 发 peer-ready，观看端恒 false，连上后 25 秒必弹。改用新增的 p2pConnected 标志（onConnected 置 true、cleanupPeer 清零）。(2) 工具条缺麦克风/摄像头——onEnterPip 藏了这两个按钮，onExitPip 却只在 videoCallOn 时恢复；OPPO Find N5 折叠屏合盖/切应用进出 PiP 后永久消失。onExitPip 恢复条件改为 peer!=null 即可。排障技巧：观看端关键帧请求/缓冲反馈走 DataChannel，host 收到即证明观看端 onConnected 已触发
+     - v1.312(317) 好友三项补齐：(1) 备注名——friends 表加 remark 列（SQLite ALTER TABLE ADD COLUMN 迁移，生产库自动补空串），PATCH /friends/{id}/remark 端点，好友卡长按编辑，有备注优先显示备注、昵称降级到状态行后缀，仅本人视角对方无感知。(2) 最近共享记录——share_sessions 表，邀请被接受时开账、任一方 WS 断开时结账（host 断开批量结账该房间、viewer 断开结账单条），服务重启时未闭合会话按启动时刻强制结账避免永久挂起；GET /shares/recent 返回双方视角记录；好友页新增「最近共享」分区，点击可再次发起共享。测试 21/21。(3) 扫码加好友——ZXing 3.5.3 编解码 + CameraX 1.3.4 取景，ScanFriendCodeActivity 扫到 6 位好友码回传复用申请逻辑；QR 旋转不变无需按 rotationDegrees 交换宽高（交换反而错位）；添加好友弹窗复用隐藏的角色行作出入口（tvRoleLabel 要 GONE），「我的二维码」弹窗白底高纠错展示
+     - v1.313(318) 离线好友邀请走 FCM 推送：服务端 users 表加 push_token 列，POST /account/push-token 上报/清除；FcmPusher 用服务账号私钥签 RS256 JWT 换 OAuth2 令牌走 HTTP v1 messages:send（纯 Node 22 内置 fetch/crypto 无外部依赖，失败只记日志不抛异常，返回 'invalid_token' 时清令牌）。邀请逻辑改写：对方离线仍存邀请（5 分钟过期）+ 发推送，上线 auth 时 flushPendingInvites 补投 WS 邀请；结果分 offline_pushed/offline，客户端给人话提示。客户端 FirebaseMessaging 24.0.0，登录成功+会话恢复时上报令牌，ScreenShareFcmService 处理轮换。链路验证技巧：ensureToken 后用假令牌 send，返回 INVALID_ARGUMENT 即证明换票+API 全通
+[Project Knowledge Summary]
+- Date: 2026-09-19
+- Context: Discovered by Agent while performing FCM 离线推送集成
+- Category: Operations & Deployment
+- Instructions:
+  - FCM 服务账号私钥在 server/screenshare-68f69-firebase-adminsdk-fbsvc-d12328c87f.json，已在 .gitignore（server/*firebase-adminsdk* + server/fcm-service-account.json）；服务端启动自动扫描 server/*firebase-adminsdk*.json，也可用 FCM_KEY_FILE 环境变量指定别的路径
+  - 客户端配置在 app/google-services.json（Firebase 客户端密钥，随 APK 打包是 Firebase 设计内的安全做法，可入库；服务端私钥绝不能入库或回显）
+  - FCM 推送测试不要用真设备令牌：ensureToken() 后 send 一个假令牌，返回 INVALID_ARGUMENT 即证明 OAuth2 换票 + messages:send 整条链路已通
