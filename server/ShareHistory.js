@@ -61,7 +61,9 @@ class ShareHistory {
   onHostLeft(roomCode) {
     let n = 0;
     for (const key of [...this.open.keys()]) {
-      if (key.startsWith(`${roomCode}|`)) {
+      // key 形如 roomCode|viewerUserId，按分隔符精确取 roomCode 比对，
+      // 避免 "1234|" 误匹配 "12340|xxx" 之类的前缀碰撞
+      if (key.split("|", 1)[0] === roomCode) {
         const id = this.open.get(key);
         this.db.prepare(`UPDATE share_sessions SET ended_at = ? WHERE id = ?`).run(Date.now(), id);
         this.open.delete(key);

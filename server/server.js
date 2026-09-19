@@ -526,11 +526,22 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "请先登录" });
           break;
         }
+        if (!allowAuthAttempt(remoteIp(ws))) {
+          send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
+          break;
+        }
         const toUserId = String(msg.toUserId || "");
         const inviteCode = normalizeCode(msg.code);
         if (!rooms.isValidCode(inviteCode)) {
           console.log(`[invite] 拒绝：房间号非法 from=${userId.slice(0, 8)}… code=${msg.code}`)
           send(ws, { type: "error", message: "房间号需为 4 位数字" });
+          break;
+        }
+        // 房间归属校验：邀请方必须是该房间的 host，且房间处于活跃状态，
+        // 否则不能把好友导向别人的房间或不存在的房间
+        if (!rooms.isHostOf(inviteCode, ws)) {
+          console.log(`[invite] 拒绝：非房间 host from=${userId.slice(0, 8)}… room=${inviteCode}`)
+          send(ws, { type: "error", message: "请先进入共享房间后再邀请好友" });
           break;
         }
         if (!friendManager.list(userId).some((f) => f.userId === toUserId)) {
@@ -566,7 +577,7 @@ wss.on("connection", (ws, request) => {
                 accountManager.clearPushToken(toUserId);
                 console.log(`[invite] 对方推送令牌失效，已清除 to=${toUserId.slice(0, 8)}…`);
               }
-              const pushed = r === true;
+              const pushed = r === "ok";
               send(ws, {
                 type: "share-invite-result",
                 inviteId,
@@ -588,6 +599,18 @@ wss.on("connection", (ws, request) => {
         }
         const accepted = msg.type === "share-invite-accept";
         pendingInvites.delete(inv.inviteId);
+        // 接受时房间可能已关闭：不开账、不算会话，让观看方直接得到错误
+        if (accepted && !rooms.getRoom(inv.code)) {
+          send(ws, { type: "error", message: "会议已结束，请让对方重新发起共享" });
+          sendToUser(inv.fromUserId, {
+            type: "share-invite-result",
+            inviteId: inv.inviteId,
+            accepted: false,
+            reason: "expired",
+          });
+          console.log(`[invite] 接受时房间已关闭 room=${inv.code} to=${userId.slice(0, 8)}…`);
+          break;
+        }
         if (accepted) {
           // 最近共享记录：开账，任意一方断开时结账
           shareHistory.onStart(inv.code, inv.fromUserId, userId);

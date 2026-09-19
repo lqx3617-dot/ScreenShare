@@ -143,7 +143,14 @@ test("WS 认领、在线广播与一键共享邀请闭环", async () => {
     // B 上线 → 好友 A 收到 presence online
     await waitFor(A.messages, (m) => m.type === "presence" && m.userId === b.userId && m.online === true);
 
-    // A 一键发起共享 → B 收到定向邀请
+    // 未建房直接邀请：服务端要求先进入房间
+    A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "4321" }));
+    const needRoom = await waitFor(A.messages, (m) => m.type === "error");
+    assert.match(needRoom.message, /请先进入共享房间/);
+
+    // A 建房后再邀请 → B 收到定向邀请
+    A.ws.send(JSON.stringify({ type: "create", code: "4321" }));
+    await waitFor(A.messages, (m) => m.type === "created");
     A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "4321" }));
     const invite = await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "4321");
     assert.equal(invite.from.userId, a.userId);
@@ -159,11 +166,56 @@ test("WS 认领、在线广播与一键共享邀请闭环", async () => {
     C.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "9999" }));
     await waitFor(C.messages, (m) => m.type === "error");
 
+    // 非房间 host 邀请好友进别人房间：被拒（C 未建 9999 房间）
+    C.ws.send(JSON.stringify({ type: "create", code: "8888" }));
+    await waitFor(C.messages, (m) => m.type === "created");
+    C.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "4321" }));
+    const notHost = await waitFor(C.messages, (m) => m.type === "error" && m.message !== "请先登录");
+    assert.match(notHost.message, /请先进入共享房间/);
+
     // A 断开 → B 收到 presence offline
     A.ws.close();
     await waitFor(B.messages, (m) => m.type === "presence" && m.userId === a.userId && m.online === false);
     B.ws.close();
     C.ws.close();
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("邀请接受时房间已关闭则不计会话", async () => {
+  const { proc, port } = await startServer();
+  try {
+    const a = await registerUser(port, "房东甲");
+    const b = await registerUser(port, "房客乙");
+    const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    assert.equal(req.status, 200);
+    const pending = await httpJson(port, "GET", "/friends/requests", null, b.token);
+    const accepted = await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, b.token);
+    assert.equal(accepted.status, 200);
+
+    const A = connectWs(port, a.token);
+    await A.ready;
+    const B = connectWs(port, b.token);
+    await B.ready;
+
+    A.ws.send(JSON.stringify({ type: "create", code: "5555" }));
+    await waitFor(A.messages, (m) => m.type === "created");
+    A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "5555" }));
+    const invite = await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "5555");
+
+    // host 先退出，房间关闭，B 才接受（须等 close 在服务端处理完，避免竞态）
+    A.ws.close();
+    await waitFor(B.messages, (m) => m.type === "presence" && m.userId === a.userId && m.online === false);
+    B.ws.send(JSON.stringify({ type: "share-invite-accept", inviteId: invite.inviteId }));
+    const roomGone = await waitFor(B.messages, (m) => m.type === "error");
+    assert.match(roomGone.message, /会议已结束/);
+
+    // 最近共享里不该出现这条幽灵会话
+    const recent = await httpJson(port, "GET", "/shares/recent", null, b.token);
+    assert.equal(recent.status, 200);
+    assert.equal(recent.json.length, 0);
+    B.ws.close();
   } finally {
     proc.kill("SIGKILL");
   }

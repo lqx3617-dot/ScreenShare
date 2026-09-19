@@ -216,6 +216,18 @@ object AccountClient {
         }
     }
 
+    /** 清除本设备推送令牌（登出时调用，避免已登出账号继续收邀请推送） */
+    suspend fun clearPushToken(token: String): ApiResult<Unit> {
+        val r = call(
+            "POST", "/account/push-token",
+            JSONObject().put("clear", true), token
+        )
+        return when (r) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Failure -> r
+        }
+    }
+
     /** 最近共享记录（我作为共享方或观看方） */
     suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {        val r = callRaw("GET", "/shares/recent", null, token)
         return when (r) {

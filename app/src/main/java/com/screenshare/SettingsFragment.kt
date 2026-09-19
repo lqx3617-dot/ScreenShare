@@ -98,7 +98,11 @@ class SettingsFragment : Fragment() {
         val ctx = requireContext()
         val token = SessionStore.getToken(ctx).orEmpty()
         lifecycleScope.launch {
-            if (token.isNotEmpty()) AccountClient.logout(token)
+            if (token.isNotEmpty()) {
+                // 先清推送令牌再失效会话：顺序反了清令牌会 401
+                AccountClient.clearPushToken(token)
+                AccountClient.logout(token)
+            }
             SessionStore.clear(ctx)
             // 断开账号长连接，避免用旧令牌继续收推送
             App.instance.disconnectPresence()

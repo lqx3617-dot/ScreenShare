@@ -71,12 +71,12 @@ class FcmPusher {
   }
 
   /**
-   * 发推送。成功/失败只返回布尔并打日志，绝不抛异常。
-   * @returns {Promise<boolean>} 是否投递成功
+   * 发推送。成功/失败只返回结果枚举并打日志，绝不抛异常。
+   * @returns {Promise<"ok"|"invalid_token"|"failed">} 投递结果
    */
   async send(token, title, body, data = {}) {
-    if (!this.enabled) return false;
-    if (!token) return false;
+    if (!this.enabled) return "failed";
+    if (!token) return "failed";
     try {
       const accessToken = await this.ensureToken();
       const res = await fetch(
@@ -100,15 +100,15 @@ class FcmPusher {
       const resp = await res.json();
       if (res.ok) {
         console.log(`[fcm] 推送成功 name=${resp.name}`);
-        return true;
+        return "ok";
       }
       // 令牌失效（UNREGISTERED/INVALID_ARGUMENT）：调用方应清掉它
       const reason = (resp.error && resp.error.status) || res.status;
       console.log(`[fcm] 推送失败 status=${reason}`);
-      return reason === "UNREGISTERED" || reason === "INVALID_ARGUMENT" ? "invalid_token" : false;
+      return reason === "UNREGISTERED" || reason === "INVALID_ARGUMENT" ? "invalid_token" : "failed";
     } catch (e) {
       console.log(`[fcm] 推送异常：${e.message}`);
-      return false;
+      return "failed";
     }
   }
 }

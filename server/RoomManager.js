@@ -133,6 +133,12 @@ class RoomManager {
     return room ? room.host : null;
   }
 
+  /** 调用方是否为该房间的 host（连接级别，用于邀请归属校验） */
+  isHostOf(code, ws) {
+    const room = this.rooms.get(code);
+    return !!room && room.host === ws && room.host.readyState === 1;
+  }
+
   /** 房间内指定 viewer */
   getViewer(code, viewerId) {
     const room = this.rooms.get(code);

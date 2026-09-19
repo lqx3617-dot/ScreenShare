@@ -909,3 +909,4 @@ Entries discovered by the Agent during task execution should follow this format:
   - FCM 服务账号私钥在 server/screenshare-68f69-firebase-adminsdk-fbsvc-d12328c87f.json，已在 .gitignore（server/*firebase-adminsdk* + server/fcm-service-account.json）；服务端启动自动扫描 server/*firebase-adminsdk*.json，也可用 FCM_KEY_FILE 环境变量指定别的路径
   - 客户端配置在 app/google-services.json（Firebase 客户端密钥，随 APK 打包是 Firebase 设计内的安全做法，可入库；服务端私钥绝不能入库或回显）
   - FCM 推送测试不要用真设备令牌：ensureToken() 后 send 一个假令牌，返回 INVALID_ARGUMENT 即证明 OAuth2 换票 + messages:send 整条链路已通
+  - FCM 在两台测试机上不可用（2026-09-19 真机验证）：realme RMX3350 报 SERVICE_NOT_AVAILABLE（能初始化但网络到 Google 不通），一加平板 OPD2511 无 GMS 导致 FirebaseMessaging.getInstance().token 的 Task 永不回调、register() 静默无日志。结论：国行设备无 GMS 时 FCM 离线推送是死路，users.push_token 全库为空。离线邀请暂存+上线补投（flushPendingInvites）仍正常工作，用户决定暂停离线推送方向；若要恢复只能走厂商通道（两台都是 OPPO 系，OPPO Push 覆盖最全，需开放平台资质）或前台服务保活

@@ -22,6 +22,7 @@ import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
@@ -85,6 +86,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         const val EXTRA_MEETING_ACTION = "extra_meeting_action"
         const val EXTRA_MEETING_CODE = "extra_meeting_code"
+        /** 好友共享邀请：建房成功后定向投递的好友 id（FriendsFragment 传入） */
+        const val EXTRA_INVITE_FRIEND_ID = "extra_invite_friend_id"
+        const val EXTRA_INVITE_FRIEND_NAME = "extra_invite_friend_name"
         const val EXTRA_MEETING_TOKEN = "extra_meeting_token"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
@@ -93,6 +97,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         const val ACTION_PIP_RESTORE = "action_pip_restore"
         const val ACTION_PIP_END = "action_pip_end"
         const val ACTION_PIP_VIDEO = "action_pip_video"
+
+        // 好友邀请投递重试：账号 WS 重连窗口期最多 8 次、每次间隔 1.5s
+        private const val MAX_INVITE_TRIES = 8
+        private const val INVITE_RETRY_MS = 1500L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -139,6 +147,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 房间口令：host 侧为服务器本次签发的 token（分享给观看方）；viewer 侧为待发送的加入口令
     private var signalRoomToken = ""
     private var pendingJoinToken = ""
+    // 好友共享邀请：建房成功后投递的好友信息（FriendsFragment 传入，建房前邀请会被服务端拒绝）
+    private var pendingInviteFriendId = ""
+    private var pendingInviteFriendName = ""
     // 本次会话是否已发起屏幕授权请求（避免重复弹授权框）
     private var authorizationRequested = false
     // Trickle ICE：SDP 是否已通过信令发出，之后的候选才单独增量发送
@@ -615,6 +626,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 resetUI()
             }
             updateUI("正在创建会议...")
+            pendingInviteFriendId = intent.getStringExtra(EXTRA_INVITE_FRIEND_ID) ?: ""
+            pendingInviteFriendName = intent.getStringExtra(EXTRA_INVITE_FRIEND_NAME) ?: ""
             connectSignal(code, asHost = true)
             return
         }
@@ -2305,6 +2318,40 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         meetingCodeDialog = null
     }
 
+    /**
+     * 好友共享邀请：房间创建成功后定向投递。
+     * 必须等房间建好再发——服务端校验邀请方是房间 host，提前发会被拒绝。
+     * 发送可能落在 PresenceClient 重连窗口期，短退避重试。
+     */
+    private fun sendPendingFriendInvite() {
+        val friendId = pendingInviteFriendId
+        val friendName = pendingInviteFriendName.ifBlank { friendId }
+        val code = signalCode ?: return
+        if (friendId.isEmpty()) return
+        val pc = App.instance.presenceClient
+        if (pc == null) {
+            AppLogger.app("[INVITE] PresenceClient 未建立，跳过邀请投递")
+            return
+        }
+        AppLogger.app("[INVITE] 房间已建，发送邀请 -> $friendName room=$code ready=${pc.isReady}")
+        val handler = Handler(Looper.getMainLooper())
+        var tries = 0
+        fun trySend() {
+            tries++
+            val ok = pc.sendShareInvite(friendId, code)
+            if (ok) {
+                Toast.makeText(this, "已向 $friendName 发送共享邀请", Toast.LENGTH_SHORT).show()
+            } else if (tries < MAX_INVITE_TRIES && !isFinishing && !isDestroyed) {
+                if (tries == 1) Toast.makeText(this, "账号连接未就绪，正在重连…", Toast.LENGTH_SHORT).show()
+                handler.postDelayed({ if (!isFinishing && !isDestroyed) trySend() }, INVITE_RETRY_MS)
+            } else {
+                AppLogger.app("[INVITE] 邀请投递失败 $tries 次，放弃")
+                Toast.makeText(this, "发送失败：账号连接未就绪，请检查网络后重试", Toast.LENGTH_SHORT).show()
+            }
+        }
+        trySend()
+    }
+
     /** 携带会议号执行加入会议流程（Host 视角为 false）；token 为房间口令（可空） */
     private fun joinMeetingWithCode(code: String, token: String = "") {
         pendingJoinToken = token
@@ -2398,6 +2445,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         dismissMeetingCodeDialog()
                         authorizationRequested = true
                         requestCapturePermissionWithWatchdog()
+                        // 房间已建好，此时邀请才会被服务端接受（校验本连接确实是 host）
+                        sendPendingFriendInvite()
                     } else {
                         // viewer：记住本次口令，断线/自动重连复用（服务器 REQUIRE_TOKEN=1 时必需）
                         if (pendingJoinToken.isNotEmpty()) saveMeetingResumeToken(pendingJoinToken)

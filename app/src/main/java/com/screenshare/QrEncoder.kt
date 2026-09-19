@@ -19,11 +19,17 @@ object QrEncoder {
         )
         val matrix = MultiFormatWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints)
         val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        for (x in 0 until size) {
-            for (y in 0 until size) {
-                bmp.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.TRANSPARENT)
+        // 整块写入，避免逐像素 JNI 调用卡主线程
+        val black = Color.BLACK
+        val transparent = Color.TRANSPARENT
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) {
+            val row = y * size
+            for (x in 0 until size) {
+                pixels[row + x] = if (matrix[x, y]) black else transparent
             }
         }
+        bmp.setPixels(pixels, 0, size, 0, 0, size, size)
         return bmp
     }
 }

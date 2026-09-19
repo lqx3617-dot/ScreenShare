@@ -2,8 +2,6 @@ package com.screenshare
 
 import android.app.Dialog
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -27,6 +25,13 @@ class FriendsFragment : Fragment() {
 
     private var _binding: FragmentFriendsBinding? = null
     private val binding get() = _binding!!
+
+    /** 当前打开的对话框：销毁视图时统一关闭，避免窗口泄漏 */
+    private var dialog: Dialog? = null
+    private fun dismissDialog() {
+        try { dialog?.takeIf { it.isShowing }?.dismiss() } catch (_: Throwable) {}
+        dialog = null
+    }
 
     private val friendsAdapter by lazy {
         FriendsAdapter(
@@ -72,12 +77,12 @@ class FriendsFragment : Fragment() {
         binding.btnAddFriend.setOnClickListener { showAddFriendDialog() }
         binding.layoutEmpty.setOnClickListener { showAddFriendDialog() }
 
-        loadAll()
+        // 数据加载统一由 onResume 触发，避免 onViewCreated + onResume 双发请求
     }
 
     override fun onResume() {
         super.onResume()
-        // 返回页面时刷新（可能在别处接受了申请）
+        // 首次进入与返回页面都在此刷新（可能在别处接受了申请）
         if (_binding != null) loadAll()
     }
 
@@ -98,7 +103,8 @@ class FriendsFragment : Fragment() {
                 sendFriendRequest(code)
             } else {
                 toast("扫码内容不是好友码：$code")
-            }        }
+            }
+        }
     }
 
     /** 拉取好友列表 + 待处理申请 + 最近共享 */
@@ -171,10 +177,10 @@ class FriendsFragment : Fragment() {
     private fun showAddFriendDialog() {
         val ctx = requireContext()
         val profile = SessionStore.getProfile(ctx)
-        val dialog = Dialog(ctx)
+        dialog = Dialog(ctx)
         val dv = DialogLiquidRoomBinding.inflate(layoutInflater)
-        dialog.setContentView(dv.root)
-        dialog.window?.apply {
+        dialog!!.setContentView(dv.root)
+        dialog!!.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
@@ -190,7 +196,7 @@ class FriendsFragment : Fragment() {
         dv.roleCreate.visibility = View.VISIBLE
         dv.roleJoin.visibility = View.VISIBLE
         dv.roleCreate.setOnClickListener {
-            dialog.dismiss()
+            dialog!!.dismiss()
             scanLauncher.launch(android.content.Intent(requireContext(), ScanFriendCodeActivity::class.java))
         }
         dv.roleJoin.setOnClickListener {
@@ -220,12 +226,12 @@ class FriendsFragment : Fragment() {
             }
             sent = true
             sendFriendRequest(code,
-                onSuccess = { dialog.dismiss() },
+                onSuccess = { dialog!!.dismiss() },
                 onFail = { sent = false }
             )
         }
-        dv.btnCancel.setOnClickListener { dialog.dismiss() }
-        dialog.show()
+        dv.btnCancel.setOnClickListener { dialog!!.dismiss() }
+        dialog!!.show()
     }
 
     /** 发送好友申请，成功/失败分别回调（扫码路径无弹窗可关，onSuccess 默认空操作） */
@@ -262,7 +268,7 @@ class FriendsFragment : Fragment() {
     private fun showMyQrDialog() {
         val ctx = requireContext()
         val profile = SessionStore.getProfile(ctx) ?: return
-        val dialog = Dialog(ctx)
+        dialog = Dialog(ctx)
         val container = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
@@ -297,23 +303,23 @@ class FriendsFragment : Fragment() {
         container.addView(codeText)
         container.addView(qrWrap)
         container.addView(hint)
-        dialog.setContentView(container)
-        dialog.window?.apply {
+        dialog!!.setContentView(container)
+        dialog!!.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
             setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
         }
-        container.setOnClickListener { dialog.dismiss() }
-        dialog.show()
+        container.setOnClickListener { dialog!!.dismiss() }
+        dialog!!.show()
     }
 
     /** 备注名弹窗：复用房号弹窗的输入框，预填当前备注，保存后本地增量更新 */
     private fun showRemarkDialog(friend: AccountClient.FriendItem) {
         val ctx = requireContext()
-        val dialog = Dialog(ctx)
+        dialog = Dialog(ctx)
         val dv = DialogLiquidRoomBinding.inflate(layoutInflater)
-        dialog.setContentView(dv.root)
-        dialog.window?.apply {
+        dialog!!.setContentView(dv.root)
+        dialog!!.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.CENTER)
@@ -341,11 +347,11 @@ class FriendsFragment : Fragment() {
             }
             // 没变化直接关
             if (remark == friend.remark) {
-                dialog.dismiss()
+                dialog!!.dismiss()
                 return@setOnClickListener
             }
             saved = true
-            val t = token() ?: run { dialog.dismiss(); return@setOnClickListener }
+            val t = token() ?: run { dialog!!.dismiss(); return@setOnClickListener }
             lifecycleScope.launch {
                 val r = AccountClient.setRemark(t, friend.userId, remark)
                 if (_binding == null) return@launch
@@ -359,12 +365,12 @@ class FriendsFragment : Fragment() {
                             friendsAdapter.submitList(list)
                         }
                         toast(if (remark.isEmpty()) "已清除备注" else "备注已保存")
-                        dialog.dismiss()
+                        dialog!!.dismiss()
                     }
                     is AccountClient.ApiResult.Failure -> {
                         saved = false
                         if (r.http == 401) {
-                            dialog.dismiss()
+                            dialog!!.dismiss()
                             requireSessionExpired()
                         } else {
                             toast(r.message)
@@ -373,45 +379,25 @@ class FriendsFragment : Fragment() {
                 }
             }
         }
-        dv.btnCancel.setOnClickListener { dialog.dismiss() }
-        dialog.show()
+        dv.btnCancel.setOnClickListener { dialog!!.dismiss() }
+        dialog!!.show()
     }
 
-    /** 一键发起共享：生成本地房间号 → 定向邀请好友 → 进会议室 */
+    /** 一键发起共享：先生成本地房间号进会议室建房，房间建好后由 MainActivity 发邀请 */
     private fun startShareWith(friend: AccountClient.FriendItem) {
         // 离线好友也允许发起：服务端会暂存邀请（5 分钟）并尝试 FCM 推送，
         // 对方上线时自动补投。结果经 share-invite-result 回来后另行提示。
         val code = generateCode()
-        // PresenceClient 是进程级的，不依赖当前 Activity 是否存活
-        val pc = App.instance.presenceClient
-        if (pc == null) {
-            AppLogger.app("[FRIENDS] 发起共享失败：PresenceClient 未建立（未登录？）")
-            toast("账号连接未建立，请重新登录后重试")
-            return
-        }
-        AppLogger.app("[FRIENDS] 发起共享 -> ${friend.nickname} room=$code ready=${pc.isReady}")
-        // 发送可能落在 WS 重连窗口期：短退避重试，成功后再进会议室
-        val handler = Handler(Looper.getMainLooper())
-        var tries = 0
-        fun trySend() {
-            tries++
-            val ok = pc.sendShareInvite(friend.userId, code)
-            if (ok) {
-                toast("已向 ${friend.nickname.ifBlank { friend.userId }} 发送共享邀请")
-                val intent = android.content.Intent(requireContext(), MainActivity::class.java)
-                    .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_CREATE)
-                    .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                startActivity(intent)
-            } else if (tries < MAX_INVITE_TRIES && context != null) {
-                if (tries == 1) toast("账号连接未就绪，正在重连…")
-                handler.postDelayed({ if (context != null) trySend() }, INVITE_RETRY_MS)
-            } else {
-                AppLogger.app("[FRIENDS] 邀请投递失败 ${tries} 次，放弃")
-                toast("发送失败：账号连接未就绪，请检查网络后重试")
-            }
-        }
-        trySend()
+        // 邀请目标随 Intent 传给 MainActivity，建房成功后再投递，
+        // 服务端据此校验邀请方确实是房间 host（防止把好友导向别人的房间）
+        AppLogger.app("[FRIENDS] 发起共享 -> ${friend.nickname} room=$code")
+        val intent = android.content.Intent(requireContext(), MainActivity::class.java)
+            .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_CREATE)
+            .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
+            .putExtra(MainActivity.EXTRA_INVITE_FRIEND_ID, friend.userId)
+            .putExtra(MainActivity.EXTRA_INVITE_FRIEND_NAME, friend.nickname.ifBlank { friend.userId })
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        startActivity(intent)
     }
 
     /** 最近共享记录：再次向对方发起共享（好友关系可能已解除，需校验） */
@@ -422,11 +408,6 @@ class FriendsFragment : Fragment() {
             return
         }
         startShareWith(friend)
-    }
-
-    private companion object {
-        const val MAX_INVITE_TRIES = 8
-        const val INVITE_RETRY_MS = 1500L
     }
 
     private fun generateCode(): String {
@@ -476,6 +457,7 @@ class FriendsFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        dismissDialog()
         _binding = null
     }
 }
