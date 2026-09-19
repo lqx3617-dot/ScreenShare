@@ -176,3 +176,63 @@ test("REST 端到端：注册→登录→me→改资料→登出", async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("REST 登录连续失败 5 次后被锁定，第 6 次返回 429 too_many_attempts", async () => {
+  const env = makeEnv();
+  const router = new AccountRouter({ accountManager: env.manager, rateLimiter: env.rateLimiter });
+  const server = http.createServer((req, res) => {
+    if (router.handle(req, res)) return;
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (path, body) =>
+    fetch(base + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  try {
+    await env.manager.register("锁定用户", PASSWORD);
+    for (let i = 0; i < 5; i++) {
+      const r = await post("/account/login", { nickname: "锁定用户", password: "WrongPass1!" });
+      assert.equal(r.status, 401);
+      assert.equal((await r.json()).error, "invalid_credentials");
+    }
+    // 第 6 次：即使密码正确也被锁定
+    const locked = await post("/account/login", { nickname: "锁定用户", password: PASSWORD });
+    assert.equal(locked.status, 429);
+    assert.equal((await locked.json()).error, "too_many_attempts");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("REST 接口限流：同 IP 每分钟 60 次后返回 429 too_many_requests", async () => {
+  const env = makeEnv();
+  const reg = await env.manager.register("限流用户", PASSWORD);
+  const router = new AccountRouter({ accountManager: env.manager, rateLimiter: env.rateLimiter });
+  const server = http.createServer((req, res) => {
+    if (router.handle(req, res)) return;
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    // /account/me 每次成功消耗 1 次配额（register 走 manager 不经路由，不占配额）
+    for (let i = 0; i < 60; i++) {
+      const r = await fetch(base + "/account/me", { headers: { Authorization: `Bearer ${reg.token}` } });
+      assert.equal(r.status, 200);
+    }
+    // 第 61 次触发接口限流（与登录锁定的 429 错误码区分）
+    const r = await fetch(base + "/account/me", { headers: { Authorization: `Bearer ${reg.token}` } });
+    assert.equal(r.status, 429);
+    assert.equal((await r.json()).error, "too_many_requests");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

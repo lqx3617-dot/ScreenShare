@@ -401,3 +401,67 @@ test("FcmPusher 缺私钥时禁用，合法结构时启用", () => {
     fs.unlinkSync(tmp);
   }
 });
+
+test("REST 拒绝申请与删除好友（DELETE /friends/{id}）", async () => {
+  const env = makeEnv();
+  const a = await register(env, "小南");
+  const b = await register(env, "阿远");
+
+  const router = new AccountRouter({
+    accountManager: env.accounts,
+    friendManager: env.friends,
+    rateLimiter: env.rateLimiter,
+    presence: env.presence,
+  });
+  const server = http.createServer((req, res) => {
+    if (router.handle(req, res)) return;
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const call = (method, path, body, token) =>
+    fetch(base + path, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+  try {
+    // 申请 → B 拒绝 → 申请方可再次申请（拒绝是幂等的清理动作）
+    const r1 = await call("POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    const { requestId } = await r1.json();
+    let r = await call("POST", "/friends/reject", { requestId }, b.token);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).ok, true);
+    assert.equal(env.friends.pendingRequests(b.userId).length, 0);
+
+    const r2 = await call("POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    const rid2 = (await r2.json()).requestId;
+    assert.notEqual(rid2, requestId);
+
+    // 接受后双向成立
+    await call("POST", "/friends/accept", { requestId: rid2 }, b.token);
+    assert.equal(env.friends.list(a.userId).length, 1);
+
+    // 删除好友：双向解除
+    r = await call("DELETE", `/friends/${b.userId}`, null, a.token);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).ok, true);
+    assert.equal(env.friends.list(a.userId).length, 0);
+    assert.equal(env.friends.list(b.userId).length, 0);
+
+    // 未认证 401
+    r = await call("DELETE", `/friends/${b.userId}`);
+    assert.equal(r.status, 401);
+
+    // 删除不存在的好友返回 404（非幂等，防止误删）
+    r = await call("DELETE", `/friends/${b.userId}`, null, a.token);
+    assert.equal(r.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
