@@ -44,10 +44,14 @@ object UpdateChecker {
     // 静默自动检查节流：12 小时内不重复自动检查（手动检查不受限）
     private const val AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
     private const val CANCEL_ACTION = "com.screenshare.CANCEL_UPDATE"
-    private const val NOTIFICATION_ID = 1001
+    private const val NOTIFICATION_ID = 3001
 
     fun check(context: Context) = check(context, manual = false)
 
+    /**
+     * 版本门禁：服务端 minVersionCode 高于本地版本时，跳拦截页阻断使用（不可绕过）。
+     * 门禁每次启动必查，不受自动检查节流影响；拉取失败或字段缺失时放行（避免变砖）。
+     */
     fun check(context: Context, manual: Boolean) {
         val url = BuildConfig.UPDATE_URL
         if (url.isNullOrEmpty()) {
@@ -58,12 +62,10 @@ object UpdateChecker {
             }
             return
         }
-        // 自动检查节流：距上次成功检查不足 12h 直接跳过，避免频繁请求
-        if (!manual) {
-            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            val last = prefs.getLong(KEY_AUTO_TS, 0L)
-            if (System.currentTimeMillis() - last < AUTO_CHECK_INTERVAL_MS) return
-        }
+        // 自动检查节流：仅影响"新版本提示"；版本门禁每次启动必查
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val throttled = !manual &&
+            System.currentTimeMillis() - prefs.getLong(KEY_AUTO_TS, 0L) < AUTO_CHECK_INTERVAL_MS
         Thread {
             try {
                 val conn = URL(url).openConnection() as HttpURLConnection
@@ -86,6 +88,16 @@ object UpdateChecker {
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putLong(KEY_AUTO_TS, System.currentTimeMillis()).apply()
                 val info = JSONObject(json)
+                // 版本门禁优先于普通更新提示：命中后直接拦截，不再走提示逻辑
+                val minVersionCode = info.optInt("minVersionCode", 0)
+                if (minVersionCode > 0 && BuildConfig.VERSION_CODE < minVersionCode) {
+                    (context as? android.app.Activity)?.runOnUiThread {
+                        showUpdateBlock(context, info)
+                    }
+                    return@Thread
+                }
+                // 节流窗口内不再弹更新提示
+                if (throttled) return@Thread
                 val serverCode = info.getInt("versionCode")
                 if (serverCode > BuildConfig.VERSION_CODE) {
                     (context as? android.app.Activity)?.runOnUiThread {
@@ -105,6 +117,23 @@ object UpdateChecker {
                 }
             }
         }.apply { isDaemon = true }.start()
+    }
+
+    /**
+     * 命中版本门禁：启动拦截页，并结束当前界面。
+     * 拦截页只能"立即更新"或退出应用，用户无法返回被拦截的旧版本界面。
+     */
+    private fun showUpdateBlock(context: Context, info: JSONObject) {
+        val intent = Intent(context, UpdateBlockActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .putExtra(UpdateBlockActivity.EXTRA_INFO, info.toString())
+        context.startActivity(intent)
+        (context as? android.app.Activity)?.finish()
+    }
+
+    /** 供拦截页调用：直接下载安装指定版本的更新包 */
+    fun downloadUpdate(context: Context, info: JSONObject) {
+        downloadAndInstall(context, info)
     }
 
     /**
@@ -131,38 +160,45 @@ object UpdateChecker {
     }
 
     private fun downloadAndInstall(context: Context, info: JSONObject) {
-        val apkUrl = info.getString("url")
-        val dir = context.getExternalFilesDir(null)
-        val versionName = info.optString("versionName", "new")
-        // 清理历史旧版本更新包（保留当前目标版本，用于文件复用）
-        dir?.listFiles()?.forEach { if (it.name.startsWith("update") && it.name != "update-$versionName.apk") it.delete() }
-        // 文件名带版本号，每次版本唯一 Uri，绕过 Android 安装器缓存
-        val target = File(dir, "update-$versionName.apk")
-        val expectedMd5 = info.optString("md5", "")
+        val appCtx = context.applicationContext
+        val activity = context as? android.app.Activity
+        // IO 操作（列出/删除旧包、MD5 整包哈希）切到子线程，避免主线程 ANR
+        Thread {
+            val apkUrl = info.getString("url")
+            val dir = appCtx.getExternalFilesDir(null)
+            val versionName = info.optString("versionName", "new")
+            // 清理历史旧版本更新包（保留当前目标版本，用于文件复用）
+            dir?.listFiles()?.forEach { if (it.name.startsWith("update") && it.name != "update-$versionName.apk") it.delete() }
+            // 文件名带版本号，每次版本唯一 Uri，绕过 Android 安装器缓存
+            val target = File(dir, "update-$versionName.apk")
+            val expectedMd5 = info.optString("md5", "")
 
-        // 文件复用：同版本安装包已存在且 MD5 校验通过 → 直接安装，不重复下载
-        if (target.exists()) {
-            if (expectedMd5.isEmpty() || md5(target) == expectedMd5) {
-                installApk(context, target)
-                return
+            // 文件复用：同版本安装包已存在且 MD5 校验通过 → 直接安装，不重复下载
+            if (target.exists()) {
+                if (expectedMd5.isEmpty() || md5(target) == expectedMd5) {
+                    activity?.runOnUiThread { installApk(activity, target) }
+                    return@Thread
+                }
+                target.delete()
             }
-            target.delete()
-        }
 
-        // Android 13+ 通知栏下载需要通知权限；未授权时降级为 Activity 内进度条（功能不受影响）
-        val notifyAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            // Android 13+ 通知栏下载需要通知权限；未授权时降级为 Activity 内进度条（功能不受影响）
+            val notifyAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(appCtx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-        if (notifyAllowed) {
-            downloadWithNotification(context, info, target, apkUrl, expectedMd5)
-        } else {
-            downloadWithDialog(context, info, target, apkUrl, expectedMd5)
-        }
+            // 下载方式的 UI 初始化（通知/弹窗）必须在主线程
+            activity?.runOnUiThread {
+                if (notifyAllowed) {
+                    downloadWithNotification(appCtx, activity, info, target, apkUrl, expectedMd5)
+                } else {
+                    downloadWithDialog(activity, info, target, apkUrl, expectedMd5)
+                }
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /** 通知栏下载：后台进行（用户可离开页面），进度与速度展示在通知栏，可取消，完成自动安装 */
-    private fun downloadWithNotification(context: Context, info: JSONObject, target: File, apkUrl: String, expectedMd5: String) {
-        val appCtx = context.applicationContext
+    private fun downloadWithNotification(appCtx: Context, activity: android.app.Activity?, info: JSONObject, target: File, apkUrl: String, expectedMd5: String) {
         val nm = NotificationManagerCompat.from(appCtx)
         val versionName = info.optString("versionName", "新")
         createNotificationChannel(appCtx)
@@ -210,40 +246,40 @@ object UpdateChecker {
             }
             if (!ok || !target.exists()) {
                 target.delete()
-                (context as? android.app.Activity)?.runOnUiThread {
-                    Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                activity?.runOnUiThread {
+                    Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
                 }
                 return@Thread
             }
             if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
                 target.delete()
-                (context as? android.app.Activity)?.runOnUiThread {
-                    Toast.makeText(context, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
+                activity?.runOnUiThread {
+                    Toast.makeText(activity, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
                 }
                 return@Thread
             }
-            (context as? android.app.Activity)?.runOnUiThread { installApk(context, target) }
+            activity?.runOnUiThread { installApk(activity, target) }
         }.start()
     }
 
     /** 降级方案：无通知权限时使用 Activity 内进度条弹窗下载 */
-    private fun downloadWithDialog(context: Context, info: JSONObject, target: File, apkUrl: String, expectedMd5: String) {
-        val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+    private fun downloadWithDialog(activity: android.app.Activity, info: JSONObject, target: File, apkUrl: String, expectedMd5: String) {
+        val progressBar = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
         }
-        val textView = TextView(context).apply {
+        val textView = TextView(activity).apply {
             text = "准备连接下载服务器..."
             textSize = 14f
             setPadding(50, 20, 50, 20)
         }
-        val layout = android.widget.LinearLayout(context).apply {
+        val layout = android.widget.LinearLayout(activity).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             addView(textView)
             addView(progressBar)
             setPadding(50, 20, 50, 20)
         }
 
-        val dialog = AlertDialog.Builder(context)
+        val dialog = AlertDialog.Builder(activity)
             .setTitle("下载更新(${THREAD_COUNT}线程)")
             .setView(layout)
             .setCancelable(false)
@@ -257,9 +293,8 @@ object UpdateChecker {
         }
 
         Thread {
-            val activity = context as? android.app.Activity
             val ok = downloadToFile(apkUrl, target, cancelled) { total, totalBytes ->
-                activity?.runOnUiThread {
+                activity.runOnUiThread {
                     progressBar.progress = (total * 100 / totalBytes).toInt()
                     textView.text = "正在下载(${THREAD_COUNT}线程) ${formatSize(total)}/${formatSize(totalBytes)}"
                 }
@@ -269,35 +304,35 @@ object UpdateChecker {
                 return@Thread
             }
             if (!ok) {
-                activity?.runOnUiThread {
+                activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
-                    Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                    Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
                 }
                 target.delete()
                 return@Thread
             }
-            activity?.runOnUiThread {
+            activity.runOnUiThread {
                 progressBar.progress = 100
                 textView.text = "正在校验文件..."
             }
             if (!target.exists()) {
-                activity?.runOnUiThread {
+                activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
-                    Toast.makeText(context, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                    Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
                 }
                 return@Thread
             }
             if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
-                activity?.runOnUiThread {
+                activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
-                    Toast.makeText(context, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
+                    Toast.makeText(activity, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
                 }
                 target.delete()
                 return@Thread
             }
-            activity?.runOnUiThread {
+            activity.runOnUiThread {
                 if (dialog.isShowing) dialog.dismiss()
-                installApk(context, target)
+                installApk(activity, target)
             }
         }.start()
     }
@@ -473,7 +508,7 @@ object UpdateChecker {
         }
     }
 
-    private fun formatSize(bytes: Long): String = when {
+    fun formatSize(bytes: Long): String = when {
         bytes < 1024 -> "$bytes B"
         bytes < 1048576 -> "${bytes / 1024} KB"
         else -> "%.1f MB".format(bytes.toDouble() / 1048576)
@@ -516,17 +551,25 @@ object UpdateChecker {
 
     private fun installApk(context: Context, apk: File) {
         // 安全：安装前校验 APK 签名与当前应用一致，防恶意替换
-        if (!verifyApkSignature(context, apk)) {
-            Log.e(TAG, "APK 签名校验失败，拒绝安装")
-            (context as? android.app.Activity)?.runOnUiThread {
-                AlertDialog.Builder(context)
-                    .setTitle("安装已阻止")
-                    .setMessage("下载的更新包签名与本应用不一致，已拒绝安装。请从官方渠道获取更新。")
-                    .setPositiveButton("确定", null)
-                    .show()
+        // 签名校验需解析整个 APK（IO 密集），放子线程避免主线程 ANR
+        Thread {
+            if (!verifyApkSignature(context, apk)) {
+                Log.e(TAG, "APK 签名校验失败，拒绝安装")
+                (context as? android.app.Activity)?.runOnUiThread {
+                    AlertDialog.Builder(context)
+                        .setTitle("安装已阻止")
+                        .setMessage("下载的更新包签名与本应用不一致，已拒绝安装。请从官方渠道获取更新。")
+                        .setPositiveButton("确定", null)
+                        .show()
+                }
+                return@Thread
             }
-            return
-        }
+            (context as? android.app.Activity)?.runOnUiThread { installApkVerified(context, apk) }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /** 签名已校验通过：检查安装权限并拉起系统安装器（主线程） */
+    private fun installApkVerified(context: Context, apk: File) {
         // Android 8+ 需要"安装未知应用"权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             (context as? android.app.Activity)?.runOnUiThread {

@@ -230,6 +230,8 @@ async function buildVersion(host) {
     size: stat.size,
     note: "全量优化版（双端需同步更新）",
     forced: RELEASE_CONFIG.forced,
+    // 版本门禁：客户端本地 versionCode 低于此值时阻断使用，强制更新
+    minVersionCode: RELEASE_CONFIG.minVersionCode || 0,
     changelog: RELEASE_CONFIG.changelog,
   };
 }
@@ -362,6 +364,8 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       const versionName = String(payload.versionName || "").trim();
       const changelog = String(payload.changelog || "").trim();
       const app = String(payload.app || "both");
+      // minVersion: 可选，启用版本门禁的最低 versionCode。缺省/0 = 保持现有门禁配置不变
+      const minVersion = parseInt(payload.minVersion, 10) || 0;
       if (!/^\d+\.\d+$/.test(versionName)) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "版本号格式应为 数字.数字（如 1.183）" }));
@@ -395,6 +399,7 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
         changelog,
         app,
         apps: app === "both" ? ["main", "albumviewer"] : [app],
+        minVersion,
         log: [],
         error: null,
         createdAt: Date.now(),

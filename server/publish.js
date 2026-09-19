@@ -12,11 +12,8 @@ const GRADLE = "/workspace/gradlew";
 const PROJECT_DIR = "/workspace";
 const KEYSTORE = process.env.KEYSTORE_PATH || "/workspace/signing/release.keystore";
 // 签名密钥口令：仅从环境变量注入，禁止写入源码
-// 未设置时直接抛出异常，防止使用弱口令签名
+// 校验延迟到 executeTask：loadConfig/saveConfig 等纯配置操作可在无密钥环境（如测试）中使用
 const KEYSTORE_PASS = process.env.KEYSTORE_PASS;
-if (!KEYSTORE_PASS) {
-  throw new Error("[publish] 必须设置 KEYSTORE_PASS 环境变量（签名密钥口令），当前未设置，终止发布");
-}
 const KEYSTORE_ALIAS = process.env.KEYSTORE_ALIAS || "screenshare";
 const BUILD_TOOLS = path.join(ANDROID_HOME, "build-tools", "34.0.0");
 const ZIPALIGN = path.join(BUILD_TOOLS, "zipalign");
@@ -115,9 +112,10 @@ async function signApk(task, key) {
 function loadConfig() {
   try {
     const j = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-    return { changelog: j.changelog || "", forced: !!j.forced };
+    // minVersion: 最低可用版本号（versionCode）。0 或缺省 = 不启用版本门禁
+    return { changelog: j.changelog || "", forced: !!j.forced, minVersionCode: parseInt(j.minVersionCode, 10) || 0 };
   } catch (e) {
-    return { changelog: "", forced: false };
+    return { changelog: "", forced: false, minVersionCode: 0 };
   }
 }
 
@@ -163,12 +161,17 @@ function updateConfig(task) {
   const cfg = loadConfig();
   cfg.changelog = task.changelog;
   cfg.forced = false;
+  // 版本门禁：发布时显式传 minVersion>0 则更新门禁值；传 0 表示解除门禁；缺省保留现有配置
+  if (task.minVersion) cfg.minVersionCode = task.minVersion;
   saveConfig(cfg);
-  task.log.push("更新版本配置 release-config.json");
+  task.log.push(`更新版本配置 release-config.json（minVersionCode=${cfg.minVersionCode}）`);
 }
 
 async function executeTask(task) {
   try {
+    if (!KEYSTORE_PASS) {
+      throw new Error("[publish] 必须设置 KEYSTORE_PASS 环境变量（签名密钥口令），当前未设置，终止发布");
+    }
     bumpVersion(task);
     await buildApk(task);
     task.phase = "sign";

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 版本门禁拦截页：旧版本不可用，只能立即更新或退出应用 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/bg_gradient"
+    android:gravity="center"
+    android:paddingStart="28dp"
+    android:paddingEnd="28dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp"
+        android:text="ScreenShare"
+        android:textSize="26sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFFFF"
+        android:letterSpacing="0.03" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:text="应用版本过低"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFFFF" />
+
+    <TextView
+        android:id="@+id/tvBlockDesc"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="34dp"
+        android:gravity="center"
+        android:textSize="14sp"
+        android:textColor="#99FFFFFF" />
+
+    <Button
+        android:id="@+id/btnUpdate"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginBottom="12dp"
+        android:text="立即更新"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:textColor="#FFFFFFFF"
+        android:background="@drawable/bg_friend_search"
+        android:stateListAnimator="@null" />
+
+    <Button
+        android:id="@+id/btnExit"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="退出应用"
+        android:textSize="14sp"
+        android:textColor="#B3FFFFFF"
+        android:background="@android:color/transparent"
+        android:stateListAnimator="@null" />
+
+</LinearLayout>

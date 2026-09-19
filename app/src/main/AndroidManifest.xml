@@ -75,6 +75,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- 版本门禁拦截页：旧版本启动时覆盖在最前，只能更新或退出 -->
+        <activity
+            android:name=".UpdateBlockActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:screenOrientation="fullUser" />
         <service
             android:name=".ScreenProjectionService"
             android:exported="false"
