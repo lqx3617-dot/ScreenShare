@@ -19,6 +19,7 @@ import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
@@ -77,9 +78,9 @@ class LiquidHomeActivity : AppCompatActivity() {
     /** 全部无限动画引用，销毁时统一取消防泄漏 */
     private val infiniteAnimators = ArrayList<ObjectAnimator>()
 
-    /** 账号在线状态长连接（auth 认领后接收 presence/好友邀请/共享邀请） */
-    var presenceClient: PresenceClient? = null
-        private set
+    /** 账号在线状态长连接（进程级实例，见 App.connectPresence） */
+    val presenceClient: PresenceClient?
+        get() = App.instance.presenceClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,12 +116,13 @@ class LiquidHomeActivity : AppCompatActivity() {
 
     private val presenceListener = object : PresenceClient.Listener {
         override fun onAuthed(userId: String) {
-            Log.d(TAG, "账号连接已认领: $userId")
+            AppLogger.app("[PRESENCE] LiquidHome 认领成功 user=${userId.take(8)}")
         }
 
         override fun onAuthFailed() {
             // 令牌无效/过期：清本地会话并跳登录页
-            Log.w(TAG, "账号令牌失效，需重新登录")
+            AppLogger.app("[PRESENCE] 令牌失效，需重新登录")
+            if (isFinishing || isDestroyed) return
             SessionStore.clear(this@LiquidHomeActivity)
             startActivity(Intent(this@LiquidHomeActivity, LoginActivity::class.java))
             finish()
@@ -145,29 +147,38 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
 
         override fun onShareInvite(inviteId: String, code: String, fromUserId: String, fromNickname: String) {
-            runOnUiThread { showShareInviteDialog(inviteId, code, fromNickname) }
+            AppLogger.app("[PRESENCE] 收到共享邀请 from=$fromNickname room=$code inviteId=${inviteId.take(8)}")
+            runOnUiThread {
+                // Activity 已销毁（例如正在会议室里）时不能弹对话框，降级提示
+                if (!isFinishing && !isDestroyed) showShareInviteDialog(inviteId, code, fromNickname)
+                else toastOnApp("收到 $fromNickname 的共享邀请")
+            }
         }
 
         override fun onShareInviteResult(inviteId: String, accepted: Boolean, reason: String) {
             runOnUiThread {
-                showToast(if (accepted) "对方已接受共享邀请" else "对方未接受邀请${if (reason.isNotEmpty()) "：$reason" else ""}")
+                toastOnApp(if (accepted) "对方已接受共享邀请" else "对方未接受邀请${if (reason.isNotEmpty()) "：$reason" else ""}")
             }
         }
 
         override fun onRetrying(message: String) {
-            Log.d(TAG, message)
+            AppLogger.app("[PRESENCE] 重连中: $message")
         }
 
         override fun onError(message: String) {
-            Log.e(TAG, "账号连接错误: $message")
+            AppLogger.app("[PRESENCE] 连接错误: $message")
         }
+    }
+
+    /** Activity 可能已销毁，Toast 一律用 Application 上下文避免崩溃 */
+    private fun toastOnApp(msg: String) {
+        Toast.makeText(App.instance, msg, Toast.LENGTH_SHORT).show()
     }
 
     private fun connectPresence() {
         val token = SessionStore.getToken(this) ?: return
-        presenceClient = PresenceClient(BuildConfig.SIGNAL_URL, presenceListener).also {
-            it.connect(token)
-        }
+        // 进程级长连接：若已存在（从会议室返回时）复用，不重复建连
+        App.instance.connectPresence(token, presenceListener)
     }
 
     /** 收到好友的共享邀请：接受则进观看端，拒绝则通知对方 */
@@ -449,7 +460,8 @@ class LiquidHomeActivity : AppCompatActivity() {
         infiniteAnimators.forEach { it.cancel() }
         infiniteAnimators.clear()
         handler.removeCallbacksAndMessages(null)
-        presenceClient?.disconnect()
-        presenceClient = null
+        // 注意：不断开 presenceClient。它是进程级的（见 App.connectPresence），
+        // 进会议室销毁本 Activity 时若断开，共享邀请发不出/收不到。
+        // 只有登出（SettingsFragment）才调 App.disconnectPresence()。
     }
 }

@@ -2,7 +2,6 @@ package com.screenshare
 
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -44,9 +43,10 @@ class PresenceClient(
     }
 
     private companion object {
-        const val TAG = "PresenceClient"
-        const val MAX_ATTEMPTS = 6
+        const val TAG = "PRESENCE"
+        const val MAX_ATTEMPTS = 0 // 0 = 无限重连，账号长连接必须常驻
         const val RETRY_BASE_MS = 2000L
+        const val RETRY_MAX_MS = 30000L
         const val HEARTBEAT_INTERVAL_MS = 20000L
     }
 
@@ -61,6 +61,12 @@ class PresenceClient(
     private var closedByUs = false
     private var attempt = 0
     private var authed = false
+
+    /** WS 已连接且 auth 认领完成，可发消息 */
+    val isReady: Boolean
+        get() = !closedByUs && authed && webSocket != null
+
+    private fun log(msg: String) = AppLogger.app("[$TAG] $msg")
 
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
@@ -81,11 +87,11 @@ class PresenceClient(
 
     private fun tryConnect() {
         attempt++
-        Log.d(TAG, "WS 连接尝试 #$attempt")
+        log("WS 连接尝试 #$attempt url=$url")
         val request = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "WS 已连接，发送 auth 认领")
+                log("WS 已连接，发送 auth 认领")
                 attempt = 0
                 // 认领身份；服务端校验后回 auth-ok / auth-error
                 webSocket.send(JSONObject().apply {
@@ -99,14 +105,17 @@ class PresenceClient(
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 handler.removeCallbacks(heartbeatRunnable)
+                authed = false
                 if (closedByUs) return
-                Log.w(TAG, "WS 异常: ${t.message}")
+                log("WS 异常: ${t.message}")
                 scheduleRetry("账号连接异常")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 handler.removeCallbacks(heartbeatRunnable)
+                authed = false
                 if (closedByUs) return
+                log("WS 已断开 code=$code reason=$reason")
                 scheduleRetry("账号连接已断开")
             }
         })
@@ -114,12 +123,14 @@ class PresenceClient(
 
     private fun scheduleRetry(failMsg: String) {
         if (closedByUs) return
-        if (attempt >= MAX_ATTEMPTS) {
+        if (MAX_ATTEMPTS > 0 && attempt >= MAX_ATTEMPTS) {
+            log("重连次数耗尽，放弃: $failMsg")
             listener.onError(failMsg)
             return
         }
-        val delayMs = RETRY_BASE_MS * attempt
-        listener.onRetrying("$failMsg，${delayMs / 1000} 秒后重试（第 $attempt/$MAX_ATTEMPTS 次）")
+        // 指数退避，封顶 30s：账号长连接要一直挂着，不能因为短时网络抖动永久下线
+        val delayMs = (RETRY_BASE_MS shl minOf(attempt, 4)).coerceAtMost(RETRY_MAX_MS)
+        log("将在 ${delayMs}ms 后重连（第 $attempt 次失败）")
         handler.postDelayed({ tryConnect() }, delayMs)
     }
 
@@ -167,42 +178,59 @@ class PresenceClient(
             )
             "pong" -> Unit
             "error" -> listener.onError(json.optString("message", "服务器错误"))
-            else -> Log.w(TAG, "未知消息: ${json.optString("type")}")
+            else -> log("未知消息: ${json.optString("type")}")
         }
     }
 
     /** 向好友发起共享邀请（建房后调用，把房间号定向推给对方） */
-    fun sendShareInvite(toUserId: String, code: String) {
-        send(JSONObject().apply {
+    /** 发送共享邀请；返回是否已投递到已认证的连接 */
+    fun sendShareInvite(toUserId: String, code: String): Boolean {
+        return send(JSONObject().apply {
             put("type", "share-invite")
             put("toUserId", toUserId)
             put("code", code)
-        }.toString())
+        }.toString(), "share-invite -> ${toUserId.take(8)} room=$code")
     }
 
     /** 接受对方的共享邀请 */
-    fun acceptShareInvite(inviteId: String) {
-        send(JSONObject().apply {
+    fun acceptShareInvite(inviteId: String): Boolean {
+        return send(JSONObject().apply {
             put("type", "share-invite-accept")
             put("inviteId", inviteId)
-        }.toString())
+        }.toString(), "share-invite-accept")
     }
 
     /** 拒绝对方的共享邀请 */
-    fun rejectShareInvite(inviteId: String) {
-        send(JSONObject().apply {
+    fun rejectShareInvite(inviteId: String): Boolean {
+        return send(JSONObject().apply {
             put("type", "share-invite-reject")
             put("inviteId", inviteId)
-        }.toString())
+        }.toString(), "share-invite-reject")
     }
 
-    private fun send(msg: String) {
+    /**
+     * 投递一条消息；返回是否真的送进已认证的 WS。
+     * 未连接/auth 未完成/ws.send 返回 false（队列已满或连接已关）时返回 false，
+     * 调用方据此决定等待重连还是提示用户，不能像以前一样默默吞掉。
+     */
+    private fun send(msg: String, desc: String): Boolean {
         val ws = webSocket
         if (ws == null || closedByUs) {
-            Log.w(TAG, "WS 未就绪，消息未发送: $msg")
-            return
+            log("发送失败（无连接）：$desc")
+            return false
         }
-        try { ws.send(msg) } catch (t: Throwable) {}
+        if (!authed) {
+            log("发送失败（未 auth）：$desc")
+            return false
+        }
+        return try {
+            val ok = ws.send(msg)
+            if (ok) log("已发送：$desc") else log("发送失败（send 返回 false）：$desc")
+            ok
+        } catch (t: Throwable) {
+            log("发送异常：$desc ${t.message}")
+            false
+        }
     }
 
     fun disconnect() {

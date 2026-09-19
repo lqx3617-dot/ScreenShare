@@ -1,6 +1,7 @@
 package com.screenshare
 
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Intent
 import android.os.Process
 import android.util.Log
@@ -26,8 +27,40 @@ import java.util.concurrent.TimeUnit
  */
 class App : Application() {
 
+    companion object {
+        lateinit var instance: App
+            private set
+    }
+
+    /**
+     * 账号在线状态长连接（进程级）。
+     *
+     * 以前挂在 LiquidHomeActivity 上，进会议室（startActivity MainActivity + CLEAR_TOP）
+     * 会销毁 LiquidHomeActivity 触发 disconnect()，导致共享邀请还没发出 WS 就关了。
+     * 提到 Application 后跨 Activity 生存，登出时才断开。
+     */
+    var presenceClient: PresenceClient? = null
+        private set
+
+    /** 登录/恢复会话后调用：建立账号长连接 */
+    fun connectPresence(token: String, listener: PresenceClient.Listener) {
+        presenceClient?.disconnect()
+        presenceClient = PresenceClient(BuildConfig.SIGNAL_URL, listener).also {
+            it.connect(token)
+            AppLogger.app("[APP] 建立 PresenceClient url=${BuildConfig.SIGNAL_URL}")
+        }
+    }
+
+    /** 登出时调用：断开账号长连接 */
+    fun disconnectPresence() {
+        presenceClient?.disconnect()
+        presenceClient = null
+        AppLogger.app("[APP] 断开 PresenceClient（登出）")
+    }
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         AppLogger.init(this)
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
@@ -46,7 +79,8 @@ class App : Application() {
                             .writeText(content.toString())
                     }
                 } catch (_: Throwable) {}
-                // 尽力上报信令服务器，失败忽略；缩短超时避免拖慢进程退出
+                // 尽力上报信令服务器，失败忽略；放子线程并限时 join，
+                // 同步 execute() 最坏阻塞 4 秒（connect+read 超时），在主线程会拖慢进程退出
                 try {
                     val signalUrl = BuildConfig.SIGNAL_URL
                     if (!signalUrl.isNullOrEmpty()) {
@@ -62,16 +96,26 @@ class App : Application() {
                             .addHeader("x-diag-token", BuildConfig.DIAG_TOKEN)
                             .post(body)
                             .build()
-                        OkHttpClient.Builder()
-                            .connectTimeout(2, TimeUnit.SECONDS)
-                            .readTimeout(2, TimeUnit.SECONDS)
-                            .build()
-                            .newCall(req).execute().close()
+                        val uploader = Thread {
+                            try {
+                                OkHttpClient.Builder()
+                                    .connectTimeout(2, TimeUnit.SECONDS)
+                                    .readTimeout(2, TimeUnit.SECONDS)
+                                    .build()
+                                    .newCall(req).execute().close()
+                            } catch (_: Throwable) {}
+                        }.apply { isDaemon = true; start() }
+                        uploader.join(1500)
                     }
                 } catch (_: Throwable) {}
             } catch (t: Throwable) {
                 Log.e("App", "崩溃处理失败", t)
             }
+            // 恢复通知过滤：会议期间可能开启了「仅限优先通知」，崩溃后未恢复会残留整机静音
+            try {
+                getSystemService(NotificationManager::class.java)
+                    ?.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALL)
+            } catch (_: Throwable) {}
             try {
                 val intent = Intent(this, LiquidHomeActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

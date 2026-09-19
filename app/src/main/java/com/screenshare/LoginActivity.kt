@@ -62,10 +62,14 @@ class LoginActivity : AppCompatActivity() {
                         avatar = result.data.profile.avatar,
                         friendCode = result.data.profile.friendCode
                     )
+                    AppLogger.app("[LOGIN] ${if (registerMode) "注册" else "登录"}成功 nickname=${result.data.profile.nickname} code=${result.data.profile.friendCode}")
                     startActivity(Intent(this@LoginActivity, LiquidHomeActivity::class.java))
                     finish()
                 }
-                is AccountClient.ApiResult.Failure -> showError(result.message)
+                is AccountClient.ApiResult.Failure -> {
+                    AppLogger.app("[LOGIN] ${if (registerMode) "注册" else "登录"}失败: ${result.message}")
+                    showError(result.message)
+                }
             }
         }
     }

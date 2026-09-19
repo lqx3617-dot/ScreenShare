@@ -100,6 +100,8 @@ class SettingsFragment : Fragment() {
         lifecycleScope.launch {
             if (token.isNotEmpty()) AccountClient.logout(token)
             SessionStore.clear(ctx)
+            // 断开账号长连接，避免用旧令牌继续收推送
+            App.instance.disconnectPresence()
             withContext(Dispatchers.Main) {
                 startActivity(Intent(ctx, LoginActivity::class.java))
                 activity?.finish()

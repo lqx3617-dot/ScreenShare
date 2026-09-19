@@ -489,21 +489,25 @@ wss.on("connection", (ws, request) => {
 
       case "share-invite": {
         if (!userId) {
+          console.log(`[invite] 拒绝：未登录`)
           send(ws, { type: "error", message: "请先登录" });
           break;
         }
         const toUserId = String(msg.toUserId || "");
         const inviteCode = normalizeCode(msg.code);
         if (!rooms.isValidCode(inviteCode)) {
+          console.log(`[invite] 拒绝：房间号非法 from=${userId.slice(0, 8)}… code=${msg.code}`)
           send(ws, { type: "error", message: "房间号需为 4 位数字" });
           break;
         }
         if (!friendManager.list(userId).some((f) => f.userId === toUserId)) {
+          console.log(`[invite] 拒绝：非好友 from=${userId.slice(0, 8)}… to=${toUserId.slice(0, 8)}…`)
           send(ws, { type: "error", message: "只能邀请好友" });
           break;
         }
         const inviteId = crypto.randomUUID();
         if (!presenceManager.isOnline(toUserId)) {
+          console.log(`[invite] 拒绝：对方离线 from=${userId.slice(0, 8)}… to=${toUserId.slice(0, 8)}…`)
           send(ws, { type: "share-invite-result", inviteId, accepted: false, reason: "offline" });
           break;
         }

@@ -2,6 +2,8 @@ package com.screenshare
 
 import android.app.Dialog
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -206,15 +208,41 @@ class FriendsFragment : Fragment() {
             return
         }
         val code = generateCode()
-        val act = activity as? LiquidHomeActivity
-        // 先进入会议室建房，再投递邀请（观看端接受后凭码加入）
-        act?.presenceClient?.sendShareInvite(friend.userId, code)
-        toast("已向 ${friend.nickname.ifBlank { friend.userId }} 发送共享邀请")
-        val intent = android.content.Intent(requireContext(), MainActivity::class.java)
-            .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_CREATE)
-            .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        startActivity(intent)
+        // PresenceClient 是进程级的，不依赖当前 Activity 是否存活
+        val pc = App.instance.presenceClient
+        if (pc == null) {
+            AppLogger.app("[FRIENDS] 发起共享失败：PresenceClient 未建立（未登录？）")
+            toast("账号连接未建立，请重新登录后重试")
+            return
+        }
+        AppLogger.app("[FRIENDS] 发起共享 -> ${friend.nickname} room=$code ready=${pc.isReady}")
+        // 发送可能落在 WS 重连窗口期：短退避重试，成功后再进会议室
+        val handler = Handler(Looper.getMainLooper())
+        var tries = 0
+        fun trySend() {
+            tries++
+            val ok = pc.sendShareInvite(friend.userId, code)
+            if (ok) {
+                toast("已向 ${friend.nickname.ifBlank { friend.userId }} 发送共享邀请")
+                val intent = android.content.Intent(requireContext(), MainActivity::class.java)
+                    .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_CREATE)
+                    .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                startActivity(intent)
+            } else if (tries < MAX_INVITE_TRIES && context != null) {
+                if (tries == 1) toast("账号连接未就绪，正在重连…")
+                handler.postDelayed({ if (context != null) trySend() }, INVITE_RETRY_MS)
+            } else {
+                AppLogger.app("[FRIENDS] 邀请投递失败 ${tries} 次，放弃")
+                toast("发送失败：账号连接未就绪，请检查网络后重试")
+            }
+        }
+        trySend()
+    }
+
+    private companion object {
+        const val MAX_INVITE_TRIES = 8
+        const val INVITE_RETRY_MS = 1500L
     }
 
     private fun generateCode(): String {
