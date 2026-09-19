@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit
  */
 class SignalClient(
     private val url: String,
+    private val accountToken: String,
     private val listener: Listener
 ) {
     interface Listener {
@@ -125,6 +126,11 @@ class SignalClient(
                 // 此时不得再注册房间，否则回调会打到已销毁的 Activity 并在服务器残留僵尸会话
                 if (closedByUs) return
                 attempt = 0
+                // 先 auth 认领账号身份：服务端按 userId（而非连接）校验邀请归属，
+                // SignalWS 若不认领，host 建房后通过 PresenceClient 发的邀请会被拒
+                if (accountToken.isNotEmpty()) {
+                    webSocket.send(JSONObject().put("type", "auth").put("token", accountToken).toString())
+                }
                 AppLogger.app("[$TAG] WS 已连接，发送 create/join: code=$code asHost=$asHost")
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")

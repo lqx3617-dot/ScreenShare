@@ -2428,7 +2428,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
             return
         }
-        val client = SignalClient(BuildConfig.SIGNAL_URL, object : SignalClient.Listener {
+        val client = SignalClient(BuildConfig.SIGNAL_URL, SessionStore.getToken(this) ?: "", object : SignalClient.Listener {
             override fun onRoomReady(role: String, viewerId: Int, token: String) {
                 runOnUiThread {
                     if (role == "created") {
