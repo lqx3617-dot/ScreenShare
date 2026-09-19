@@ -104,7 +104,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     @Volatile private var leavingMeeting = false
     // 连接彻底失败（重连超限）：onConnectionFailed 置位后 onDisconnected 走结束流程
     @Volatile private var connectionTerminated = false
-    // 临时断开进入重连态：ICE 自恢复期间保留画面，不退出会议
+
+    /** P2P 连接是否已建立（onConnected 置 true）。观看端 signalPeerReady 恒为 false，
+     * 不能用它判断共享是否真的开始——服务器只给 host 发 peer-ready */
+    @Volatile private var p2pConnected = false
+
     @Volatile private var reconnecting = false
 
     // ======================== v1.259: 双音量 + 说话闪避 ========================
@@ -549,9 +553,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (isHost || isControlMode) binding.llCtrlStatus.visibility = View.VISIBLE
         // 观看端控制按钮组（远程控制/戳/标注/相册）
         if (!isHost && remoteVideoTrack != null) binding.llVideoBtns.visibility = View.VISIBLE
-        if (videoCallOn) {
+        // v1.311: 麦克风/摄像头是工具条常驻按钮，与视频通话开关无关。
+        // 此前仅在 videoCallOn 时恢复，折叠屏合盖/切应用进出 PiP 后这两个按钮永久消失。
+        if (peer != null) {
             binding.btnMic.visibility = View.VISIBLE
             binding.btnCamera.visibility = View.VISIBLE
+            updateMicButton()
+            updateVideoCallButton()
         }
         // host 端工具条常显，viewer 端恢复后自动隐藏逻辑
         binding.llToolbar.visibility = View.VISIBLE
@@ -2392,9 +2400,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // viewer：记住本次口令，断线/自动重连复用（服务器 REQUIRE_TOKEN=1 时必需）
                         if (pendingJoinToken.isNotEmpty()) saveMeetingResumeToken(pendingJoinToken)
                         updateUI("✅ 已加入会议，等待共享方就绪...")
-                        // 共享方可能卡在授权弹窗：25 秒还没就绪就给观看方一句实话，别让干等
+                        // 共享方可能卡在授权弹窗：25 秒还没连上就给观看方一句实话，别让干等
+                        // 注意：signalPeerReady 恒为 false（服务器只给 host 发 peer-ready），
+                        // 必须用真实的 p2pConnected 判断，否则画面正常也会误报
                         android.os.Handler(Looper.getMainLooper()).postDelayed({
-                            if (!isFinishing && !isDestroyed && !isHost && signalMode && !signalPeerReady) {
+                            if (!isFinishing && !isDestroyed && !isHost && signalMode && !p2pConnected) {
                                 updateUI("⏳ 共享方长时间未开始共享，可能未看到授权弹窗，请让对方重试")
                             }
                         }, 25_000L)
@@ -2627,8 +2637,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         stopViewerStatsLoop()
         albumCancel = true
         peer?.disconnect()
-        peer = null
-        signalClient?.disconnect()
+         peer = null
+         p2pConnected = false
+         signalClient?.disconnect()
         signalClient = null
         signalPeerReady = false
         viewerJoined = false
@@ -2916,6 +2927,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onConnected() {        runOnUiThread {
             // v1.261: 从重连态恢复——无感继续会议，提示"连接已恢复"
+            p2pConnected = true
             if (reconnecting) {
                 reconnecting = false
                 updateUI("连接已恢复")
