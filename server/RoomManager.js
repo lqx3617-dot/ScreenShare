@@ -33,7 +33,7 @@ class RoomManager {
   }
 
   /** host 创建房间。返回空串表示成功，否则返回错误文案 */
-  create(code, hostWs) {
+  create(code, hostWs, hostUserId) {
     const existing = this.rooms.get(code);
     if (existing) {
       // host 连接已关闭（close 事件与房间清理的时序竞态、或网络黑洞后被 terminate）
@@ -41,7 +41,7 @@ class RoomManager {
       if (existing.host.readyState === 1) return "会议号已被占用，请重试";
       this.rooms.delete(code);
     }
-    this.rooms.set(code, { host: hostWs, viewers: new Map(), pending: new Map() });
+    this.rooms.set(code, { host: hostWs, hostUserId, viewers: new Map(), pending: new Map() });
     return "";
   }
 
@@ -133,10 +133,14 @@ class RoomManager {
     return room ? room.host : null;
   }
 
-  /** 调用方是否为该房间的 host（连接级别，用于邀请归属校验） */
-  isHostOf(code, ws) {
+  /**
+   * 调用方是否为该房间的 host（按 userId 比对）。
+   * 客户端有两条独立 WS：PresenceClient（发邀请）与 SignalWS（create 建房），
+   * 按连接比对会永远失败，必须按建房的账号身份比对。
+   */
+  isHostOf(code, userId) {
     const room = this.rooms.get(code);
-    return !!room && room.host === ws && room.host.readyState === 1;
+    return !!room && room.hostUserId === userId && room.host.readyState === 1;
   }
 
   /** 房间内指定 viewer */

@@ -183,6 +183,48 @@ test("WS 认领、在线广播与一键共享邀请闭环", async () => {
   }
 });
 
+test("邀请归属校验：建房连接与发邀请连接不同时仍允许（按 userId 比对）", async () => {
+  // 客户端实际有两条独立 WS：SignalWS 负责 create，PresenceClient 负责发邀请。
+  // 按连接比对会导致 host 永远被拒，必须按账号身份比对。
+  const { proc, port } = await startServer();
+  try {
+    const a = await registerUser(port, "房主甲");
+    const b = await registerUser(port, "观众乙");
+    const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    assert.equal(req.status, 200);
+    const pending = await httpJson(port, "GET", "/friends/requests", null, b.token);
+    const accepted = await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, b.token);
+    assert.equal(accepted.status, 200);
+
+    // SignalWS：只建房
+    const signal = connectWs(port, a.token);
+    assert.equal((await signal.ready).type, "auth-ok");
+    signal.ws.send(JSON.stringify({ type: "create", code: "6677" }));
+    await waitFor(signal.messages, (m) => m.type === "created");
+
+    // PresenceClient：另一条连接，同账号，发邀请
+    const presence = connectWs(port, a.token);
+    assert.equal((await presence.ready).type, "auth-ok");
+    const B = connectWs(port, b.token);
+    assert.equal((await B.ready).type, "auth-ok");
+    presence.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "6677" }));
+
+    // B 应收到邀请（不能是 error）
+    const invite = await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "6677");
+    assert.equal(invite.from.userId, a.userId);
+
+    // 发邀请连接上不应有错误
+    const errs = presence.messages.filter((m) => m.type === "error");
+    assert.equal(errs.length, 0, `发邀请连接收到错误: ${JSON.stringify(errs)}`);
+
+    signal.ws.close();
+    presence.ws.close();
+    B.ws.close();
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
 test("邀请接受时房间已关闭则不计会话", async () => {
   const { proc, port } = await startServer();
   try {

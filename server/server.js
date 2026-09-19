@@ -376,7 +376,7 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "会议号需为 4 位数字" });
           return;
         }
-        const err = rooms.create(code, ws);
+        const err = rooms.create(code, ws, userId);
         if (err) {
           send(ws, { type: "error", message: err });
           return;
@@ -537,9 +537,9 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "房间号需为 4 位数字" });
           break;
         }
-        // 房间归属校验：邀请方必须是该房间的 host，且房间处于活跃状态，
+        // 房间归属校验：邀请方必须是该房间的 host 账号，且房间处于活跃状态，
         // 否则不能把好友导向别人的房间或不存在的房间
-        if (!rooms.isHostOf(inviteCode, ws)) {
+        if (!rooms.isHostOf(inviteCode, userId)) {
           console.log(`[invite] 拒绝：非房间 host from=${userId.slice(0, 8)}… room=${inviteCode}`)
           send(ws, { type: "error", message: "请先进入共享房间后再邀请好友" });
           break;
