@@ -124,6 +124,32 @@
             android:overScrollMode="never"
             android:nestedScrollingEnabled="false" />
 
+        <!-- ===== 最近共享（无记录时隐藏） ===== -->
+        <LinearLayout
+            android:id="@+id/layoutShares"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:text="最近共享"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:textColor="#B3FFFFFF" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvShares"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:overScrollMode="never"
+                android:nestedScrollingEnabled="false" />
+        </LinearLayout>
+
         <!-- ===== 空态：无好友引导 ===== -->
         <LinearLayout
             android:id="@+id/layoutEmpty"

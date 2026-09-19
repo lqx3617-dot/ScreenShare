@@ -72,12 +72,31 @@ class FriendManager {
   list(userId) {
     const rows = this.db
       .prepare(
-        `SELECT u.id, u.nickname, u.avatar, f.created_at
+        `SELECT u.id, u.nickname, u.avatar, f.remark, f.created_at
          FROM friends f JOIN users u ON u.id = f.friend_id
          WHERE f.user_id = ? ORDER BY f.created_at DESC`
       )
       .all(userId);
-    return rows.map((r) => ({ userId: r.id, nickname: r.nickname, avatar: r.avatar, since: r.created_at }));
+    return rows.map((r) => ({
+      userId: r.id,
+      nickname: r.nickname,
+      avatar: r.avatar,
+      remark: r.remark || "",
+      since: r.created_at,
+    }));
+  }
+
+  /** 设置好友备注名：仅改本人视角的 remark，对方无感知。长度上限 20，与昵称规则一致 */
+  setRemark(userId, friendId, remark) {
+    if (!this._areFriends(userId, friendId)) {
+      throw new AccountError("not_found", "好友关系不存在", 404);
+    }
+    const trimmed = String(remark ?? "").trim();
+    if (trimmed.length > 20) throw new AccountError("invalid_remark", "备注名最多 20 个字符", 400);
+    this.db
+      .prepare(`UPDATE friends SET remark = ? WHERE user_id = ? AND friend_id = ?`)
+      .run(trimmed, userId, friendId);
+    return { ok: true, remark: trimmed };
   }
 
   pendingRequests(userId) {

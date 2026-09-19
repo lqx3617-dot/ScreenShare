@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS friends (
   user_id    TEXT NOT NULL,
   friend_id  TEXT NOT NULL,
+  remark     TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, friend_id)
 );
@@ -107,6 +108,17 @@ function initSchema(db) {
   db.exec(SCHEMA);
 }
 
+/**
+ * 历史库迁移：friends 表补 remark 列（v1.312 备注名）。
+ * SQLite 的 ALTER TABLE ADD COLUMN 支持 NOT NULL DEFAULT，已有行自动填空串。
+ */
+function migrateFriendsRemark(db) {
+  const cols = db.prepare("PRAGMA table_info(friends)").all();
+  if (cols.some((c) => c.name === "remark")) return false;
+  db.exec(`ALTER TABLE friends ADD COLUMN remark TEXT NOT NULL DEFAULT ''`);
+  return true;
+}
+
 function openDb(filePath = DEFAULT_DB_PATH) {
   if (filePath !== ":memory:") {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -115,8 +127,11 @@ function openDb(filePath = DEFAULT_DB_PATH) {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   initSchema(db);
-  if (filePath !== ":memory:") migrateToNicknameLogin(db);
+  if (filePath !== ":memory:") {
+    migrateToNicknameLogin(db);
+    migrateFriendsRemark(db);
+  }
   return db;
 }
 
-module.exports = { openDb, initSchema, migrateToNicknameLogin, DEFAULT_DB_PATH };
+module.exports = { openDb, initSchema, migrateToNicknameLogin, migrateFriendsRemark, DEFAULT_DB_PATH };

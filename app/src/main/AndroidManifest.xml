@@ -54,6 +54,10 @@
             android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity
+            android:name=".ScanFriendCodeActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
             android:name=".LiquidHomeActivity"
             android:exported="true"
             android:launchMode="singleTop"

@@ -27,8 +27,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-versionCode = 311
-versionName = "1.306"
+versionCode = 316
+versionName = "1.311"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -135,4 +135,11 @@ dependencies {
 
     // 账号系统：加密存储登录令牌
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // 好友二维码：ZXing 编解码 + CameraX 取景
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
 }

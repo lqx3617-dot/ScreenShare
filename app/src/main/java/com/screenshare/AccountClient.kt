@@ -48,10 +48,25 @@ object AccountClient {
         val userId: String,
         val nickname: String,
         val avatar: String,
-        val online: Boolean
+        val online: Boolean,
+        /** 我给对方设的备注名，空串表示未设 */
+        val remark: String = ""
     )
 
     data class FriendRequestItem(val requestId: String, val from: Profile, val createdAt: Long)
+
+    data class ShareItem(
+        val sessionId: String,
+        val roomCode: String,
+        val peerId: String,
+        val peerNickname: String,
+        val peerAvatar: String,
+        /** host = 我共享给对方，viewer = 对方共享给我 */
+        val role: String,
+        val startedAt: Long,
+        val endedAt: Long?,
+        val durationMs: Long?
+    )
 
     private suspend fun callRaw(
         method: String,
@@ -173,7 +188,44 @@ object AccountClient {
         userId = o.getString("userId"),
         nickname = o.optString("nickname"),
         avatar = o.optString("avatar").ifBlank { "0" },
-        online = o.optBoolean("online", false)
+        online = o.optBoolean("online", false),
+        remark = o.optString("remark")
+    )
+
+    /** 设置好友备注名（仅本人视角） */
+    suspend fun setRemark(token: String, friendId: String, remark: String): ApiResult<Unit> {
+        val r = call(
+            "PATCH", "/friends/$friendId/remark",
+            JSONObject().put("remark", remark), token
+        )
+        return when (r) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Failure -> r
+        }
+    }
+
+    /** 最近共享记录（我作为共享方或观看方） */
+    suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {
+        val r = callRaw("GET", "/shares/recent", null, token)
+        return when (r) {
+            is ApiResult.Success -> {
+                val arr = if (r.data.isNotEmpty()) JSONArray(r.data) else JSONArray()
+                ApiResult.Success((0 until arr.length()).map { parseShareItem(arr.getJSONObject(it)) })
+            }
+            is ApiResult.Failure -> r
+        }
+    }
+
+    private fun parseShareItem(o: JSONObject) = ShareItem(
+        sessionId = o.optString("sessionId"),
+        roomCode = o.optString("roomCode"),
+        peerId = o.optString("peerId"),
+        peerNickname = o.optString("peerNickname"),
+        peerAvatar = o.optString("peerAvatar").ifBlank { "0" },
+        role = o.optString("role", "host"),
+        startedAt = o.optLong("startedAt"),
+        endedAt = if (o.has("endedAt") && !o.isNull("endedAt")) o.optLong("endedAt") else null,
+        durationMs = if (o.has("durationMs") && !o.isNull("durationMs")) o.optLong("durationMs") else null
     )
 
     suspend fun getFriendRequests(token: String): ApiResult<List<FriendRequestItem>> {

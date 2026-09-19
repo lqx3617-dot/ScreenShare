@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 最近共享记录行：头像 + 对方昵称 + 角色/时长/时间 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="12dp"
+    android:background="@drawable/bg_card"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?android:attr/selectableItemBackground">
+
+    <FrameLayout
+        android:id="@+id/avatarBox"
+        android:layout_width="38dp"
+        android:layout_height="38dp"
+        android:layout_marginEnd="11dp"
+        android:background="@drawable/bg_avatar_pink">
+
+        <TextView
+            android:id="@+id/tvAvatarInitial"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="小"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvSharePeer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="小甜心"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#E6FFFFFF" />
+
+        <TextView
+            android:id="@+id/tvShareMeta"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="共享给 TA · 2 分钟"
+            android:textSize="11.5sp"
+            android:textColor="#99FFFFFF" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvShareTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="刚刚"
+        android:textSize="11.5sp"
+        android:textColor="#80FFFFFF" />
+</LinearLayout>

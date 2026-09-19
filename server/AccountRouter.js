@@ -60,11 +60,12 @@ function readJson(req, limit = MAX_BODY) {
 }
 
 class AccountRouter {
-  constructor({ accountManager, friendManager, rateLimiter, presence, notifyUser }) {
+  constructor({ accountManager, friendManager, rateLimiter, presence, shareHistory, notifyUser }) {
     this.accounts = accountManager;
     this.friends = friendManager;
     this.rateLimiter = rateLimiter;
     this.presence = presence;
+    this.shareHistory = shareHistory;
     this.notifyUser = notifyUser;
     this.routes = [
       {
@@ -159,12 +160,25 @@ class AccountRouter {
         auth: true,
         handler: (req, body, ctx, match) => this.friends.remove(ctx.userId, match[1]),
       },
+      {
+        method: "PATCH",
+        pattern: /^\/friends\/([A-Za-z0-9-]+)\/remark$/,
+        auth: true,
+        handler: (req, body, ctx, match) =>
+          this.friends.setRemark(ctx.userId, match[1], body.remark),
+      },
+      {
+        method: "GET",
+        pattern: /^\/shares\/recent$/,
+        auth: true,
+        handler: (req, body, ctx) => this.shareHistory.recent(ctx.userId, 20),
+      },
     ];
   }
 
   handle(req, res) {
     const path = new URL(req.url, "http://localhost").pathname;
-    if (!path.startsWith("/account") && !path.startsWith("/friends")) return false;
+    if (!path.startsWith("/account") && !path.startsWith("/friends") && !path.startsWith("/shares")) return false;
     this._run(req, res, path).catch((e) => this._fail(res, e));
     return true;
   }

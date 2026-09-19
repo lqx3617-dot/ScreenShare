@@ -50,6 +50,7 @@
 
     <!-- 角色选择 -->
     <TextView
+        android:id="@+id/tvRoleLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="18dp"

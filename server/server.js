@@ -45,6 +45,7 @@ const { openDb } = require("./db");
 const { RateLimiter } = require("./RateLimiter");
 const { AccountManager } = require("./AccountManager");
 const { FriendManager } = require("./FriendManager");
+const { ShareHistory } = require("./ShareHistory");
 const { PresenceManager } = require("./PresenceManager");
 const { AccountRouter } = require("./AccountRouter");
 
@@ -138,11 +139,13 @@ const rateLimiter = new RateLimiter();
 const accountManager = new AccountManager(accountDb);
 const friendManager = new FriendManager(accountDb);
 const presenceManager = new PresenceManager();
+const shareHistory = new ShareHistory(accountDb);
 const accountRouter = new AccountRouter({
   accountManager,
   friendManager,
   rateLimiter,
   presence: presenceManager,
+  shareHistory,
   notifyUser: (userId, obj) => sendToUser(userId, obj),
 });
 setInterval(() => rateLimiter.sweep(), 60 * 1000).unref();
@@ -532,6 +535,11 @@ wss.on("connection", (ws, request) => {
         }
         const accepted = msg.type === "share-invite-accept";
         pendingInvites.delete(inv.inviteId);
+        if (accepted) {
+          // 最近共享记录：开账，任意一方断开时结账
+          shareHistory.onStart(inv.code, inv.fromUserId, userId);
+          console.log(`[share] 会话开始 room=${inv.code} host=${inv.fromUserId.slice(0, 8)}… viewer=${userId.slice(0, 8)}…`);
+        }
         sendToUser(inv.fromUserId, {
           type: "share-invite-result",
           inviteId: inv.inviteId,
@@ -583,6 +591,11 @@ wss.on("connection", (ws, request) => {
     if (n <= 0) ipClientCount.delete(ws._ip); else ipClientCount.set(ws._ip, n);
     if (!roomCode) return;
     const r = rooms.onDisconnect(roomCode, role, viewerId);
+    // 共享会话结账：host 走批量，viewer 走单条
+    if (userId) {
+      if (role === "host") shareHistory.onHostLeft(roomCode);
+      else if (role === "viewer") shareHistory.onViewerLeft(roomCode, userId);
+    }
     if (r.removedHost) {
       // host 离开：释放房间 token，通知所有 viewer
       AuthManager.releaseTokens(roomCode);

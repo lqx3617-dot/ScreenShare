@@ -29,13 +29,19 @@ class FriendsFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val friendsAdapter by lazy {
-        FriendsAdapter { friend -> startShareWith(friend) }
+        FriendsAdapter(
+            onStartShare = { friend -> startShareWith(friend) },
+            onEditRemark = { friend -> showRemarkDialog(friend) }
+        )
     }
     private val requestsAdapter by lazy {
         FriendRequestsAdapter(
             onAccept = { item -> respondRequest(item.requestId, accept = true) },
             onReject = { item -> respondRequest(item.requestId, accept = false) }
         )
+    }
+    private val sharesAdapter by lazy {
+        RecentSharesAdapter { item -> reshareWith(item) }
     }
 
     override fun onCreateView(
@@ -60,6 +66,8 @@ class FriendsFragment : Fragment() {
         binding.rvFriends.adapter = friendsAdapter
         binding.rvRequests.layoutManager = LinearLayoutManager(requireContext())
         binding.rvRequests.adapter = requestsAdapter
+        binding.rvShares.layoutManager = LinearLayoutManager(requireContext())
+        binding.rvShares.adapter = sharesAdapter
 
         binding.btnAddFriend.setOnClickListener { showAddFriendDialog() }
         binding.layoutEmpty.setOnClickListener { showAddFriendDialog() }
@@ -79,12 +87,27 @@ class FriendsFragment : Fragment() {
         (activity as? LiquidHomeActivity)?.showToast(msg)
     }
 
-    /** 拉取好友列表 + 待处理申请 */
+    /** 扫码结果：交给同一套好友码申请逻辑 */
+    private val scanLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val code = result.data?.getStringExtra(ScanFriendCodeActivity.EXTRA_FRIEND_CODE)
+                ?.uppercase()?.trim().orEmpty()
+            if (code.length == 6 && code.all { it.isLetterOrDigit() }) {
+                sendFriendRequest(code)
+            } else {
+                toast("扫码内容不是好友码：$code")
+            }        }
+    }
+
+    /** 拉取好友列表 + 待处理申请 + 最近共享 */
     private fun loadAll() {
         val t = token() ?: return
         lifecycleScope.launch {
             val friends = AccountClient.getFriends(t)
             val reqs = AccountClient.getFriendRequests(t)
+            val shares = AccountClient.getRecentShares(t)
             if (_binding == null) return@launch
             when (friends) {
                 is AccountClient.ApiResult.Success -> {
@@ -104,6 +127,14 @@ class FriendsFragment : Fragment() {
                     binding.layoutRequests.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
                 }
                 is AccountClient.ApiResult.Failure -> if (reqs.http != 401) toast(reqs.message)
+            }
+            when (shares) {
+                is AccountClient.ApiResult.Success -> {
+                    val list = shares.data
+                    sharesAdapter.submitList(list)
+                    binding.layoutShares.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+                }
+                is AccountClient.ApiResult.Failure -> if (shares.http != 401) toast(shares.message)
             }
         }
     }
@@ -154,9 +185,22 @@ class FriendsFragment : Fragment() {
         }
         dv.tvDialogTitle.text = "添加好友"
         dv.btnEnter.text = "发送申请"
-        // 隐藏角色选择（加好友不需要）
-        dv.roleCreate.visibility = View.GONE
-        dv.roleJoin.visibility = View.GONE
+        // 复用角色行做「扫码 / 我的二维码」入口（加好友不需要角色选择）
+        dv.tvRoleLabel.visibility = View.GONE
+        dv.roleCreate.visibility = View.VISIBLE
+        dv.roleJoin.visibility = View.VISIBLE
+        dv.roleCreate.setOnClickListener {
+            dialog.dismiss()
+            scanLauncher.launch(android.content.Intent(requireContext(), ScanFriendCodeActivity::class.java))
+        }
+        dv.roleJoin.setOnClickListener {
+            showMyQrDialog()
+        }
+        // 角色行的文案改成加好友语境
+        (dv.roleCreate.getChildAt(1) as? android.widget.TextView)?.text = "扫码加好友"
+        (dv.roleCreate.getChildAt(2) as? android.widget.TextView)?.text = "扫对方二维码"
+        (dv.roleJoin.getChildAt(1) as? android.widget.TextView)?.text = "我的二维码"
+        (dv.roleJoin.getChildAt(2) as? android.widget.TextView)?.text = "让对方扫我"
         // 输入提示改为好友码
         dv.etRoomCode.hint = "输入对方好友码"
         dv.etRoomCode.filters = arrayOf(android.text.InputFilter.LengthFilter(6))
@@ -175,23 +219,155 @@ class FriendsFragment : Fragment() {
                 return@setOnClickListener
             }
             sent = true
+            sendFriendRequest(code,
+                onSuccess = { dialog.dismiss() },
+                onFail = { sent = false }
+            )
+        }
+        dv.btnCancel.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+    }
+
+    /** 发送好友申请，成功/失败分别回调（扫码路径无弹窗可关，onSuccess 默认空操作） */
+    private fun sendFriendRequest(
+        code: String,
+        onSuccess: () -> Unit = {},
+        onFail: () -> Unit = {}
+    ) {
+        val t = token() ?: run { onFail(); return }
+        lifecycleScope.launch {
+            val r = AccountClient.sendFriendRequest(t, code)
+            if (_binding == null) return@launch
+            when (r) {
+                is AccountClient.ApiResult.Success -> {
+                    toast("申请已发送")
+                    onSuccess()
+                }
+                is AccountClient.ApiResult.Failure -> {
+                    if (r.http == 401) {
+                        requireSessionExpired()
+                        onSuccess()
+                    } else {
+                        toast(r.message)
+                        // 重复申请/加自己：算业务终态，关弹窗；其余错误保留弹窗便于修改
+                        if (r.code == "already_friends" || r.code == "self") onSuccess()
+                    }
+                    onFail()
+                }
+            }
+        }
+    }
+
+    /** 我的二维码弹窗：好友码 + 可扫描二维码 */
+    private fun showMyQrDialog() {
+        val ctx = requireContext()
+        val profile = SessionStore.getProfile(ctx) ?: return
+        val dialog = Dialog(ctx)
+        val container = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(40, 48, 40, 48)
+            setBackgroundResource(R.drawable.bg_card)
+        }
+        val codeText = android.widget.TextView(ctx).apply {
+            text = "我的好友码 ${profile.friendCode}"
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+        }
+        // 二维码白底，否则透明像素在深色弹窗上不可见
+        val qrWrap = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(0xFFFFFFFF.toInt())
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+        val size = (220 * resources.displayMetrics.density).toInt()
+        val qr = android.widget.ImageView(ctx).apply {
+            setImageBitmap(QrEncoder.encode(profile.friendCode, size))
+        }
+        qrWrap.addView(qr)
+        val hint = android.widget.TextView(ctx).apply {
+            text = "让对方在「添加好友」里扫这个二维码"
+            setTextColor(0x99FFFFFF.toInt())
+            textSize = 12.5f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, (18 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        container.addView(codeText)
+        container.addView(qrWrap)
+        container.addView(hint)
+        dialog.setContentView(container)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+        }
+        container.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+    }
+
+    /** 备注名弹窗：复用房号弹窗的输入框，预填当前备注，保存后本地增量更新 */
+    private fun showRemarkDialog(friend: AccountClient.FriendItem) {
+        val ctx = requireContext()
+        val dialog = Dialog(ctx)
+        val dv = DialogLiquidRoomBinding.inflate(layoutInflater)
+        dialog.setContentView(dv.root)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.CENTER)
+            setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            )
+        }
+        dv.tvDialogTitle.text = "备注名"
+        dv.btnEnter.text = "保存"
+        dv.roleCreate.visibility = View.GONE
+        dv.roleJoin.visibility = View.GONE
+        dv.etRoomCode.hint = "给 ${friend.nickname.ifBlank { friend.userId }} 设个备注"
+        dv.etRoomCode.setText(friend.remark)
+        dv.etRoomCode.filters = arrayOf(android.text.InputFilter.LengthFilter(20))
+        dv.etRoomCode.inputType = android.text.InputType.TYPE_CLASS_TEXT
+
+        var saved = false
+        dv.btnEnter.setOnClickListener {
+            if (saved) return@setOnClickListener
+            val remark = dv.etRoomCode.text?.toString()?.trim().orEmpty()
+            if (remark.length > 20) {
+                toast("备注名最多 20 个字符")
+                return@setOnClickListener
+            }
+            // 没变化直接关
+            if (remark == friend.remark) {
+                dialog.dismiss()
+                return@setOnClickListener
+            }
+            saved = true
             val t = token() ?: run { dialog.dismiss(); return@setOnClickListener }
             lifecycleScope.launch {
-                val r = AccountClient.sendFriendRequest(t, code)
+                val r = AccountClient.setRemark(t, friend.userId, remark)
+                if (_binding == null) return@launch
                 when (r) {
                     is AccountClient.ApiResult.Success -> {
-                        toast("申请已发送")
+                        // 本地增量更新，避免整列表刷新闪烁
+                        val list = friendsAdapter.currentList.toMutableList()
+                        val idx = list.indexOfFirst { it.userId == friend.userId }
+                        if (idx >= 0) {
+                            list[idx] = list[idx].copy(remark = remark)
+                            friendsAdapter.submitList(list)
+                        }
+                        toast(if (remark.isEmpty()) "已清除备注" else "备注已保存")
                         dialog.dismiss()
                     }
                     is AccountClient.ApiResult.Failure -> {
-                        sent = false
+                        saved = false
                         if (r.http == 401) {
                             dialog.dismiss()
                             requireSessionExpired()
                         } else {
                             toast(r.message)
-                            // 重复申请等错误保留弹窗，便于修改
-                            if (r.code == "already_friends" || r.code == "self") dialog.dismiss()
                         }
                     }
                 }
@@ -238,6 +414,16 @@ class FriendsFragment : Fragment() {
             }
         }
         trySend()
+    }
+
+    /** 最近共享记录：再次向对方发起共享（好友关系可能已解除，需校验） */
+    private fun reshareWith(item: AccountClient.ShareItem) {
+        val friend = friendsAdapter.currentList.firstOrNull { it.userId == item.peerId }
+        if (friend == null) {
+            toast("对方已不在你的好友列表")
+            return
+        }
+        startShareWith(friend)
     }
 
     private companion object {
