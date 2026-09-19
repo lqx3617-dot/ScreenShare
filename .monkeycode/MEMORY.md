@@ -215,7 +215,10 @@ Entries discovered by the Agent during task execution should follow this format:
 - Instructions:
   - v1.134 信令服务器必须带 DIAG_TOKEN 启动：`DIAG=1 PORT=8095 DIAG_TOKEN=<token> node server.js`，token 与 App 构建参数 `screenshare.diag.token`（在 /workspace/local.properties，git 忽略）保持一致；无 token 时 server.js 对 /diag /crash 全部返回 403（客户端上报会失败），务必双端同步配置
   - 已删除音频诊断双端上报（v1.134 删 startAudioDiag/stopAudioDiag/振幅/波形快照），/diag 路由保留但客户端不再上报；diag.log 是 v1.130-132 历史数据，勿再依赖其格式
-  - 构建配置 v1.134 结论：okhttp（4.12.0）、constraintlayout、coroutines 是 material/lifecycle/WebRTC 的传递依赖，直接声明以固定版本，**不可移除**（移除后离线构建解析传递版本失败）；R8 未开启（native .so 占体积大头、WebRTC 反射风险高，收益低）
+  - 构建配置结论：okhttp（4.12.0）、constraintlayout、coroutines 是 material/lifecycle/WebRTC 的传递依赖，直接声明以固定版本，**不可移除**（移除后离线构建解析传递版本失败）
+  - **release 构建禁用 R8/minify 是最终结论，非临时关闭**（v1.324~1.327 四轮实验全部失败，2026-09-19）：v1.324 缺 proguardFiles 规则未加载→ActivityResult 契约被改名崩；v1.325 keep ActivityResult 全层级（contract 恢复原名）仍崩；v1.326 keep 所有 WebRTC 回调实现类仍 native 崩；v1.327 `-dontobfuscate` 零类名改写（mapping 验证 0 改名）两种崩溃照旧。根因不在名称改写，而在 minify 的 shrink 裁剪 + R8 desugaring 破坏 ActivityResultRegistry 恢复链路与 WebRTC JNI 注册表，keep 规则无法穷尽。崩溃特征：create 房间后 2 秒进程被杀且无 Java 崩溃日志（native 层）。**防破解改走 APK 加固方案（第三方加固服务），不依赖 R8**。proguard-rules.pro/proguardFiles 配置保留供将来重新评估。验证混淆必须跑 `./gradlew assembleRelease`（assembleDebug 不触发 R8）
+  - **release 构建必须显式配置 proguardFiles**（`proguardFiles(getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro")`），否则规则文件不加载。识别方法：规则文件故意留语法错误（如 -dontoptimize 带类名参数），编译仍成功=文件没被读。`-dontoptimize` 不接受类名参数（ProGuard 只认 optimization filter），必须无参
+  - AndroidX Fragment/Adapter 与 ViewBinding 的类名 keep 不生效（库自带 allowobfuscation 压制，-keep 全限定名也没用）——功能安全：Fragment 状态存取走同一运行时映射、ViewBinding 编译期绑定。mapping 在 app/build/outputs/mapping/release/mapping.txt，用 `grep "^类名 -> "` 反查
   - 候选统计已改累计计数（candCountHost/Srflx/Relay），onConnectionFailed 里 groupingBy 单次计算保留
   - v1.134 签名 APK md5=911a38ccb01e5481e51b179e61230d73，versionCode=137，commit 660450d 已推送
 
@@ -910,3 +913,23 @@ Entries discovered by the Agent during task execution should follow this format:
   - 客户端配置在 app/google-services.json（Firebase 客户端密钥，随 APK 打包是 Firebase 设计内的安全做法，可入库；服务端私钥绝不能入库或回显）
   - FCM 推送测试不要用真设备令牌：ensureToken() 后 send 一个假令牌，返回 INVALID_ARGUMENT 即证明 OAuth2 换票 + messages:send 整条链路已通
   - FCM 在两台测试机上不可用（2026-09-19 真机验证）：realme RMX3350 报 SERVICE_NOT_AVAILABLE（能初始化但网络到 Google 不通），一加平板 OPD2511 无 GMS 导致 FirebaseMessaging.getInstance().token 的 Task 永不回调、register() 静默无日志。结论：国行设备无 GMS 时 FCM 离线推送是死路，users.push_token 全库为空。离线邀请暂存+上线补投（flushPendingInvites）仍正常工作，用户决定暂停离线推送方向；若要恢复只能走厂商通道（两台都是 OPPO 系，OPPO Push 覆盖最全，需开放平台资质）或前台服务保活
+
+[Project Knowledge Summary]
+- Date: 2026-09-19
+- Context: Discovered by Agent while performing 云端版本门禁（v1.321）部署
+- Category: Operations & Deployment
+- Instructions:
+  - 8090 download-server 无守护脚本（ppid=1 孤儿进程），改了 download-server.js 后须手动重启：python3 /tmp/opencode/restart-8090.py（继承旧进程 /proc/PID/environ 的 33 个环境变量不回显，SIGTERM 后等端口释放再 start_new_session 拉起，日志 /tmp/server-8090.log）。8095 server.js 仍由 supervise-server.sh 守护，kill 监听进程 15s 内自动拉起。两者重启方式不同，别搞混
+  - 版本门禁用法（v1.321+ 生效）：发版时第三参数启用，`publish-release.sh <版本> <changelog> <minVersionCode>`，如 `... 1.322 "..." 321` 表示 <321 的旧版本启动即被拦截（只能立即更新或退出，CLEAR_TASK 清栈无法绕过）；不传第三参数保持现有门禁值不变；传 0 解除门禁。门禁值存在 server/release-config.json 的 minVersionCode，经 version.json 下发。安全设计：version.json 拉取失败/字段缺失时客户端放行，不会变砖
+  - publish.js 的 KEYSTORE_PASS 校验已从模块顶层移入 executeTask，loadConfig/saveConfig 可在无密钥环境（测试）中单独引用；测试改 release-config.json 后用 process.on('exit') 恢复原始内容，避免污染生产 version.json
+
+[Project Knowledge Summary]
+- Date: 2026-09-19
+- Context: Discovered by Agent while performing viewer 重连宽限期（v1.323）开发
+- Category: Build Methods
+- Instructions:
+  - 服务端 ws 集成测试调试技巧：node --test test/ws.test.js 单文件跑（全量并行时单文件 hang 会让 tail 缓存无法输出）；startServer 子进程的 stdout 只在测试失败诊断时才有价值，排查"消息无响应"时把服务器日志带入断言信息最快定位（本次定位 summed 变量名笔误致进程崩溃就是靠这个）
+  - 测试时序坑：viewer ws.close() 后立刻重连会与服务端 close 处理竞态（resumeViewer 未命中 → 走 requestJoin 分配新 viewerId）。必须等 host 收到该 viewer 的 presence offline 广播后再 sleep 300ms，保证 close handler 的 onDisconnect 已把 reconnecting 落地
+  - shareHistory 会话在"邀请被接受"时才开账（onStart）：测"会话结账"前必须走完整 share-invite → accept 流程，直接 join 不开账，recent 查不到记录
+  - 测试服务器可用 RECONNECT_TIMEOUT_MS 环境变量覆盖宽限期（默认 60s），ws.test.js 的 startServer(extraEnv) 支持注入；RoomManager 构造第二参数 reconnectTimeout 亦可覆盖
+  - RoomManager 房间结构新增 reconnecting: Map<viewerId, {userId, at, timer}>，create() 必须初始化，否则 requestJoin 的 room.reconnecting.size 抛 TypeError 让消息处理器崩溃（ws.on("message") 无外层 try/catch，异常直接终止服务进程，表现为客户端"消息发出去完全无响应"）

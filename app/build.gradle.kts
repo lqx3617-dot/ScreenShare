@@ -28,8 +28,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-versionCode = 320
-versionName = "1.315"
+versionCode = 333
+versionName = "1.328"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -91,14 +91,22 @@ versionName = "1.315"
 
     buildTypes {
         release {
-            // R8 混淆彻底关闭（v1.213 开启 R8 导致进会议闪退）。
-            // 根因：WebRTC 依赖大量 JNI 与运行时反射（PeerConnectionFactory、
-            // @CalledByNative 回调），R8 的优化/内联/裁剪会破坏 native 层按名
-            // 查找 Java 方法与 JNI 注册表，即使 keep 规则也难完全覆盖，崩溃发生在
-            // native 层（Java 崩溃上报捕获不到）。关闭 R8 与 v1.133 及之前稳定版一致。
-            // native .so 占体积大头，混淆 dex 收益低（APK 约 +4MB）。
+            // R8/minify 全面禁用（结论，非临时关闭）。
+            // v1.324~1.327 四轮尝试全部失败：
+            //   v1.324 规则文件未加载（缺 proguardFiles），ActivityResult 契约被改名 → 崩
+            //   v1.325 加载规则 + keep ActivityResult 全层级，contract 恢复原名仍崩
+            //   v1.326 keep 所有 WebRTC 回调实现类，create 房间 native 崩溃依旧
+            //   v1.327 -dontobfuscate 零类名改写（mapping 已验证），两种崩溃照旧
+            // 根因不在"改名"，而在 minify 的 shrink 裁剪 + R8 desugaring 破坏
+            // ActivityResultRegistry 恢复链路与 WebRTC JNI 注册表，keep 无法穷尽。
+            // 防破解改走 APK 加固方案（第三方加固服务），不依赖 R8 混淆。
+            // proguard-rules.pro 与 proguardFiles 配置保留，供将来重新评估使用。
             isMinifyEnabled = false
             isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
