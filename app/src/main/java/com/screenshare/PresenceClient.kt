@@ -36,6 +36,8 @@ class PresenceClient(
         fun onShareInvite(inviteId: String, code: String, fromUserId: String, fromNickname: String)
         /** 邀请被对方接受/拒绝 */
         fun onShareInviteResult(inviteId: String, accepted: Boolean, reason: String)
+        /** 对方结束了会议，暂存邀请作废，应关掉已弹出的邀请框 */
+        fun onInviteCancelled(inviteId: String)
         /** 连接异常（将自动重连，仅提示） */
         fun onRetrying(message: String)
         /** 不可恢复错误 */
@@ -176,6 +178,8 @@ class PresenceClient(
                 json.optBoolean("accepted", false),
                 json.optString("reason")
             )
+            // host 结束会议时，暂存邀请作废：关掉被邀请方已弹出的邀请框
+            "invite-cancelled" -> listener.onInviteCancelled(json.optString("inviteId"))
             "pong" -> Unit
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> log("未知消息: ${json.optString("type")}")

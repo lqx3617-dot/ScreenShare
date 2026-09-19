@@ -249,14 +249,51 @@ test("邀请接受时房间已关闭则不计会话", async () => {
     // host 先退出，房间关闭，B 才接受（须等 close 在服务端处理完，避免竞态）
     A.ws.close();
     await waitFor(B.messages, (m) => m.type === "presence" && m.userId === a.userId && m.online === false);
+
+    // 邀请已被作废，accept 被拒，最近共享里不出现这条幽灵会话
     B.ws.send(JSON.stringify({ type: "share-invite-accept", inviteId: invite.inviteId }));
     const roomGone = await waitFor(B.messages, (m) => m.type === "error");
-    assert.match(roomGone.message, /会议已结束/);
+    assert.match(roomGone.message, /邀请不存在或已过期|会议已结束/);
 
-    // 最近共享里不该出现这条幽灵会话
     const recent = await httpJson(port, "GET", "/shares/recent", null, b.token);
     assert.equal(recent.status, 200);
     assert.equal(recent.json.length, 0);
+    B.ws.close();
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("host 结束会议后作废暂存邀请并通知被邀请方", async () => {
+  const { proc, port } = await startServer();
+  try {
+    const a = await registerUser(port, "房东甲");
+    const b = await registerUser(port, "房客乙");
+    const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    assert.equal(req.status, 200);
+    const pending = await httpJson(port, "GET", "/friends/requests", null, b.token);
+    const accepted = await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, b.token);
+    assert.equal(accepted.status, 200);
+
+    const A = connectWs(port, a.token);
+    await A.ready;
+    const B = connectWs(port, b.token);
+    await B.ready;
+
+    A.ws.send(JSON.stringify({ type: "create", code: "3322" }));
+    await waitFor(A.messages, (m) => m.type === "created");
+    A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "3322" }));
+    await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "3322");
+
+    // host 退出 → 邀请作废，B 收到 invite-cancelled（而不是等到 5 分钟超时）
+    A.ws.close();
+    const cancelled = await waitFor(B.messages, (m) => m.type === "invite-cancelled" && m.code === "3322");
+    assert.ok(cancelled.inviteId);
+
+    // 作废后 B 再 accept 应被拒绝（邀请已删除）
+    B.ws.send(JSON.stringify({ type: "share-invite-accept", inviteId: cancelled.inviteId }));
+    const gone = await waitFor(B.messages, (m) => m.type === "error");
+    assert.match(gone.message, /邀请不存在或已过期/);
     B.ws.close();
   } finally {
     proc.kill("SIGKILL");

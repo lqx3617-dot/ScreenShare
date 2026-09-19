@@ -317,6 +317,16 @@ function flushPendingInvites(userId) {
   }
 }
 
+/** 房间销毁时：作废该房间的暂存邀请，通知被邀请方关掉已弹出的邀请框 */
+function cancelPendingInvites(roomCode) {
+  for (const [id, inv] of [...pendingInvites]) {
+    if (inv.code !== roomCode) continue;
+    pendingInvites.delete(id);
+    sendToUser(inv.toUserId, { type: "invite-cancelled", inviteId: id, code: roomCode });
+    console.log(`[invite] 房间关闭，作废邀请 room=${roomCode} to=${inv.toUserId.slice(0, 8)}…`);
+  }
+}
+
 // 待处理共享邀请：inviteId -> { fromUserId, toUserId, code, createdAt }，5 分钟未处理自动过期
 const pendingInvites = new Map();
 setInterval(() => {
@@ -675,6 +685,7 @@ wss.on("connection", (ws, request) => {
     if (r.removedHost) {
       // host 离开：释放房间 token，通知所有 viewer
       AuthManager.releaseTokens(roomCode);
+      cancelPendingInvites(roomCode);
       r.remainingViewers.forEach((v) => send(v, { type: "host-left" }));
       console.log(`[room ${roomCode}] closed (host left, ${r.remainingViewers.length} viewer(s) disconnected)`);
     } else if (r.pendingRemoved != null) {

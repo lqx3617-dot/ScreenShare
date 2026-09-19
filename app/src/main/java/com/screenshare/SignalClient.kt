@@ -202,6 +202,9 @@ class SignalClient(
             "come-on" -> listener.onComeOn()
             "relay" -> listener.onRelay(json.optString("data"), vid)
             "pong" -> { lastPongMs = System.currentTimeMillis() }
+            // SignalWS 也认领了账号身份，auth-ok 是认领回执；
+            // share-invite-result 由 PresenceClient 处理，此处是同账号多连接的重复投递
+            "auth-ok", "auth-error", "share-invite-result", "presence" -> Unit
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> AppLogger.app("[$TAG] 未知消息: ${json.optString("type")}")
         }

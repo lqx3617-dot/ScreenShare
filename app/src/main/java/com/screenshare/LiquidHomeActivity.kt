@@ -168,6 +168,15 @@ class LiquidHomeActivity : AppCompatActivity() {
             }
         }
 
+        override fun onInviteCancelled(inviteId: String) {
+            runOnUiThread {
+                inviteDialogs.remove(inviteId)?.let { d ->
+                    try { if (d.isShowing) d.dismiss() } catch (_: Throwable) {}
+                    toastOnApp("对方已结束共享，邀请已取消")
+                }
+            }
+        }
+
         override fun onRetrying(message: String) {
             AppLogger.app("[PRESENCE] 重连中: $message")
         }
@@ -191,8 +200,22 @@ class LiquidHomeActivity : AppCompatActivity() {
     }
 
     /** 收到好友的共享邀请：接受则进观看端，拒绝则通知对方 */
+    private val inviteDialogs = mutableMapOf<String, android.app.Dialog>()
+
+    private fun dismissInviteDialogs() {
+        inviteDialogs.values.forEach { d ->
+            try { if (d.isShowing) d.dismiss() } catch (_: Throwable) {}
+        }
+        inviteDialogs.clear()
+    }
+
     private fun showShareInviteDialog(inviteId: String, code: String, fromNickname: String) {
+        // 旧邀请可能还挂着（对方连发多次），先顶掉同 id 的
+        inviteDialogs.remove(inviteId)?.let { d ->
+            try { if (d.isShowing) d.dismiss() } catch (_: Throwable) {}
+        }
         val dialog = android.app.Dialog(this)
+        inviteDialogs[inviteId] = dialog
         val dv = com.screenshare.databinding.DialogLiquidConfirmBinding.inflate(layoutInflater)
         dialog.setContentView(dv.root)
         dialog.window?.apply {
@@ -206,6 +229,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         dv.btnNegative.text = "拒绝"
         dv.btnPositive.setOnClickListener {
             dialog.dismiss()
+            inviteDialogs.remove(inviteId)
             presenceClient?.acceptShareInvite(inviteId)
             val intent = android.content.Intent(this, MainActivity::class.java)
                 .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_JOIN)
@@ -215,6 +239,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
         dv.btnNegative.setOnClickListener {
             dialog.dismiss()
+            inviteDialogs.remove(inviteId)
             presenceClient?.rejectShareInvite(inviteId)
         }
         dialog.show()
@@ -469,6 +494,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         infiniteAnimators.forEach { it.cancel() }
         infiniteAnimators.clear()
         handler.removeCallbacksAndMessages(null)
+        dismissInviteDialogs()
         // 注意：不断开 presenceClient。它是进程级的（见 App.connectPresence），
         // 进会议室销毁本 Activity 时若断开，共享邀请发不出/收不到。
         // 只有登出（SettingsFragment）才调 App.disconnectPresence()。
