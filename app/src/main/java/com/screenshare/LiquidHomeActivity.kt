@@ -157,7 +157,14 @@ class LiquidHomeActivity : AppCompatActivity() {
 
         override fun onShareInviteResult(inviteId: String, accepted: Boolean, reason: String) {
             runOnUiThread {
-                toastOnApp(if (accepted) "对方已接受共享邀请" else "对方未接受邀请${if (reason.isNotEmpty()) "：$reason" else ""}")
+                val msg = when {
+                    accepted -> "对方已接受共享邀请"
+                    reason == "offline_pushed" -> "对方离线，已发送推送提醒，TA 上线后会收到邀请"
+                    reason == "offline" -> "对方离线且未开启推送，无法送达邀请"
+                    reason == "rejected" -> "对方拒绝了共享邀请"
+                    else -> "对方未接受邀请${if (reason.isNotEmpty()) "：$reason" else ""}"
+                }
+                toastOnApp(msg)
             }
         }
 
@@ -179,6 +186,8 @@ class LiquidHomeActivity : AppCompatActivity() {
         val token = SessionStore.getToken(this) ?: return
         // 进程级长连接：若已存在（从会议室返回时）复用，不重复建连
         App.instance.connectPresence(token, presenceListener)
+        // 顺带刷新 FCM 令牌：令牌可能随应用升级/清数据轮换，保证离线推送可达
+        FcmRegistrar.register(this)
     }
 
     /** 收到好友的共享邀请：接受则进观看端，拒绝则通知对方 */

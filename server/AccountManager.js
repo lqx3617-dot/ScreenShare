@@ -132,6 +132,26 @@ class AccountManager {
     };
   }
 
+  /** 保存本设备的 FCM 推送令牌（令牌可能轮换，每次上报覆盖旧值） */
+  setPushToken(userId, pushToken) {
+    const token = String(pushToken || "").trim();
+    if (!token) throw new AccountError("invalid_token", "推送令牌不能为空", 400);
+    const r = this.db.prepare(`UPDATE users SET push_token = ? WHERE id = ?`).run(token, userId);
+    if (r.changes === 0) throw new AccountError("not_found", "账号不存在", 404);
+    return { ok: true };
+  }
+
+  getPushToken(userId) {
+    const r = this.db.prepare(`SELECT push_token FROM users WHERE id = ?`).get(userId);
+    return r ? r.push_token || "" : "";
+  }
+
+  /** 清空推送令牌：客户端报告令牌失效时调用 */
+  clearPushToken(userId) {
+    this.db.prepare(`UPDATE users SET push_token = NULL WHERE id = ?`).run(userId);
+    return { ok: true };
+  }
+
   updateProfile(userId, patch = {}) {
     const user = this.getProfile(userId);
     if (!user) throw new AccountError("not_found", "账号不存在", 404);

@@ -46,6 +46,7 @@ const { RateLimiter } = require("./RateLimiter");
 const { AccountManager } = require("./AccountManager");
 const { FriendManager } = require("./FriendManager");
 const { ShareHistory } = require("./ShareHistory");
+const { FcmPusher } = require("./FcmPusher");
 const { PresenceManager } = require("./PresenceManager");
 const { AccountRouter } = require("./AccountRouter");
 
@@ -140,6 +141,17 @@ const accountManager = new AccountManager(accountDb);
 const friendManager = new FriendManager(accountDb);
 const presenceManager = new PresenceManager();
 const shareHistory = new ShareHistory(accountDb);
+// FCM 推送：私钥文件路径由 FCM_KEY_FILE 指定，否则自动找 server/*firebase-adminsdk*.json
+const fcmKeyFile =
+  process.env.FCM_KEY_FILE ||
+  (() => {
+    const found = require("fs")
+      .readdirSync(__dirname)
+      .find((f) => /firebase-adminsdk.*\.json$/.test(f));
+    return found ? path.join(__dirname, found) : "";
+  })();
+const fcmPusher = new FcmPusher(fcmKeyFile);
+console.log(`[fcm] 推送 ${fcmPusher.enabled ? "已启用" : "未启用（缺私钥文件）"}`);
 const accountRouter = new AccountRouter({
   accountManager,
   friendManager,
@@ -287,6 +299,21 @@ function sendToUser(userId, obj) {
 function broadcastPresence(userId, online) {
   for (const f of friendManager.list(userId)) {
     sendToUser(f.userId, { type: "presence", userId, online });
+  }
+}
+
+/** 用户上线时：补投离线期间收到的共享邀请 */
+function flushPendingInvites(userId) {
+  for (const [id, inv] of [...pendingInvites]) {
+    if (inv.toUserId !== userId) continue;
+    const fromProfile = accountManager.getProfile(inv.fromUserId);
+    sendToUser(userId, {
+      type: "share-invite",
+      inviteId: id,
+      code: inv.code,
+      from: { userId: inv.fromUserId, nickname: fromProfile ? fromProfile.nickname : "" },
+    });
+    console.log(`[invite] 补投离线邀请 room=${inv.code} to=${userId.slice(0, 8)}…`);
   }
 }
 
@@ -485,7 +512,10 @@ wss.on("connection", (ws, request) => {
         }
         const cameOnline = presenceManager.attach(userId, ws);
         send(ws, { type: "auth-ok", userId });
-        if (cameOnline) broadcastPresence(userId, true);
+        if (cameOnline) {
+          broadcastPresence(userId, true);
+          flushPendingInvites(userId);
+        }
         console.log(`[account] ws authed user=${userId.slice(0, 8)}… ${cameOnline ? "(online)" : "(extra device)"}`);
         break;
       }
@@ -509,20 +539,43 @@ wss.on("connection", (ws, request) => {
           break;
         }
         const inviteId = crypto.randomUUID();
-        if (!presenceManager.isOnline(toUserId)) {
-          console.log(`[invite] 拒绝：对方离线 from=${userId.slice(0, 8)}… to=${toUserId.slice(0, 8)}…`)
-          send(ws, { type: "share-invite-result", inviteId, accepted: false, reason: "offline" });
-          break;
-        }
         const fromProfile = accountManager.getProfile(userId);
+        const fromNickname = fromProfile ? fromProfile.nickname : "";
         pendingInvites.set(inviteId, { fromUserId: userId, toUserId, code: inviteCode, createdAt: Date.now() });
-        sendToUser(toUserId, {
-          type: "share-invite",
-          inviteId,
-          code: inviteCode,
-          from: { userId, nickname: fromProfile ? fromProfile.nickname : "" },
-        });
-        console.log(`[invite] ${userId.slice(0, 8)}… -> ${toUserId.slice(0, 8)}… room=${inviteCode}`);
+        if (presenceManager.isOnline(toUserId)) {
+          // 在线：直接投递
+          sendToUser(toUserId, {
+            type: "share-invite",
+            inviteId,
+            code: inviteCode,
+            from: { userId, nickname: fromNickname },
+          });
+          console.log(`[invite] ${userId.slice(0, 8)}… -> ${toUserId.slice(0, 8)}… room=${inviteCode}`);
+        } else {
+          // 离线：邀请先存服务端，再发推送提醒；对方上线时 flushPendingInvites 补投邀请
+          const pushToken = accountManager.getPushToken(toUserId);
+          if (!pushToken) {
+            send(ws, { type: "share-invite-result", inviteId, accepted: false, reason: "offline" });
+            console.log(`[invite] 对方离线且无推送令牌 to=${toUserId.slice(0, 8)}… room=${inviteCode}`);
+            break;
+          }
+          fcmPusher
+            .send(pushToken, "共享邀请", `${fromNickname || "好友"} 邀请你观看 TA 的屏幕共享`)
+            .then((r) => {
+              if (r === "invalid_token") {
+                accountManager.clearPushToken(toUserId);
+                console.log(`[invite] 对方推送令牌失效，已清除 to=${toUserId.slice(0, 8)}…`);
+              }
+              const pushed = r === true;
+              send(ws, {
+                type: "share-invite-result",
+                inviteId,
+                accepted: false,
+                reason: pushed ? "offline_pushed" : "offline",
+              });
+              console.log(`[invite] 对方离线，邀请已存，推送 pushed=${pushed} to=${toUserId.slice(0, 8)}… room=${inviteCode}`);
+            });
+        }
         break;
       }
 

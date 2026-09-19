@@ -173,6 +173,15 @@ class AccountRouter {
         auth: true,
         handler: (req, body, ctx) => this.shareHistory.recent(ctx.userId, 20),
       },
+      {
+        method: "POST",
+        pattern: /^\/account\/push-token$/,
+        auth: true,
+        handler: (req, body, ctx) => {
+          if (body.clear) return this.accounts.clearPushToken(ctx.userId);
+          return this.accounts.setPushToken(ctx.userId, body.token);
+        },
+      },
     ];
   }
 

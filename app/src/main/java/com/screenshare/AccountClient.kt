@@ -204,9 +204,20 @@ object AccountClient {
         }
     }
 
+    /** 上报 FCM 推送令牌（离线好友邀请用） */
+    suspend fun setPushToken(token: String, pushToken: String): ApiResult<Unit> {
+        val r = call(
+            "POST", "/account/push-token",
+            JSONObject().put("token", pushToken), token
+        )
+        return when (r) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Failure -> r
+        }
+    }
+
     /** 最近共享记录（我作为共享方或观看方） */
-    suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {
-        val r = callRaw("GET", "/shares/recent", null, token)
+    suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {        val r = callRaw("GET", "/shares/recent", null, token)
         return when (r) {
             is ApiResult.Success -> {
                 val arr = if (r.data.isNotEmpty()) JSONArray(r.data) else JSONArray()

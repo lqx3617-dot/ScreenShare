@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
   nickname      TEXT NOT NULL UNIQUE,
   avatar        TEXT NOT NULL DEFAULT '0',
   friend_code   TEXT NOT NULL UNIQUE,
+  push_token    TEXT,
   created_at    INTEGER NOT NULL
 );
 
@@ -104,6 +105,16 @@ function migrateToNicknameLogin(db) {
   }
 }
 
+/**
+ * 历史库迁移：users 表补 push_token 列（v1.313 离线推送）。
+ */
+function migrateUsersPushToken(db) {
+  const cols = db.prepare("PRAGMA table_info(users)").all();
+  if (cols.some((c) => c.name === "push_token")) return false;
+  db.exec(`ALTER TABLE users ADD COLUMN push_token TEXT`);
+  return true;
+}
+
 function initSchema(db) {
   db.exec(SCHEMA);
 }
@@ -130,8 +141,16 @@ function openDb(filePath = DEFAULT_DB_PATH) {
   if (filePath !== ":memory:") {
     migrateToNicknameLogin(db);
     migrateFriendsRemark(db);
+    migrateUsersPushToken(db);
   }
   return db;
 }
 
-module.exports = { openDb, initSchema, migrateToNicknameLogin, migrateFriendsRemark, DEFAULT_DB_PATH };
+module.exports = {
+  openDb,
+  initSchema,
+  migrateToNicknameLogin,
+  migrateFriendsRemark,
+  migrateUsersPushToken,
+  DEFAULT_DB_PATH,
+};

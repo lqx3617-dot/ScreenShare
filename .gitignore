@@ -5,3 +5,7 @@
 /server/diag/
 /server/logs/
 /server/data/
+
+# FCM 凭证：服务账号私钥绝不入库
+server/*firebase-adminsdk*
+server/fcm-service-account.json

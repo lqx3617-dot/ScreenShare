@@ -315,3 +315,89 @@ test("重启未闭合会话被强制结账", async () => {
   assert.equal(list.length, 1);
   assert.notEqual(list[0].durationMs, null);
 });
+
+test("推送令牌端点", async () => {
+  const env = makeEnv();
+  const a = await register(env, "小南");
+
+  const router = new AccountRouter({
+    accountManager: env.accounts,
+    friendManager: env.friends,
+    rateLimiter: env.rateLimiter,
+    presence: env.presence,
+    shareHistory: env.shareHistory,
+  });
+  const server = http.createServer((req, res) => {
+    if (router.handle(req, res)) return;
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const call = (method, path, body, token) =>
+    fetch(base + path, {
+      method,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+  try {
+    // 未认证拒绝
+    assert.equal((await call("POST", "/account/push-token", { token: "abc" })).status, 401);
+
+    // 上报
+    let r = await call("POST", "/account/push-token", { token: "fcm-token-1" }, a.token);
+    assert.equal(r.status, 200);
+    assert.equal(env.accounts.getPushToken(a.userId), "fcm-token-1");
+
+    // 轮换覆盖
+    await call("POST", "/account/push-token", { token: "fcm-token-2" }, a.token);
+    assert.equal(env.accounts.getPushToken(a.userId), "fcm-token-2");
+
+    // 清除
+    await call("POST", "/account/push-token", { clear: true }, a.token);
+    assert.equal(env.accounts.getPushToken(a.userId), "");
+
+    // 空令牌拒绝
+    assert.equal((await call("POST", "/account/push-token", { token: "" }, a.token)).status, 400);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("FcmPusher 缺私钥时禁用，合法结构时启用", () => {
+  const { FcmPusher } = require("../FcmPusher");
+  const missing = new FcmPusher("/nonexistent/path.json");
+  assert.equal(missing.enabled, false);
+
+  // 伪造合法结构的服务账号（不联网，只验证解析与启用判断）
+  const fs = require("fs");
+  const os = require("os");
+  const path = require("path");
+  const { generateKeyPairSync } = require("crypto");
+  const privateKey = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    format: { type: "pkcs8" },
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  }).privateKey;
+  const tmp = path.join(os.tmpdir(), `fcm-fake-${Date.now()}.json`);
+  fs.writeFileSync(
+    tmp,
+    JSON.stringify({
+      type: "service_account",
+      project_id: "fake-project",
+      private_key: privateKey,
+      client_email: "fake@fake-project.iam.gserviceaccount.com",
+    })
+  );
+  try {
+    const pusher = new FcmPusher(tmp);
+    assert.equal(pusher.enabled, true);
+    assert.equal(pusher.projectId, "fake-project");
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+});

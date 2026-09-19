@@ -63,6 +63,8 @@ class LoginActivity : AppCompatActivity() {
                         friendCode = result.data.profile.friendCode
                     )
                     AppLogger.app("[LOGIN] ${if (registerMode) "注册" else "登录"}成功 nickname=${result.data.profile.nickname} code=${result.data.profile.friendCode}")
+                    // 登录后立即上报 FCM 令牌，离线好友邀请才能推到通知栏
+                    FcmRegistrar.register(this@LoginActivity)
                     startActivity(Intent(this@LoginActivity, LiquidHomeActivity::class.java))
                     finish()
                 }
