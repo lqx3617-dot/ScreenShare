@@ -2213,9 +2213,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             if (isFinishing || isDestroyed) return@postDelayed
             val target = peer ?: return@postDelayed
             screenCaptureReady = true
-            // 采集就绪后补发此前排队的新 viewer Offer
+            // 采集就绪后处理此前排队的新 viewer：必须重走 handleViewerJoined 的完整路径
+            // （建连接 + 发 Offer）。只补 createOfferFor 不行——handleViewerJoined 在
+            // peer==null 的授权窗口期只暂存 viewerId，连接没建，createOfferFor 第一行
+            // viewerConnections[vid] ?: return 会直接返回，viewer 永久等不到画面。
+            // createViewerConnection 幂等，窗口期内已建连接的不会重复建。
             pendingViewerIds.toList().forEach { vid ->
-                target.createOfferFor(vid)
+                handleViewerJoined(vid)
             }
             pendingViewerIds.clear()
         }, 500)
@@ -2757,17 +2761,20 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun handleViewerJoined(viewerId: Int) {
         if (!isHost) return
         // peer 为 null 时（授权框/启动采集的异步窗口期）先把 viewerId 暂存，
-        // startSessionCore 的 sendPendingViewerOffers 会兜底补发 Offer；
+        // startSessionCore 的 postDelayed 会重走本方法兜底建连接 + 补发 Offer；
         // 直接 return 会让该 viewer 永久卡在"等待画面"（B1 修复）
         val p = peer ?: run {
+            AppLogger.app("[HOST] viewer#$viewerId 加入时 peer 未就绪，暂存等采集启动后补建连接")
             pendingViewerIds.add(viewerId)
             return
         }
         val pc = p.createViewerConnection(viewerId)
         if (pc == null) {
+            AppLogger.app("[HOST] viewer#$viewerId 建立连接失败")
             updateUI("⚠️ 与对方建立连接失败")
             return
         }
+        AppLogger.app("[HOST] viewer#$viewerId 连接已建 captureReady=$screenCaptureReady")
         // host 端主连接 ICE 永不 CONNECTED（onConnected 不触发），弱网/编码自适应循环必须在此显式启动，
         // 否则共享方全程停留在初始码率，弱网下 RTT 排队延迟持续累积、观看端卡顿（v1.250 修复）
         if (adaptiveHandler == null) startAdaptiveLoop()
@@ -2775,6 +2782,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (screenCaptureReady) {
             p.createOfferFor(viewerId)
         } else {
+            AppLogger.app("[HOST] viewer#$viewerId 采集未就绪，暂存等启动后补发 Offer")
             pendingViewerIds.add(viewerId)
         }
     }
