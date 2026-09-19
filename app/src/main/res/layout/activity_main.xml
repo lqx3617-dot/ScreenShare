@@ -267,500 +267,234 @@
             android:background="@drawable/bg_btn_neon_red" />
     </LinearLayout>
 
-    <!-- 更多面板：收纳次要功能（原视频框内悬浮按钮 + fps/拍照/检查更新） -->
-    <LinearLayout
-        android:id="@+id/llMorePanel"
-        android:layout_width="wrap_content"
-        android:minWidth="76dp"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="top"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="104dp"
-        android:padding="12dp"
-        android:background="@drawable/bg_toolbar_dark"
-        android:elevation="24dp"
-        android:visibility="gone">
-
-        <!-- 左列：视频控制（远程控制/控制键/文本/相册） -->
+        <!-- 更多面板：收纳次要功能（原视频框内悬浮按钮 + fps/拍照/检查更新） -->
         <LinearLayout
-            android:id="@+id/llVideoBtns"
+            android:id="@+id/llMorePanel"
             android:layout_width="wrap_content"
             android:minWidth="76dp"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:orientation="horizontal"
+            android:gravity="top"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="104dp"
+            android:padding="12dp"
+            android:background="@drawable/bg_toolbar_dark"
+            android:elevation="24dp"
+            android:visibility="gone">
 
-            <TextView
-                android:id="@+id/btnRemoteControl"
-                android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:text="远程控制"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
-                android:visibility="gone" />
-
+            <!-- 左列：远程控制与功能扩展 -->
             <LinearLayout
-                android:id="@+id/llCtrlKeys"
+                android:id="@+id/llVideoBtns"
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="@drawable/bg_panel_btn_dark"
-                android:visibility="gone">
+                android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/btnCtrlBack"
+            <TextView
+                android:id="@+id/btnRemoteControl"
+                style="@style/PanelButton"
+                android:layout_width="wrap_content"
+                android:text="远程控制"
+                android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/llCtrlKeys"
                     android:layout_width="wrap_content"
                     android:minWidth="76dp"
                     android:layout_height="48dp"
-                    android:gravity="center"
-                    android:text="← 返回"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp" />
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_panel_btn_dark"
+                    android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/btnCtrlHome"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="48dp"
-                    android:gravity="center"
-                    android:text="⌂ 主页"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp" />
-
-                <TextView
-                    android:id="@+id/btnCtrlRecents"
-                    android:layout_width="wrap_content"
-                    android:minWidth="76dp"
-                    android:layout_height="48dp"
-                    android:gravity="center"
-                    android:text="▤ 最近"
-                    android:textSize="12sp"
-                    android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp" />
-            </LinearLayout>
+                    <TextView
+                        android:id="@+id/btnCtrlBack"
+                        style="@style/PanelButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:text="← 返回" />
+                    <TextView
+                        android:id="@+id/btnCtrlHome"
+                        style="@style/PanelButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:text="⌂ 主页" />
+                    <TextView
+                        android:id="@+id/btnCtrlRecents"
+                        style="@style/PanelButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="48dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:text="▤ 最近" />
+                </LinearLayout>
 
             <TextView
                 android:id="@+id/btnCtrlText"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
+                android:layout_marginTop="8dp"
                 android:text="文本"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnCtrlPoke"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
+                android:layout_marginTop="8dp"
                 android:text="戳TA"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnCtrlMark"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
+                android:layout_marginTop="8dp"
                 android:text="标注"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnAlbum"
+                style="@style/PanelButton"
+                android:layout_width="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="相册"
+                android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- 中列：画面与帧率 -->
+            <LinearLayout
+                android:id="@+id/llRemoteRight"
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
-                android:text="相册"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <!-- 中列：比例/全屏/帧率 -->
-        <LinearLayout
-            android:id="@+id/llRemoteRight"
-            android:layout_width="wrap_content"
-            android:minWidth="76dp"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginStart="10dp">
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnAspectToggle"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
                 android:text="完整"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnFullscreen"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="⛶ 全屏"
-                android:textSize="12sp"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnFpsToggle"
+                style="@style/PanelButton"
+                android:layout_width="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="高帧率"
+                android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- 右列：实用工具与品牌 -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="高帧率"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <!-- 右列：拍照/检查更新/品牌 -->
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:minWidth="76dp"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginStart="10dp">
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnCameraCapture"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
                 android:text="拍照"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnPip"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="小窗"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark" />
-
+                android:text="小窗" />
             <TextView
                 android:id="@+id/tvCheckUpdate"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="检查更新"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark" />
-
+                android:text="检查更新" />
             <TextView
                 android:id="@+id/btnExportLog"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="导出日志"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark" />
-
+                android:text="导出日志" />
             <TextView
                 android:id="@+id/tvTitleBrand"
+                style="@style/PanelButton.Brand"
+                android:layout_width="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/app_name" />
+            </LinearLayout>
+
+            <!-- 第四列：视频通话增强（仅视频通话中可见） -->
+            <LinearLayout
+                android:id="@+id/llCallExtras"
                 android:layout_width="wrap_content"
                 android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="@string/app_name"
-                android:textSize="12sp"
-                android:textColor="#B3FFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp" />
-        </LinearLayout>
-
-        <!-- 第四列：视频通话增强（仅视频通话中可见） -->
-        <LinearLayout
-            android:id="@+id/llCallExtras"
-            android:layout_width="wrap_content"
-            android:minWidth="76dp"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginStart="10dp">
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="10dp">
 
             <TextView
                 android:id="@+id/btnFlipCamera"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:gravity="center"
                 android:text="切换前后摄"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnHidePip"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="隐藏对方画面"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
-            <!-- 对讲状态指示：实时显示对方说话状态与音量 -->
-            <TextView
-                android:id="@+id/tvTalkIndicator"
-                android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
-                android:layout_marginTop="8dp"
-                android:gravity="center"
-                android:text="对讲待机"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:background="@drawable/bg_panel_btn_dark"
-                android:visibility="gone" />
-
+                <TextView
+                    android:id="@+id/tvTalkIndicator"
+                    style="@style/PanelButton"
+                    android:layout_width="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textSize="11sp"
+                    android:foreground="@null"
+                    android:text="对讲待机"
+                    android:visibility="gone" />
             <TextView
                 android:id="@+id/btnCamQuality"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="画质 480P"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnLocalPreview"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="本端预览 开"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnBrightness"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="亮度"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-
             <TextView
                 android:id="@+id/btnMirror"
+                style="@style/PanelButton"
                 android:layout_width="wrap_content"
-                android:minWidth="76dp"
-                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:gravity="center"
                 android:text="镜面 关"
-                android:textSize="12sp"
-                android:textStyle="bold"
-                android:textColor="#FFFFFFFF"
-                    android:shadowColor="#CC000000"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:foreground="?attr/selectableItemBackground"
-                android:background="@drawable/bg_panel_btn_dark"
                 android:visibility="gone" />
-        </LinearLayout>
+            </LinearLayout>
+
 
     </LinearLayout>
 

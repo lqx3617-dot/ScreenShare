@@ -28,6 +28,29 @@
         <item name="android:insetBottom">0dp</item>
     </style>
 
+    <!-- 更多面板按钮：统一尺寸、字色、阴影、背景与内边距，列内首个无上间距 -->
+    <style name="PanelButton">
+        <item name="android:minWidth">76dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">#FFFFFFFF</item>
+        <item name="android:shadowColor">#CC000000</item>
+        <item name="android:shadowDx">0</item>
+        <item name="android:shadowDy">1</item>
+        <item name="android:shadowRadius">3</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:foreground">?attr/selectableItemBackground</item>
+        <item name="android:background">@drawable/bg_panel_btn_dark</item>
+    </style>
+
+    <!-- 更多面板品牌标识：同尺寸字色，弱化为半透明、无按钮背景 -->
+    <style name="PanelButton.Brand">
+        <item name="android:textColor">#B3FFFFFF</item>
+        <item name="android:background">@null</item>
+    </style>
+
     <!-- 霓虹风格 AlertDialog：深色底 + 青色强调 -->
     <style name="Theme.ScreenShare.Dialog" parent="Theme.MaterialComponents.DayNight.Dialog.Alert">
         <item name="colorPrimary">@color/neon_cyan</item>
