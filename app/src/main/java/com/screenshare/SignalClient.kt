@@ -37,7 +37,7 @@ class SignalClient(
         /** host 拒绝了加入请求（仅 viewer 收到） */
         fun onJoinRejected()
         /** 新 viewer 加入（仅 host 收到），viewerId 用于建立对应连接 */
-        fun onViewerJoined(viewerId: Int)
+        fun onViewerJoined(viewerId: Int, reconnected: Boolean = false)
         /** 某 viewer 离开（仅 host 收到） */
         fun onViewerLeft(viewerId: Int)
         /** host 离开（所有 viewer 收到） */
@@ -196,7 +196,7 @@ class SignalClient(
             "join-request" -> listener.onJoinRequest(json.optInt("viewerId", 0))
             "join-rejected" -> listener.onJoinRejected()
             "peer-ready" -> listener.onPeerReady()
-            "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0))
+            "viewer-joined" -> listener.onViewerJoined(json.optInt("viewerId", 0), json.optBoolean("reconnected", false))
             "viewer-left" -> listener.onViewerLeft(json.optInt("viewerId", 0))
             "host-left" -> listener.onHostLeft()
             "come-on" -> listener.onComeOn()

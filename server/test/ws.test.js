@@ -13,13 +13,14 @@ const WebSocket = require("ws");
 
 const PASSWORD = "Passw0rd!";
 
-function startServer() {
+function startServer(extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
       env: {
         ...process.env,
         PORT: "0",
         ACCOUNT_DB: ":memory:",
+        ...extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -295,6 +296,143 @@ test("host 结束会议后作废暂存邀请并通知被邀请方", async () => 
     const gone = await waitFor(B.messages, (m) => m.type === "error");
     assert.match(gone.message, /邀请不存在或已过期/);
     B.ws.close();
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("viewer 断开后重连恢复：会话不结账，host 收 viewer-joined(reconnected)", async () => {
+  const { proc, port } = await startServer({ RECONNECT_TIMEOUT_MS: "2000" });
+  try {
+    const a = await registerUser(port, "房东甲");
+    const b = await registerUser(port, "房客乙");
+    const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    assert.equal(req.status, 200);
+    const pending = await httpJson(port, "GET", "/friends/requests", null, b.token);
+    assert.equal((await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, b.token)).status, 200);
+
+    const A = connectWs(port, a.token);
+    await A.ready;
+    const B = connectWs(port, b.token);
+    await B.ready;
+
+    A.ws.send(JSON.stringify({ type: "create", code: "7788" }));
+    await waitFor(A.messages, (m) => m.type === "created");
+    // 邀请被接受才开账共享会话（shareHistory.onStart）
+    A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "7788" }));
+    const invite5 = await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "7788");
+    B.ws.send(JSON.stringify({ type: "share-invite-accept", inviteId: invite5.inviteId }));
+    await waitFor(A.messages, (m) => m.type === "share-invite-result" && m.accepted === true);
+    B.ws.send(JSON.stringify({ type: "join", code: "7788" }));
+await waitFor(B.messages, (m) => m.type === "joined" && m.code === "7788");
+    await waitFor(A.messages, (m) => m.type === "viewer-joined" && m.reconnected === undefined);
+    const firstVid = A.messages.find((m) => m.type === "viewer-joined").viewerId;
+
+    // viewer 断开：进入宽限期，host 不应收到 viewer-left
+    B.ws.close();
+    // 等 close 在服务端处理完（A 收到 B 下线广播后再宽限 reconnecting 已落地）
+    await waitFor(A.messages, (m) => m.type === "presence" && m.userId === b.userId && m.online === false);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!A.messages.some((m) => m.type === "viewer-left"), "宽限期内 host 不应收到 viewer-left");
+
+    // viewer 用同身份重连：恢复原 viewerId，host 收到 reconnected=true 的 viewer-joined
+    const B2 = connectWs(port, b.token);
+    await B2.ready;
+    B2.ws.send(JSON.stringify({ type: "join", code: "7788" }));
+    const rejoined = await waitFor(B2.messages, (m) => m.type === "joined" && m.code === "7788");
+    assert.equal(rejoined.viewerId, firstVid, "恢复后 viewerId 不变");
+    const reMsg = await waitFor(A.messages, (m) => m.type === "viewer-joined" && m.reconnected === true);
+    assert.equal(reMsg.viewerId, firstVid);
+
+    // 宽限期早已用完也不应再收到 viewer-left（已恢复）
+    await new Promise((r) => setTimeout(r, 2500));
+    assert.ok(!A.messages.some((m) => m.type === "viewer-left"), "恢复后不应再收到 viewer-left");
+
+    // host 正常断开才结账：最近共享出现一条记录
+    A.ws.close();
+    B2.ws.close();
+    await new Promise((r) => setTimeout(r, 400));
+    const recent = await httpJson(port, "GET", "/shares/recent", null, b.token);
+    assert.equal(recent.status, 200);
+    assert.equal(recent.json.length, 1, "会话在 host 离开后结账一次");
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("viewer 断开后超时未重连：结账并通知 host viewer-left", async () => {
+  const { proc, port } = await startServer({ RECONNECT_TIMEOUT_MS: "700" });
+  try {
+    const a = await registerUser(port, "房东甲");
+    const b = await registerUser(port, "房客乙");
+    const req = await httpJson(port, "POST", "/friends/request", { friendCode: b.profile.friendCode }, a.token);
+    assert.equal(req.status, 200);
+    const pending = await httpJson(port, "GET", "/friends/requests", null, b.token);
+    assert.equal((await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, b.token)).status, 200);
+
+    const A = connectWs(port, a.token);
+    await A.ready;
+    const B = connectWs(port, b.token);
+    await B.ready;
+
+    A.ws.send(JSON.stringify({ type: "create", code: "8899" }));
+    await waitFor(A.messages, (m) => m.type === "created");
+    A.ws.send(JSON.stringify({ type: "share-invite", toUserId: b.userId, code: "8899" }));
+    const invite6 = await waitFor(B.messages, (m) => m.type === "share-invite" && m.code === "8899");
+    B.ws.send(JSON.stringify({ type: "share-invite-accept", inviteId: invite6.inviteId }));
+    await waitFor(A.messages, (m) => m.type === "share-invite-result" && m.accepted === true);
+    B.ws.send(JSON.stringify({ type: "join", code: "8899" }));
+    await waitFor(B.messages, (m) => m.type === "joined" && m.code === "8899");
+
+    // viewer 断开后不重连，超时后 host 收到 viewer-left 且会话结账
+    B.ws.close();
+    const left = await waitFor(A.messages, (m) => m.type === "viewer-left", 4000);
+    assert.ok(left, "宽限期超时后 host 应收到 viewer-left");
+
+    A.ws.close();
+    await new Promise((r) => setTimeout(r, 400));
+    const recent = await httpJson(port, "GET", "/shares/recent", null, b.token);
+    assert.equal(recent.status, 200);
+    assert.equal(recent.json.length, 1, "超时后会话结账");
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
+test("viewer 宽限期内第三个加入者被拒", async () => {
+  const { proc, port } = await startServer({ RECONNECT_TIMEOUT_MS: "5000" });
+  try {
+    const a = await registerUser(port, "房东甲");
+    const b = await registerUser(port, "房客乙");
+    const c = await registerUser(port, "路人丙");
+    for (const [t1, t2] of [[a, b], [a, c]]) {
+      const req = await httpJson(port, "POST", "/friends/request", { friendCode: t2.profile.friendCode }, t1.token);
+      assert.equal(req.status, 200);
+      const pending = await httpJson(port, "GET", "/friends/requests", null, t2.token);
+      assert.equal((await httpJson(port, "POST", "/friends/accept", { requestId: pending.json[0].requestId }, t2.token)).status, 200);
+    }
+
+    const A = connectWs(port, a.token);
+    await A.ready;
+    const B = connectWs(port, b.token);
+    await B.ready;
+    const C = connectWs(port, c.token);
+    await C.ready;
+
+    A.ws.send(JSON.stringify({ type: "create", code: "5151" }));
+    await waitFor(A.messages, (m) => m.type === "created");
+    B.ws.send(JSON.stringify({ type: "join", code: "5151" }));
+    await waitFor(B.messages, (m) => m.type === "joined" && m.code === "5151");
+
+    // viewer 断开进入宽限期：期间另一人加入应被拒
+    B.ws.close();
+    await new Promise((r) => setTimeout(r, 300));
+    C.ws.send(JSON.stringify({ type: "join", code: "5151" }));
+    const refused = await waitFor(C.messages, (m) => m.type === "error");
+    assert.match(refused.message, /正在重新连接/);
+
+    A.ws.close();
+    C.ws.close();
   } finally {
     proc.kill("SIGKILL");
   }

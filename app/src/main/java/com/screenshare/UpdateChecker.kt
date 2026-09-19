@@ -521,8 +521,15 @@ object UpdateChecker {
      */
     private fun verifyApkSignature(context: Context, apk: File): Boolean {
         return try {
-            val cur = context.packageManager.getPackageInfo(context.packageName, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
-            val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+            // API 28+ 用 GET_SIGNING_CERTIFICATES；低版本只能用已废弃的 GET_SIGNATURES
+            val sigFlag = if (Build.VERSION.SDK_INT >= 28) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                @Suppress("DEPRECATION")
+                PackageManager.GET_SIGNATURES
+            }
+            val cur = context.packageManager.getPackageInfo(context.packageName, sigFlag)
+            val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, sigFlag)
                 ?: return false
             archive.applicationInfo.sourceDir = apk.absolutePath
             archive.applicationInfo.publicSourceDir = apk.absolutePath

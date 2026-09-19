@@ -18,13 +18,23 @@
 
 // pending 加入请求超时（毫秒）
 const PENDING_TIMEOUT = 30 * 1000;
+// viewer 断开后的重连宽限期：期间保留 viewerId 槽位不结账、不通知 host，
+// 同 userId 重连即恢复；超时才真正离开（结账 + 通知 host）
+const RECONNECT_TIMEOUT = 60 * 1000;
 
 class RoomManager {
-  constructor() {
+  /**
+   * @param {function} onReconnectExpired 宽限期超时回调 (code, viewerId, userId)，
+   *        由 server.js 注册：通知 host viewer-left 并结账共享会话
+   * @param {number} reconnectTimeout 测试可覆盖宽限期
+   */
+  constructor(onReconnectExpired, reconnectTimeout = RECONNECT_TIMEOUT) {
     /** code -> room */
     this.rooms = new Map();
     /** 自增 viewerId，区分同一 host 下的多个 viewer */
     this.viewerSeq = 0;
+    this.onReconnectExpired = onReconnectExpired || (() => {});
+    this.reconnectTimeout = reconnectTimeout;
   }
 
   /** 校验会议号格式（4 位数字） */
@@ -41,7 +51,7 @@ class RoomManager {
       if (existing.host.readyState === 1) return "会议号已被占用，请重试";
       this.rooms.delete(code);
     }
-    this.rooms.set(code, { host: hostWs, hostUserId, viewers: new Map(), pending: new Map() });
+    this.rooms.set(code, { host: hostWs, hostUserId, viewers: new Map(), pending: new Map(), reconnecting: new Map() });
     return "";
   }
 
@@ -58,7 +68,7 @@ class RoomManager {
       this.rooms.delete(code);
       return { ok: false, error: "会议号不存在或会议已结束" };
     }
-    if (room.viewers.size > 0) {
+    if (room.viewers.size > 0 || room.reconnecting.size > 0) {
       // 清理已断开但尚未走完 close 清理的僵尸 viewer，避免新 viewer 被死连接挡住。
       // 除 readyState 外加 lastSeen 判据：客户端每 10s ping，15s 无消息即为半开死连接
       // （TCP 半开时 readyState 仍为 OPEN，只有心跳能判定），缩短重连被拒的窗口期。
@@ -66,8 +76,16 @@ class RoomManager {
       for (const [vid, vws] of room.viewers) {
         if (vws.readyState !== 1 || now - (vws.lastSeen || 0) > 15 * 1000) room.viewers.delete(vid);
       }
-      if (room.viewers.size > 0) {
-        return { ok: false, error: "该会议已被对方加入，仅支持 1 对 1 共享" };
+      // 宽限期已过期但定时器尚未触发的兜底清理
+      for (const [vid, e] of room.reconnecting) {
+        if (now - e.at > this.reconnectTimeout + 5000) {
+          clearTimeout(e.timer);
+          room.reconnecting.delete(vid);
+        }
+      }
+      if (room.viewers.size > 0 || room.reconnecting.size > 0) {
+        // 槽位被占：正在共享或对方正在重连，拒绝第三个加入者
+        return { ok: false, error: room.reconnecting.size > 0 ? "对方正在重新连接，请稍后再试" : "该会议已被对方加入，仅支持 1 对 1 共享" };
       }
     }
     const viewerId = ++this.viewerSeq;
@@ -174,15 +192,35 @@ class RoomManager {
   }
 
   /**
+   * viewer 重连恢复：reconnecting 宽限期内的同 userId viewer 重新绑定新连接。
+   * @returns { ok:true, viewerId } 恢复成功（原 viewerId 保留）；null 表示无待恢复记录
+   */
+  resumeViewer(code, userId, viewerWs) {
+    const room = this.rooms.get(code);
+    if (!room || !userId) return null;
+    for (const [vid, entry] of room.reconnecting) {
+      if (entry.userId === userId) {
+        clearTimeout(entry.timer);
+        room.reconnecting.delete(vid);
+        room.viewers.set(vid, viewerWs);
+        return { ok: true, viewerId: vid };
+      }
+    }
+    return null;
+  }
+
+  /**
    * 成员断开。返回 { removedHost, roomClosed, peerLeft } 便于通知。
    * - pending 中的 viewer 断开：从 pending 移除，通知 host（join-cancelled）
-   * - host 离开：整房销毁，通知所有剩余 viewer
-   * - viewer 离开：仅移除该 viewer，通知 host
+   * - host 离开：整房销毁，通知所有剩余 viewer；同时清理未过期的重连定时器
+   * - viewer 离开：进入 reconnecting 宽限期（不立即移除/结账/通知），返回 reconnecting=true
    */
-  onDisconnect(code, role, viewerId) {
+  onDisconnect(code, role, viewerId, userId) {
     const room = this.rooms.get(code);
     if (!room) return { removedHost: false, roomClosed: false, peerLeftWs: null, pendingRemoved: null };
     if (role === "host") {
+      for (const [, e] of room.reconnecting) clearTimeout(e.timer);
+      room.reconnecting.clear();
       this.rooms.delete(code);
       return { removedHost: true, roomClosed: true, peerLeftWs: room.host, remainingViewers: Array.from(room.viewers.values()), pendingRemoved: null };
     }
@@ -191,10 +229,25 @@ class RoomManager {
       room.pending.delete(viewerId);
       return { removedHost: false, roomClosed: false, peerLeftWs: room.host, pendingRemoved: viewerId };
     }
-    room.viewers.delete(viewerId);
-    return { removedHost: false, roomClosed: false, peerLeftWs: room.host, pendingRemoved: null };
+    if (room.viewers.has(viewerId)) {
+      // 已加入 viewer 断开：进入重连宽限期，保留 viewerId 槽位，超时后才真正离开
+      room.viewers.delete(viewerId);
+      const entry = { userId: userId || null, at: Date.now(), timer: null };
+      entry.timer = setTimeout(() => {
+        const r = this.rooms.get(code);
+        // 房间已销毁或已恢复/已清理：静默退出（host 断开时定时器已被清）
+        if (!r || !r.reconnecting.has(viewerId)) return;
+        r.reconnecting.delete(viewerId);
+        this.onReconnectExpired(code, viewerId, entry.userId);
+      }, this.reconnectTimeout);
+      room.reconnecting.set(viewerId, entry);
+      return { removedHost: false, roomClosed: false, peerLeftWs: null, pendingRemoved: null, reconnecting: true, viewerId, userId: entry.userId };
+    }
+    // 未知 viewer（如 join 被拒后断开）：无需处理
+    return { removedHost: false, roomClosed: false, peerLeftWs: null, pendingRemoved: null };
   }
 }
 
 module.exports = RoomManager;
 module.exports.PENDING_TIMEOUT = PENDING_TIMEOUT;
+module.exports.RECONNECT_TIMEOUT = RECONNECT_TIMEOUT;

@@ -278,7 +278,13 @@ setInterval(() => {
 
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 512 * 1024 });
 
-const rooms = new RoomManager();
+const rooms = new RoomManager((code, viewerId, userId) => {
+  // viewer 重连宽限期超时：此时才通知 host 并结账共享会话
+  const host = rooms.getHost(code);
+  if (host) send(host, { type: "viewer-left", viewerId });
+  if (userId) shareHistory.onViewerLeft(code, userId);
+  console.log(`[room ${code}] viewer#${viewerId} reconnect timeout, left`);
+}, parseInt(process.env.RECONNECT_TIMEOUT_MS, 10) || undefined);
 
 function send(ws, obj) {
   if (ws && ws.readyState === ws.OPEN) {
@@ -417,6 +423,22 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "加入口令无效" });
           console.log(`[room ${code}] join rejected (bad token)`);
           return;
+        }
+        // 重连恢复优先：同 userId 在宽限期内断开过，直接恢复原 viewerId 槽位，
+        // 会话不结账、host 侧 PC 幂等复用（ICE 失败会自动 restart）
+        if (userId) {
+          const resumed = rooms.resumeViewer(code, userId, ws);
+          if (resumed) {
+            roomCode = code;
+            role = "viewer";
+            viewerId = resumed.viewerId;
+            send(ws, { type: "joined", code, viewerId });
+            const host = rooms.getHost(code);
+            // reconnected=true：host 侧 PC 幂等复用，不重发 offer（ICE 断会自动 restart 重建）
+            if (host) send(host, { type: "viewer-joined", viewerId, reconnected: true });
+            console.log(`[room ${code}] viewer#${viewerId} reconnected (resumed)`);
+            break;
+          }
         }
         const res = rooms.requestJoin(code, ws);
         if (!res.ok) {
@@ -676,7 +698,12 @@ wss.on("connection", (ws, request) => {
     const n = (ipClientCount.get(ws._ip) || 1) - 1;
     if (n <= 0) ipClientCount.delete(ws._ip); else ipClientCount.set(ws._ip, n);
     if (!roomCode) return;
-    const r = rooms.onDisconnect(roomCode, role, viewerId);
+    const r = rooms.onDisconnect(roomCode, role, viewerId, userId);
+    // viewer 重连宽限期：保留槽位，不结账、不通知 host，等 60s 内重连或超时回调
+    if (r.reconnecting) {
+      console.log(`[room ${roomCode}] viewer#${viewerId} disconnected, awaiting reconnect (${Math.round(rooms.reconnectTimeout / 1000)}s)`);
+      return;
+    }
     // 共享会话结账：host 走批量，viewer 走单条
     if (userId) {
       if (role === "host") shareHistory.onHostLeft(roomCode);

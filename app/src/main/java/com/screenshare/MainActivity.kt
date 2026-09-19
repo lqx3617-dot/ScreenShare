@@ -2531,14 +2531,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
             }
 
-            override fun onViewerJoined(vid: Int) {
+            override fun onViewerJoined(vid: Int, reconnected: Boolean) {
                 runOnUiThread {
                     updateUI("对方已加入")
                     viewerJoined = true
                     // 对方已加入：关闭会议号弹窗，避免遮挡画面（服务器对 host 发的是 viewer-joined 而非 peer-ready）
                     dismissMeetingCodeDialog()
                     // 情侣模式：每房间仅 1 个 viewer，为该 viewer 建立独立连接并发送 Offer
-                    handleViewerJoined(vid)
+                    handleViewerJoined(vid, reconnected)
                 }
             }
 
@@ -2820,7 +2820,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     /** host：新 viewer 加入——创建独立连接并发送 Offer */
-    private fun handleViewerJoined(viewerId: Int) {
+    private fun handleViewerJoined(viewerId: Int, reconnected: Boolean = false) {
         if (!isHost) return
         // peer 为 null 时（授权框/启动采集的异步窗口期）先把 viewerId 暂存，
         // startSessionCore 的 postDelayed 会重走本方法兜底建连接 + 补发 Offer；
@@ -2834,6 +2834,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (pc == null) {
             AppLogger.app("[HOST] viewer#$viewerId 建立连接失败")
             updateUI("⚠️ 与对方建立连接失败")
+            return
+        }
+        // 重连恢复：PC 幂等复用，不重发 Offer；ICE 若已断会触发 restartViewer 自动重建+重协商
+        if (reconnected) {
+            AppLogger.app("[HOST] viewer#$viewerId 重连恢复，复用既有连接（ICE 断会自动 restart）")
+            if (adaptiveHandler == null) startAdaptiveLoop()
             return
         }
         AppLogger.app("[HOST] viewer#$viewerId 连接已建 captureReady=$screenCaptureReady")
