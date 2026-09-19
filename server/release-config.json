@@ -1,4 +1,5 @@
 {
-  "changelog": "fix: 邀请时序与房间归属校验、限流、QR 性能与对话框泄漏修复",
-  "forced": false
+  "changelog": "客户端审查修复第二批：修复版本门禁在非 Activity 上下文（服务/广播启动）下被静默跳过导致强制门禁失效，UPDATE_URL 非 https 时跳过门禁防止中间人伪造锁死；修复视频转码配置期异常时 MediaCodec 与 EGL 上下文永久泄漏耗尽设备编解码资源；合并 HomeFragment 与 MeetingActivity 的喊TA pls-join 重复实现并统一错误提示；PresenceClient 与 WebRTCPeer 自适应统计字段补 @Volatile 保证跨线程可见性；MeetingActivity 不可见时停止专属房间在线状态轮询",
+  "forced": false,
+  "minVersionCode": 0
 }

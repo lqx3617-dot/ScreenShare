@@ -200,6 +200,8 @@ class FriendsFragment : Fragment() {
             scanLauncher.launch(android.content.Intent(requireContext(), ScanFriendCodeActivity::class.java))
         }
         dv.roleJoin.setOnClickListener {
+            // 先关外层弹窗：否则引用被覆盖且永不 dismiss，onDestroyView 只 dismiss 最后一个
+            dialog?.dismiss()
             showMyQrDialog()
         }
         // 角色行的文案改成加好友语境
@@ -446,7 +448,10 @@ class FriendsFragment : Fragment() {
                 )
             )
             requestsAdapter.submitList(list)
-            binding.layoutRequests.visibility = View.VISIBLE
+            // 切 tab 后 Fragment 视图已销毁、_binding=null，但 Activity 仍持有 Fragment
+            // 引用，Presence 推送经 runOnUiThread 回调到此会 NPE（onPresenceChanged/refresh
+            // 只动 adapter 安全，这里直接访问 binding）
+            _binding?.layoutRequests?.visibility = View.VISIBLE
         }
     }
 

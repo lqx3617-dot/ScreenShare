@@ -434,6 +434,14 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   }
   // App 内云发布：查询任务状态
   if (urlPath === "/api/publish/status") {
+    // taskId = 时间基36 + 4 位随机，随机空间约 170 万，不鉴权可批量枚举他人构建状态
+    // 与失败日志片段（含版本号、stderr）。复用发版鉴权。
+    if (!publishAuthorized(req)) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden" }));
+      done(403);
+      return;
+    }
     const q = new URLSearchParams(req.url.split("?")[1] || "");
     const taskId = q.get("task") || "";
     const task = (currentTask && currentTask.id === taskId) ? currentTask : taskHistory.get(taskId);
@@ -463,19 +471,25 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       return;
     }
     const chunks = [];
+    let totalSize = 0;
     let tooLarge = false;
     req.on("data", (c) => {
-      chunks.push(c);
-      const total = chunks.reduce((a, b) => a + b.length, 0);
-      if (total > LOG_MAX_BYTES && !tooLarge) {
-        tooLarge = true;
-        try {
-          res.writeHead(413, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "日志过大" }));
-          done(413);
-        } catch (e) {}
-        req.destroy();
+      // 计数替代 reduce 全量遍历（O(n²)），2MB 上限下影响小但保持线性
+      totalSize += c.length;
+      if (totalSize > LOG_MAX_BYTES) {
+        if (!tooLarge) {
+          tooLarge = true;
+          try {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "日志过大" }));
+            done(413);
+          } catch (e) {}
+        }
+        // 不再 req.destroy()：destroy 常使客户端收到 ECONNRESET 而非完整 413 响应，
+        // 响应已写完，丢弃后续数据即可
+        return;
       }
+      chunks.push(c);
     });
     req.on("end", () => {
       if (tooLarge) return;
@@ -547,15 +561,17 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
   }
   // 更新日志：/changelog 返回全部历史更新说明
   if (urlPath === "/changelog" || urlPath === "/changelog.txt") {
+    let status = 200;
     try {
       const txt = fs.readFileSync("/workspace/CHANGELOG.md", "utf8");
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
       res.end(txt);
     } catch (e) {
+      status = 500;
       res.writeHead(500, { "Content-Type": "text/plain" });
       res.end("changelog missing");
     }
-    done(200);
+    done(status);
     return;
   }
   if (urlPath !== "/ScreenShare-allarch-signed.apk" && urlPath !== "/ScreenShare-arm64-signed.apk" && urlPath !== "/AlbumViewer-signed.apk") {

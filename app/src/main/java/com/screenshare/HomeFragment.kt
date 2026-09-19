@@ -362,24 +362,6 @@ class HomeFragment : Fragment() {
         }
     }
 
-    /** 「喊TA」：临时 WebSocket 短连接投递 pls-join（观看方发起，host 收到提示） */
-    private fun sendPlsJoin(code: String) {
-        val url = BuildConfig.SIGNAL_URL
-        if (url.isNullOrBlank()) {
-            toast("信令服务未配置，无法呼叫")
-            return
-        }
-        toast("已提醒对方，等 TA 来上屏...")
-        val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
-        val wsReq = Request.Builder().url(url).build()
-        client.newWebSocket(wsReq, object : okhttp3.WebSocketListener() {
-            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                webSocket.send(JSONObject().apply { put("type", "pls-join"); put("code", code) }.toString())
-                Handler(Looper.getMainLooper()).postDelayed({ webSocket.close(1000, "done") }, 1200)
-            }
-        })
-    }
-
     private fun startFavPolling() {
         stopFavPolling()
         favPolling = true
@@ -464,7 +446,7 @@ class HomeFragment : Fragment() {
                 toast("你是共享方，无需喊TA，等对方加入即可")
                 return@setOnClickListener
             }
-            sendPlsJoin(fav.first)
+            PlsJoinSender.send(requireContext(), fav.first)
         }
 
         // 换角色：保持房间号不变，翻转共享方/观看方

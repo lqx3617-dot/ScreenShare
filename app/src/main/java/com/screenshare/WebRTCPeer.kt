@@ -47,6 +47,10 @@ class WebRTCPeer(
 ) {
     companion object {
         private const val TAG = "WebRTCPeer"
+        /** 观看端掉帧反馈最长有效期：超时未收到恢复消息则自动解除，避免编码降档锁死（M9） */
+        private const val STALL_TIMEOUT_MS = 30_000L
+        /** ICE DISCONNECTED 后等待自动恢复的最长时间，超时则强制 restart（M10） */
+        private const val ICE_RECOVERY_TIMEOUT_MS = 15_000L
         const val SYSTEM_AUDIO_LABEL = "system-audio"
         const val CONTROL_LABEL = "control"
         const val CAMERA_TRACK_ID = "camera_track"
@@ -156,7 +160,7 @@ class WebRTCPeer(
     private var videoSource: VideoSource? = null
     // 关键帧请求短时防抖：多 viewer 同时恢复时 requestKeyFrame 可能连续触发，
     // changeCaptureFormat 会重启采集器造成画面闪断，因此 500ms 内只允许触发一次。
-    private var lastKeyFrameAt = 0L
+    private val lastKeyFrameAt = java.util.concurrent.atomic.AtomicLong(0)
     private var disposed = false
 
     // V4: 多客户端——共享方(host)为每个 viewer 维护一条独立 PeerConnection。
@@ -181,19 +185,29 @@ class WebRTCPeer(
     // 主线程 Handler：WebRTC 回调线程内触发的 PC close/dispose 与控制消息处理
     // 统一收敛到主线程，避免在回调线程释放正在回调的 native 对象导致 use-after-free 崩溃
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // v1.294: ICE 恢复看门狗——DISCONNECTED 后超时未恢复则强制 restart，避免永久"重连中"（M10）
+    private val iceRecoveryWatchdog = Runnable {
+        if (connectionStatus == ConnectionStatus.RECONNECTING) {
+            AppLogger.network("ICE ${ICE_RECOVERY_TIMEOUT_MS}ms 未恢复，强制 restart")
+            connectionStatus = ConnectionStatus.FAILED
+            listener.onDisconnected()
+            restartConnection()
+        }
+    }
     private val viewerMaxRestarts = 5
     // 编码负载自适应（v1.120）：开视频软件等动态画面时硬编跟不上，主动降采集分辨率保帧率。
     // 与弱网档位(curAdaptLevel)独立，最终采集档位取两者的较大值
-    private var encLoadDown = false
-    private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
+    @Volatile private var encLoadDown = false
+    @Volatile private var encLoadSamples = 0       // 编码瓶颈持续采样计数（触发降质）
     // 观看端掉帧反馈（stream-stall）：观看端检测到接收管线持续掉帧时经控制通道通知共享方，
     // 共享方按编码瓶颈同路径立即降档（MAINTAIN_FRAMERATE + 降分辨率），反馈恢复后才允许回升。
     // 解决共享方出向统计看不到的"接收端解码/渲染瓶颈"与"帧到达过晚被丢"两类掉帧。
     @Volatile private var viewerStallActive = false
-    private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
+    @Volatile private var encRecoverSamples = 0    // 编码恢复持续采样计数（回升 1080p）
     // 编码帧率统计缺失连续采样计数（v1.240）：部分机型 outbound-rtp.framesPerSecond 恒不上报，
     // 恢复判定无法依赖帧率证据，改用"连续无瓶颈证据"缓慢恢复，防止统计缺失永久锁死降档
-    private var encNoStatSamples = 0
+    @Volatile private var encNoStatSamples = 0
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -220,12 +234,13 @@ class WebRTCPeer(
     // 当前摄像头设备名（用于前后切换判断）
     private var cameraDeviceName: String? = null
     // host 端：每个 viewer 连接的摄像头发送器（同摄像头轨可 addTrack 到多条连接）
-    private val cameraViewerSenders = mutableMapOf<Int, org.webrtc.RtpSender>()
+    private val cameraViewerSenders = java.util.concurrent.ConcurrentHashMap<Int, org.webrtc.RtpSender>()
     // viewer 端：主连接的摄像头发送器
     @Volatile private var cameraSender: org.webrtc.RtpSender? = null
-    // 摄像头弱网自适应：最近一次码率/帧率上限（防重复设置）
-    private var lastCameraBitrateCap = 0
-    private var lastCameraFpsCap = 0
+    // 摄像头弱网自适应：最近一次码率/帧率上限（防重复设置）。
+    // 写入在 WebRTC 回调线程，重置在主线程 disconnect，需保证可见性
+    @Volatile private var lastCameraBitrateCap = 0
+    @Volatile private var lastCameraFpsCap = 0
 
     // ===== V3.1: WebRTC 连接状态管理 =====
     enum class ConnectionStatus { CONNECTING, CONNECTED, RECONNECTING, FAILED }
@@ -292,6 +307,7 @@ class WebRTCPeer(
                     connectionStatus = ConnectionStatus.CONNECTED
                     // V3.2: 连接成功后重置重连计数
                     reconnectCount = 0
+                    mainHandler.removeCallbacks(iceRecoveryWatchdog)
                     listener.onConnected()
                 }
                 PeerConnection.IceConnectionState.DISCONNECTED -> {
@@ -300,9 +316,14 @@ class WebRTCPeer(
                     // V3.1: 断网自动恢复——发起 ICE restart 重新建立数据通道
                     // 注意: DISCONNECTED 时 WebRTC 会先自行尝试恢复，收到 FAILED 再强制 restart
                     AppLogger.network("ICE DISCONNECTED, awaiting auto recovery")
+                    // v1.294: 部分机型 DISCONNECTED 后永不转 FAILED，UI 会永久卡在"重连中"；
+                    // 超时未恢复则强制 restart（M10）
+                    mainHandler.removeCallbacks(iceRecoveryWatchdog)
+                    mainHandler.postDelayed(iceRecoveryWatchdog, ICE_RECOVERY_TIMEOUT_MS)
                 }
                 PeerConnection.IceConnectionState.FAILED -> {
                     connectionStatus = ConnectionStatus.FAILED
+                    mainHandler.removeCallbacks(iceRecoveryWatchdog)
                     listener.onDisconnected()
                     Log.w(TAG, "ICE FAILED，发起 ICE restart 尝试自动恢复")
                     restartConnection()
@@ -583,7 +604,10 @@ class WebRTCPeer(
         // 因 targetFps==captureFps 且 profile 未变跳过整个切换块、不会纠正，
         // 导致档位6 名义上限 800k、实发却 1~1.9Mbps、编码 48fps（真机日志实测）。
         val cap = minOf(adaptBitrateCaps[curAdaptLevel], maxBitrateCap)
-        val fps = captureFpsForLevel(curAdaptLevel)
+        // 编码负载降档期间实际采集是 720p@24 + MAINTAIN_FRAMERATE，新连接必须继承同一状态，
+        // 否则新 viewer 拿到 48fps + MAINTAIN_RESOLUTION，与采集器实况矛盾（M1）
+        val baseFps = captureFpsForLevel(curAdaptLevel)
+        val fps = if (encLoadDown) minOf(baseFps, 24) else baseFps
         val params = rtp.parameters
         params.encodings?.firstOrNull()?.let { enc ->
             // v1.243: 初始上限 12M→9M、下限 1M→600k——降低开局带宽冲动，
@@ -598,7 +622,7 @@ class WebRTCPeer(
             enc.bitratePriority = 4.0
         }
         try {
-            params.degradationPreference = if (curAdaptLevel > 0) {
+            params.degradationPreference = if (curAdaptLevel > 0 || encLoadDown) {
                 RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
             } else {
                 RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
@@ -787,7 +811,7 @@ class WebRTCPeer(
                     override fun onCreateFailure(error: String?) { Log.e(TAG, "viewer#$viewerId createAnswer 失败: $error") }
                     override fun onSetSuccess() {}
                     override fun onSetFailure(error: String?) {}
-                }, MediaConstraints())
+                }, constraints)
             }
             override fun onSetFailure(error: String?) {
                 synchronized(pendingViewerCandidates) { pendingViewerCandidates.remove(viewerId) }
@@ -817,10 +841,15 @@ class WebRTCPeer(
      * 在回调线程内释放正在回调的 PC 会 use-after-free 崩溃。 */
     fun removeViewer(viewerId: Int) {
         val conn = viewerConnections.remove(viewerId) ?: return
-        pendingViewerCandidates.remove(viewerId)
+        // 与 handleViewerAnswer/handleViewerOffer 的写入用同一把锁，避免迭代时 CME（S5）
+        synchronized(pendingViewerCandidates) { pendingViewerCandidates.remove(viewerId) }
         viewerRestartCounts.remove(viewerId)
         // 摄像头发送器同随连接移除，否则统计线程会遍历到已 dispose 的 RtpSender（H4）
         cameraViewerSenders.remove(viewerId)
+        // 无 viewer 连接时解除掉帧锁定，避免残留状态影响后续会话（M9）
+        if (viewerConnections.isEmpty() && viewerStallActive) {
+            mainHandler.post { if (viewerStallActive) setViewerStall(false) }
+        }
         mainHandler.post {
             try { conn.controlChannel?.dispose() } catch (_: Throwable) {}
             try { conn.systemAudioChannel?.dispose() } catch (_: Throwable) {}
@@ -836,19 +865,33 @@ class WebRTCPeer(
      * 带每 viewer 重连上限保护（同主连接 restartConnection 策略），
      * 避免持续弱网下无限重建连接耗尽电量、画面卡死。 */
     private fun restartViewer(viewerId: Int) {
-        if (viewerConnections[viewerId] == null) return
-        val count = viewerRestartCounts.getOrPut(viewerId) { 0 } + 1
-        if (count > viewerMaxRestarts) {
-            AppLogger.webrtc("viewer#$viewerId 重连超过${viewerMaxRestarts}次，放弃")
+        // 由 ICE 回调（信令线程）触发，PC 创建/协商必须回到主线程：
+        // 与主线程的 createOffer 混用线程会导致候选不生成（历史已定位的坑）
+        mainHandler.post {
+            if (disposed) return@post
+            if (viewerConnections[viewerId] == null) return@post
+            val count = viewerRestartCounts.getOrPut(viewerId) { 0 } + 1
+            if (count > viewerMaxRestarts) {
+                AppLogger.webrtc("viewer#$viewerId 重连超过${viewerMaxRestarts}次，放弃")
+                removeViewer(viewerId)
+                // 与主连接 restartConnection 双回调一致：只调 onConnectionFailed 时
+                // MainActivity 只置标志+Toast，不触发结束会议/导航，host 侧界面会
+                // 永久卡在"已连接"状态无法自愈或退出
+                listener.onDisconnected()
+                listener.onConnectionFailed()
+                return@post
+            }
+            viewerRestartCounts[viewerId] = count
+            AppLogger.network("viewer#$viewerId restarting connection ($count/$viewerMaxRestarts)")
             removeViewer(viewerId)
-            listener.onConnectionFailed()
-            return
-        }
-        viewerRestartCounts[viewerId] = count
-        AppLogger.network("viewer#$viewerId restarting connection ($count/$viewerMaxRestarts)")
-        removeViewer(viewerId)
-        if (createViewerConnection(viewerId) != null) {
-            listener.onViewerRestarted(viewerId)
+            val conn = createViewerConnection(viewerId)
+            if (conn != null) {
+                listener.onViewerRestarted(viewerId)
+            } else {
+                // 重建失败必须通知 UI，否则界面仍显示已连接（M8）
+                AppLogger.webrtc("viewer#$viewerId 重连失败，通知 UI")
+                listener.onConnectionFailed()
+            }
         }
     }
 
@@ -951,8 +994,12 @@ class WebRTCPeer(
     fun stopMicAudio(negotiate: Boolean = true) {
         if (disposed) return
         val pc = peerConnection
+        // 任一连接 removeTrack 失败就不能 dispose 轨道：track 仍挂在 PC 上，
+        // dispose 悬空的 native 引用会崩溃（M12）
+        var anyRemoveFailed = false
         micSender?.let { s ->
             try { pc?.removeTrack(s) } catch (t: Throwable) {
+                anyRemoveFailed = true
                 Log.w(TAG, "移除麦克风轨道失败: ${t.message}")
             }
         }
@@ -960,6 +1007,7 @@ class WebRTCPeer(
         viewerConnections.forEach { (vid, conn) ->
             conn.micSender?.let { s ->
                 try { conn.pc.removeTrack(s) } catch (t: Throwable) {
+                    anyRemoveFailed = true
                     Log.w(TAG, "viewer#$vid 移除麦克风轨道失败: ${t.message}")
                 }
             }
@@ -967,7 +1015,11 @@ class WebRTCPeer(
             if (negotiate) createOfferFor(vid)
         }
         // 释放顺序：先 track 后 source（track 持有对 native AudioSource 的引用，反序会悬空崩溃）
-        localAudioTrack?.dispose()
+        if (!anyRemoveFailed) {
+            localAudioTrack?.dispose()
+        } else {
+            Log.w(TAG, "存在移轨失败的连接，跳过 track dispose 避免悬空 native 引用")
+        }
         localAudioTrack = null
         micAudioSource?.dispose()
         micAudioSource = null
@@ -1189,26 +1241,30 @@ class WebRTCPeer(
      * 断线 → 尝试恢复 → 最多 5 次 → 仍失败则提示放弃。
      */
     fun restartConnection() {
-        if (disposed) return
-        // 上一次 ICE restart 的 offer 尚未返回时，DISCONNECTED/FAILED/receiving-stopped
-        // 可能接连触发；此时不重复发起、不重复计数，否则计数被空转耗尽过早放弃连接（H5）
-        if (restartInFlight) return
-        if (reconnectCount >= maxReconnectAttempts) {
-            AppLogger.webrtc("Reconnect failed (超过${maxReconnectAttempts}次)")
-            connectionStatus = ConnectionStatus.FAILED
-            listener.onConnectionFailed()
-            listener.onDisconnected()
-            return
+        // 由 ICE 回调（信令线程）触发，PC 操作回到主线程，避免与主线程 createOffer 混用（S6）
+        mainHandler.post {
+            if (disposed) return@post
+            // 上一次 ICE restart 的 offer 尚未返回时，DISCONNECTED/FAILED/receiving-stopped
+            // 可能接连触发；此时不重复发起、不重复计数，否则计数被空转耗尽过早放弃连接（H5）
+            if (restartInFlight) return@post
+            // 先判空再自增：pc 为 null 时不应消耗重连计数（M11）
+            val pc = peerConnection ?: return@post
+            if (reconnectCount >= maxReconnectAttempts) {
+                AppLogger.webrtc("Reconnect failed (超过${maxReconnectAttempts}次)")
+                connectionStatus = ConnectionStatus.FAILED
+                listener.onConnectionFailed()
+                listener.onDisconnected()
+                return@post
+            }
+            reconnectCount++
+            AppLogger.webrtc("Restart ICE $reconnectCount/$maxReconnectAttempts")
+            try {
+                pc.restartIce()
+            } catch (t: Throwable) {
+                Log.w(TAG, "restartIce() 异常，走重协商兜底: ${t.message}")
+            }
+            doIceRestart()
         }
-        reconnectCount++
-        AppLogger.webrtc("Restart ICE $reconnectCount/$maxReconnectAttempts")
-        val pc = peerConnection ?: return
-        try {
-            pc.restartIce()
-        } catch (t: Throwable) {
-            Log.w(TAG, "restartIce() 异常，走重协商兜底: ${t.message}")
-        }
-        doIceRestart()
     }
 
     /** V3.1: ICE restart——重新生成 Offer（IceRestart=true）尝试在断网后自动恢复连接 */
@@ -1551,16 +1607,20 @@ class WebRTCPeer(
      * 编码器会立即产出一个关键帧，所有连接（含刚建立的 viewer）马上出画面。
      */
     fun requestKeyFrame() {
-        val capturer = videoCapturer ?: return
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastKeyFrameAt < 500L) return
-        lastKeyFrameAt = now
-        try {
-            val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
-            capturer.changeCaptureFormat(capW, capH, captureFps)
-            AppLogger.capture("已请求关键帧 ${capW}x${capH}@${captureFps}")
-        } catch (t: Throwable) {
-            Log.w(TAG, "请求关键帧失败: ${t.message}")
+        // 由 viewer ICE CONNECTED / answer onSetSuccess（信令线程）触发，回到主线程：
+        // changeCaptureFormat 与主线程的 startScreenCapture/applyCaptureFps 并发会竞态重启采集器
+        mainHandler.post {
+            val capturer = videoCapturer ?: return@post
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastKeyFrameAt.get() < 500L) return@post
+            lastKeyFrameAt.set(now)
+            try {
+                val (capW, capH) = captureSizeForLevel(lastCaptureProfile)
+                capturer.changeCaptureFormat(capW, capH, captureFps)
+                AppLogger.capture("已请求关键帧 ${capW}x${capH}@${captureFps}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "请求关键帧失败: ${t.message}")
+            }
         }
     }
 
@@ -1909,9 +1969,10 @@ class WebRTCPeer(
     /** 读取最近一次统计到的对端音频电平（0~32768，越大越响） */
     fun remoteAudioLevel(): Double = remoteAudioLevel
     // 增量丢包统计兜底（fractionLost 未上报时用累计值做差估算）
-    private var lastOutSentCum = 0L
-    private var lastOutLostCum = 0L
-    private var lastAdaptBitrateCap = 0
+    // 由 WebRTC 统计回调线程写入，可能被主线程 disconnect 重置
+    @Volatile private var lastOutSentCum = 0L
+    @Volatile private var lastOutLostCum = 0L
+    @Volatile private var lastAdaptBitrateCap = 0
     // v1.241: 实际发送码率 EMA 平滑值（带宽匹配档位用；EMA 无界递增风险：码率上限 12M，Double 无溢出）
     private var bwSmooth = 0.0
     // v1.248: 最近一次下发给编码器的目标码率（setBitrate 的 desired 值）。用于区分
@@ -1928,6 +1989,8 @@ class WebRTCPeer(
     // v1.257: 崩塌→恢复边缘检测。老设备 WiFi 周期性故障的恢复是瞬时的
     // （实测 rtt 2436ms→23ms 仅一个采样周期），好窗口仅 ~17s。
     @Volatile private var lastAdaptRttMs = 0
+    // v1.295: 静态保持连续采样计数（配合 staticHoldBps 去抖动，见 applyNetworkAdaptation）
+    private var staticHoldSamples = 0
     // v1.257: 恢复边缘待发的关键帧。崩塌期观看端抖动缓冲累积 200~290ms 陈旧帧、
     // 缓冲最小目标被棘轮抬高（实测恢复后 60s 仍残留 231ms），需要 I 帧让接收端
     // 丢弃全部待解码帧重新同步。与采集格式切换解耦：即使格式未变也补一个关键帧。
@@ -2088,7 +2151,18 @@ class WebRTCPeer(
         if (active && !encLoadDown) {
             encLoadDown = true
             encLoadSamples = 0
-            applyEncoderLoadProfile(true)
+            // applyEncoderLoadProfile 操作 sender 参数，须在主线程与 startCameraVideo 等同步（S3）
+            mainHandler.post { applyEncoderLoadProfile(true) }
+        }
+        // 超时兜底：观看方崩溃/退出后不再发恢复消息时，避免 encLoadDown 锁死到会话结束（M9）
+        mainHandler.removeCallbacks(stallTimeoutRunnable)
+        if (active) mainHandler.postDelayed(stallTimeoutRunnable, STALL_TIMEOUT_MS)
+    }
+
+    private val stallTimeoutRunnable = Runnable {
+        if (viewerStallActive) {
+            AppLogger.capture("观看端掉帧反馈超时未恢复，自动解除锁定")
+            setViewerStall(false)
         }
     }
 
@@ -2279,7 +2353,11 @@ class WebRTCPeer(
         // v1.257: 链路崩塌→恢复边缘检测。rtt 从 >=900 骤降到 <200 说明老设备
         // WiFi 周期性故障已解除（实测 2436ms→23ms 一个采样周期，且故障与码率无关）。
         // 该边缘上：强制关键帧排空观看端残留缓冲、放开静态抑制允许立即回升。
-        val linkRecovered = lastAdaptRttMs >= 900 && rttMs < 200
+        // v1.295: 阈值放宽到 <350。真机实测链路恢复常是渐进的（1706→1168→346ms），
+        // 原阈值要求瞬时掉到 <200 才触发，RTT 缓慢回落时永远命中不了，
+        // 关键帧排空（解观看端缓冲膨胀）与立即回升全部错过，档位 6 锁死 3.5 分钟。
+        // RTT 从崩塌降到 350ms 已足以证明链路脱离濒死、可用。
+        val linkRecovered = lastAdaptRttMs >= 900 && rttMs < 350
         lastAdaptRttMs = rttMs
         if (linkRecovered) {
             pendingRecoveryKeyFrame = true
@@ -2302,16 +2380,41 @@ class WebRTCPeer(
             // 网络好转：连续 4 次（约 6s）回升一档，避免抖动。
             // v1.240 由 8 次（12s）提速——蜂窝/跨网场景从最高档回满约 24s（原 48s），
             // 弱网缓解后画质恢复更及时；6s 窗口仍足以滤除蜂窝 RTT 瞬时波动
-            // v1.257: 静态抑制——实发 <= staticHoldBps 时暂停回升计数。屏幕静止时
+            // v1.295: 静态抑制——实发 <= staticHoldBps 时暂停回升计数。屏幕静止时
             // 实发≈0 是内容所致而非链路改善的证据，此时回升只是白白触发
             // changeCaptureFormat（重启采集器+关键帧，撑高刚排空的队列）；
             // 且老设备内容恢复运动后往往立刻重新崩塌（实测静态期回升 480p，
             // 8 秒后链路再死）。链路恢复边缘已在上文把 recoverTimer 预置为 4，
             // 若此刻内容正在运动则本周期即可回升；内容静止则继续被抑制，
             // 等内容动起来再按常规节奏回升。
+            // v1.295: 改为连续 3 次极低才抑制。弱档位下实发随内容动静在 50~250k 波动，
+            // 单次跌破 80k 就归零会让 recoverTimer 永远到不了阈值（真机实测档位 6 锁死
+            // 3.5 分钟，期间 RTT 早已回落到 346ms，OPPO 端冻结 30+ 次、缓冲膨胀 644ms）
+            // v1.295: 同时校验 RTT 未在恶化——局域网正常 RTT <50ms，涨到 100ms+ 已是
+            // 早期拥塞信号，但 rttLevel 阈值 200 偏高捕捉不到。真机实测开局 4M→6M
+            // 回升时 rtt 已 116ms 仍照回不误，实发冲到 1980k 随即 RTT 尖峰 1706ms 崩到档位 6。
+            // 健康门槛随档位深而放宽（深档位链路本身 RTT 就高）
             val staticHold = actualBitrateBps in 0..staticHoldBps
-            if (staticHold) recoverTimer = 0 else recoverTimer++
-            if (recoverTimer >= 4) {
+            val healthyRtt = when {
+                curAdaptLevel >= 5 -> 400
+                curAdaptLevel >= 3 -> 250
+                else -> 150
+            }
+            if (staticHold || rttMs > healthyRtt) {
+                if (staticHold) {
+                    if (staticHoldSamples < 3) staticHoldSamples++
+                    if (staticHoldSamples >= 3) recoverTimer = 0
+                } else {
+                    staticHoldSamples = 0
+                }
+            } else {
+                staticHoldSamples = 0
+                recoverTimer++
+            }
+            // v1.295: 深档位（5/6，濒死档）加速回升——画质已极差，早回升一档收益大；
+            // 2 次采样（约 3s）仍足以滤除 RTT 瞬时毛刺
+            val recoverNeeded = if (curAdaptLevel >= 5) 2 else 4
+            if (recoverTimer >= recoverNeeded) {
                 // v1.251: 拥塞记忆抑制回升——不越过最近一次被迫降档的档位，
                 // 避免回升到 9M 后再次拥塞形成周期震荡
                 if (curAdaptLevel - 1 >= minAdaptLevel) curAdaptLevel--
@@ -2382,7 +2485,11 @@ class WebRTCPeer(
         val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
         // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
         // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
-        val targetFps = captureFpsForLevel(curAdaptLevel)
+        // v1.294: 帧率上限须与 applyEncoderLoadProfile 用同一公式（编码负载降档时夹到 24），
+        // 否则 level 0 + 编码降档时此处把 captureFps 抬回 48，而采集器仍是 24fps，
+        // adaptToEncoderLoad 用 target=48 判定编码滞后又降回 24，24↔48 振荡且永久无法恢复（M2）
+        val baseFps = captureFpsForLevel(curAdaptLevel)
+        val targetFps = if (encLoadDown) minOf(baseFps, 24) else baseFps
         val profileChanged = targetProfile != lastCaptureProfile
         if (profileChanged || targetFps != captureFps) {
             val now = System.currentTimeMillis()
@@ -2496,6 +2603,7 @@ class WebRTCPeer(
         lastOutSentCum = 0L
         lastOutLostCum = 0L
         lastAdaptBitrateCap = 0
+        staticHoldSamples = 0
         bwSmooth = 0.0
         lastEncoderTargetBps = 0
         encLoadDown = false
@@ -2512,12 +2620,22 @@ class WebRTCPeer(
     fun disconnect() {
         if (disposed) return
         disposed = true
+        mainHandler.removeCallbacks(iceRecoveryWatchdog)
+        mainHandler.removeCallbacks(stallTimeoutRunnable)
         resetAdaptiveState()
         restartInFlight = false
         reconnectCount = 0
-        // V4: 清理所有 viewer 连接（PC 释放统一 post 主线程，见 removeViewer 注释）
+        // V4: 先同步关闭所有 PC：close() 使 PC 进入 CLOSED 状态、停止媒体流与
+        // native 回调。必须先于轨道释放执行——否则 PC 仍引用已 dispose 的
+        // track/source，native 层 use-after-free 随机崩溃（removeViewer 的 close
+        // 在 post 里异步，无法保证顺序）
+        viewerConnections.values.forEach { conn ->
+            try { conn.pc.close() } catch (_: Throwable) {}
+        }
+        peerConnection?.let { try { it.close() } catch (_: Throwable) {} }
+        // 清理所有 viewer 连接（PC dispose 统一 post 主线程，close 已同步完成，dispose 无回调风险）
         viewerConnections.keys.toList().forEach { removeViewer(it) }
-        pendingViewerCandidates.clear()
+        synchronized(pendingViewerCandidates) { pendingViewerCandidates.clear() }
         // 屏幕采集：按 stopCapture→capturer→track→source→helper 顺序统一释放
         releaseScreenCapture()
         stopCameraVideo()
@@ -2534,9 +2652,14 @@ class WebRTCPeer(
         controlListener = null
         videoSender = null
         micSender = null
-        peerConnection?.close()
-        peerConnection?.dispose()
+        // v1.294: 主连接释放也统一 post 主线程，与 viewer PC 一致，
+        // 避免 dispose 与信令线程的回调交叉操作同一 native 对象（M14）
+        val pc = peerConnection
         peerConnection = null
+        mainHandler.post {
+            try { pc?.close() } catch (_: Throwable) {}
+            try { pc?.dispose() } catch (_: Throwable) {}
+        }
         Log.d(TAG, "WebRTC 已断开并清理")
     }
 }

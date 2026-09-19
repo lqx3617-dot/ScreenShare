@@ -70,6 +70,11 @@ function run(cmd, args, opts = {}) {
         resolve({ stdout, stderr });
       }
     });
+    // stdin 可选：用于经 /dev/stdin 传 keystore 口令，避免出现在 argv（/proc/pid/cmdline 明文可见）
+    if (opts.input !== undefined) {
+      child.stdin.write(opts.input);
+      child.stdin.end();
+    }
   });
 }
 
@@ -96,10 +101,12 @@ async function signApk(task, key) {
   const SIGN_TIMEOUT = 10 * 60 * 1000;
   try {
     await run(ZIPALIGN, ["-f", "4", cfg.unsigned, aligned], { timeout: SIGN_TIMEOUT });
+    // keystore 口令经 stdin 传入：--ks-pass pass:xxx 会让口令出现在子进程 argv，
+    // 同机其他用户可从 /proc/<pid>/cmdline 明文读到，导致签名私钥口令泄漏
     await run(APKSIGNER, [
-      "sign", "--ks", KEYSTORE, "--ks-pass", `pass:${KEYSTORE_PASS}`,
+      "sign", "--ks", KEYSTORE, "--ks-pass", "file:/dev/stdin",
       "--ks-key-alias", KEYSTORE_ALIAS, "--out", signed, aligned,
-    ], { timeout: SIGN_TIMEOUT });
+    ], { timeout: SIGN_TIMEOUT, input: KEYSTORE_PASS });
     await run(APKSIGNER, ["verify", "--verbose", signed], { timeout: SIGN_TIMEOUT });
     atomicWrite(cfg.final, fs.readFileSync(signed));
   } finally {

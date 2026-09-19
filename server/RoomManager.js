@@ -222,7 +222,10 @@ class RoomManager {
       for (const [, e] of room.reconnecting) clearTimeout(e.timer);
       room.reconnecting.clear();
       this.rooms.delete(code);
-      return { removedHost: true, roomClosed: true, peerLeftWs: room.host, remainingViewers: Array.from(room.viewers.values()), pendingRemoved: null };
+      // pending 中的请求者不在 remainingViewers 内，单独返回让上层通知 join-cancelled，
+      // 否则请求者只能干等 30s 超时才知道 host 已离开
+      const pendingWs = Array.from(room.pending.values()).filter((ws) => ws && ws.readyState === 1);
+      return { removedHost: true, roomClosed: true, peerLeftWs: room.host, remainingViewers: Array.from(room.viewers.values()), pendingRemoved: null, pendingWs };
     }
     // viewer 断开：可能是 pending 中的请求者，也可能是已加入的 viewer
     if (room.pending.has(viewerId)) {

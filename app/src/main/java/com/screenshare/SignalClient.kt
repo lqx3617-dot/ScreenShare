@@ -69,13 +69,13 @@ class SignalClient(
         const val PONG_TIMEOUT_MS = 30000L
     }
 
-    private var webSocket: WebSocket? = null
-    private var closedByUs = false
+    // 主线程写、WS/业务线程读（sendRelay/isReady），无可见性保证会读到旧连接或误判就绪态
+    @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var closedByUs = false
+    @Volatile private var myViewerId = 0
     private var code = ""
     private var asHost = false
     private var attempt = 0
-    /** V4: 本端在房间中的 viewerId（host 恒为 0；viewer 为服务器分配） */
-    private var myViewerId = 0
     /** 加入房间口令（服务器 REQUIRE_TOKEN=1 时必需；来自分享链接或上次记忆） */
     private var joinToken = ""
     // 信令待发队列：WS 未就绪（断开/重连中）时缓存 relay 消息，连接恢复后统一补发，
@@ -85,6 +85,10 @@ class SignalClient(
     private val heartbeatHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // 自动重连 Handler：disconnect 时必须移除待执行的重连任务，避免退出后仍发起连接
     private val retryHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    /** 重连调度去重：心跳超时主动 cancel() 会异步触发 onFailure，两条路径各自
+     * scheduleRetry 会并存两条 WebSocket——旧连接成为野连接继续投递消息并重复
+     * create/join。同一时刻只允许一条重连路径排队 */
+    @Volatile private var reconnectInFlight = false
     // V3.2: 心跳假死检测——超过 30s 未收到 pong 视为 WebSocket 假死，主动断开并自动重连
     private var lastPongMs = 0L
     private val heartbeatRunnable = object : Runnable {
@@ -117,6 +121,7 @@ class SignalClient(
     }
 
     private fun tryConnect() {
+        reconnectInFlight = false
         attempt++
         AppLogger.app("[$TAG] WS 连接尝试 #$attempt")
         val request = Request.Builder().url(url).build()
@@ -168,7 +173,11 @@ class SignalClient(
     /** 自动重连：网络波动（如 Software caused connection abort）时几次重试通常能恢复 */
     private fun scheduleRetry(failMsg: String) {
         if (closedByUs) return
+        // 去重：心跳超时与 cancel() 触发的 onFailure 可能先后到达，只保留第一条调度
+        if (reconnectInFlight) return
+        reconnectInFlight = true
         if (attempt >= MAX_ATTEMPTS) {
+            reconnectInFlight = false
             listener.onError(failMsg)
             return
         }
@@ -180,8 +189,11 @@ class SignalClient(
     private fun handleMessage(text: String) {
         if (closedByUs) return
         val json = try { JSONObject(text) } catch (e: Exception) { return }
-        val vid = json.optInt("viewerId", myViewerId)
-        when (json.optString("type")) {
+        // 分发整体兜底：可解析但下游 SDP/ICE 解码抛异常的消息会窜进 OkHttp 的
+        // onMessage，连接被当失败拆除（虽自动重连，但异常无任何日志难以定位）
+        try {
+            val vid = json.optInt("viewerId", myViewerId)
+            when (json.optString("type")) {
             "created" -> {
                 // host：房间创建成功，等待 viewer 加入；token 供分享给观看方
                 listener.onRoomReady("created", 0, json.optString("token", ""))
@@ -207,6 +219,10 @@ class SignalClient(
             "auth-ok", "auth-error", "share-invite-result", "presence" -> Unit
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> AppLogger.app("[$TAG] 未知消息: ${json.optString("type")}")
+        }
+        } catch (e: Throwable) {
+            // 单条畸形消息只记日志，不向上传播到 OkHttp 导致连接被拆除
+            AppLogger.app("[$TAG] 消息处理异常 type=${json.optString("type")}: ${e.message}")
         }
     }
 
@@ -287,9 +303,12 @@ class SignalClient(
 
     fun disconnect() {
         closedByUs = true
+        reconnectInFlight = false
         heartbeatHandler.removeCallbacksAndMessages(null)
         retryHandler.removeCallbacksAndMessages(null)
         webSocket?.close(1000, "bye")
         webSocket = null
+        // 清空待发队列：不再 connect 时这些消息会永久滞留（下次 connect 才 clear）
+        pendingRelays.clear()
     }
 }

@@ -109,7 +109,12 @@ function createWsParser(onText, onClose, onPing) {
           if (onPing) onPing();
           continue;
         }
-        if (opcode === 0x2) { /* binary 忽略 */ continue; }
+        if (opcode === 0x2) {
+          // 二进制帧打断正在累积的文本分片：RFC 6455 下分片消息不可跨非同类型帧，
+          // 必须重置累积缓冲，否则二进制 payload 的字节会混入后续文本分片
+          fragmentedText = "";
+          continue;
+        }
         fragmentedText += payload.toString("utf8");
         // 分片累计超限：断开（防无限分片拼接 OOM）
         if (fragmentedText.length > MAX_FRAGMENTED) { onClose(); return; }
@@ -151,6 +156,9 @@ server.on("upgrade", (req, socket) => {
       socket.lastSeen = Date.now();
       let msg;
       try { msg = JSON.parse(text); } catch (e) { return; }
+      // JSON.parse("null") 返回 null、解析出标量时访问 .type 抛 TypeError，
+      // 无此守卫单条畸形帧即可让整个 relay 服务退出
+      if (msg === null || typeof msg !== "object") return;
       handleMessage(msg, send);
     },
     () => { try { socket.destroy(); } catch (e) {} },

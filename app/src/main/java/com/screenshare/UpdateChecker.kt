@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object UpdateChecker {
     private const val TAG = "UpdateChecker"
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private const val THREAD_COUNT = 4
     private const val RETRY_TIMES = 3
     private const val CHANNEL_ID = "update_channel"
@@ -60,6 +61,13 @@ object UpdateChecker {
                     Toast.makeText(context, "未配置更新服务器", Toast.LENGTH_LONG).show()
                 }
             }
+            return
+        }
+        // 强制 https：http 下中间人可伪造 version.json 下发超高 minVersionCode 持续锁死
+        // 应用（异签 APK 会被签名校验挡住，但挡不住锁定/恐吓）。不可信信道上的门禁
+        // 没有意义，跳过并记录（fail-open 与"拉取失败放行"策略一致，避免变砖）
+        if (!url.startsWith("https://")) {
+            Log.w(TAG, "UPDATE_URL 非 https，跳过版本门禁: $url")
             return
         }
         // 自动检查节流：仅影响"新版本提示"；版本门禁每次启动必查
@@ -91,8 +99,19 @@ object UpdateChecker {
                 // 版本门禁优先于普通更新提示：命中后直接拦截，不再走提示逻辑
                 val minVersionCode = info.optInt("minVersionCode", 0)
                 if (minVersionCode > 0 && BuildConfig.VERSION_CODE < minVersionCode) {
-                    (context as? android.app.Activity)?.runOnUiThread {
-                        showUpdateBlock(context, info)
+                    // 非 Activity 上下文（服务/广播启动）时 as? Activity 为空，此前
+                    // runOnUiThread 块被静默跳过 → 门禁完全失效。改为主线程统一启动拦截页
+                    mainHandler.post {
+                        val activity = context as? android.app.Activity
+                        if (activity != null && !activity.isDestroyed) {
+                            showUpdateBlock(activity, info)
+                        } else {
+                            val appCtx = context.applicationContext
+                            appCtx.startActivity(
+                                Intent(appCtx, UpdateBlockActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
                     }
                     return@Thread
                 }
@@ -164,34 +183,51 @@ object UpdateChecker {
         val activity = context as? android.app.Activity
         // IO 操作（列出/删除旧包、MD5 整包哈希）切到子线程，避免主线程 ANR
         Thread {
-            val apkUrl = info.getString("url")
-            val dir = appCtx.getExternalFilesDir(null)
-            val versionName = info.optString("versionName", "new")
-            // 清理历史旧版本更新包（保留当前目标版本，用于文件复用）
-            dir?.listFiles()?.forEach { if (it.name.startsWith("update") && it.name != "update-$versionName.apk") it.delete() }
-            // 文件名带版本号，每次版本唯一 Uri，绕过 Android 安装器缓存
-            val target = File(dir, "update-$versionName.apk")
-            val expectedMd5 = info.optString("md5", "")
+            // 线程体整体兜底：info.getString("url") 等解析抛 JSONException 会窜到
+            // App 未捕获异常处理器杀进程重启，服务端漏字段即应用崩溃
+            try {
+                val apkUrl = info.getString("url")
+                val dir = appCtx.getExternalFilesDir(null)
+                val versionName = info.optString("versionName", "new")
+                // 清理历史旧版本更新包（保留当前目标版本，用于文件复用）
+                dir?.listFiles()?.forEach { if (it.name.startsWith("update") && it.name != "update-$versionName.apk") it.delete() }
+                // 文件名带版本号，每次版本唯一 Uri，绕过 Android 安装器缓存
+                val target = File(dir, "update-$versionName.apk")
+                val expectedMd5 = info.optString("md5", "")
 
-            // 文件复用：同版本安装包已存在且 MD5 校验通过 → 直接安装，不重复下载
-            if (target.exists()) {
-                if (expectedMd5.isEmpty() || md5(target) == expectedMd5) {
-                    activity?.runOnUiThread { installApk(activity, target) }
-                    return@Thread
+                // 文件复用：同版本安装包已存在且 MD5 校验通过 → 直接安装，不重复下载
+                if (target.exists()) {
+                    if (expectedMd5.isEmpty() || md5(target) == expectedMd5) {
+                        // 下载线程持有 Activity 引用，退出页面后 installApk 的弹窗会
+                        // 作用在已销毁的 Activity 上 → BadTokenException
+                        if (activity != null && !activity.isDestroyed) {
+                            activity.runOnUiThread { installApk(activity, target) }
+                        }
+                        return@Thread
+                    }
+                    target.delete()
                 }
-                target.delete()
-            }
 
-            // Android 13+ 通知栏下载需要通知权限；未授权时降级为 Activity 内进度条（功能不受影响）
-            val notifyAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                ContextCompat.checkSelfPermission(appCtx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                // Android 13+ 通知栏下载需要通知权限；未授权时降级为 Activity 内进度条（功能不受影响）
+                val notifyAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(appCtx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
-            // 下载方式的 UI 初始化（通知/弹窗）必须在主线程
-            activity?.runOnUiThread {
-                if (notifyAllowed) {
-                    downloadWithNotification(appCtx, activity, info, target, apkUrl, expectedMd5)
-                } else {
-                    downloadWithDialog(activity, info, target, apkUrl, expectedMd5)
+                // 下载方式的 UI 初始化（通知/弹窗）必须在主线程
+                if (activity != null && !activity.isDestroyed) {
+                    activity.runOnUiThread {
+                        if (notifyAllowed) {
+                            downloadWithNotification(appCtx, activity, info, target, apkUrl, expectedMd5)
+                        } else {
+                            downloadWithDialog(activity, info, target, apkUrl, expectedMd5)
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "下载安装流程异常: ${e.message}", e)
+                activity?.runOnUiThread {
+                    if (!activity.isDestroyed) {
+                        Toast.makeText(appCtx, "更新下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }.apply { isDaemon = true }.start()
@@ -413,23 +449,32 @@ object UpdateChecker {
             val total = c.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
             if (total <= 0) return false
             target.delete()
-            val out = java.io.FileOutputStream(target)
-            val input = c.inputStream
-            val buf = ByteArray(64 * 1024)
-            var done = 0L
-            while (true) {
-                if (cancelled.get()) {
-                    out.close(); input.close(); c.disconnect()
-                    return false
+            var out: java.io.FileOutputStream? = null
+            var input: java.io.InputStream? = null
+            try {
+                out = java.io.FileOutputStream(target)
+                input = c.inputStream
+                val buf = ByteArray(64 * 1024)
+                var done = 0L
+                while (true) {
+                    if (cancelled.get()) {
+                        out.close(); input.close(); c.disconnect()
+                        return false
+                    }
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    done += n
+                    onProgress(done, total)
                 }
-                val n = input.read(buf)
-                if (n < 0) break
-                out.write(buf, 0, n)
-                done += n
-                onProgress(done, total)
+                out.close(); input.close(); c.disconnect()
+                true
+            } finally {
+                // 异常路径（read 抛 IO）不关流会泄漏 fd 与连接，弱网重试场景耗尽资源
+                try { out?.close() } catch (_: Throwable) {}
+                try { input?.close() } catch (_: Throwable) {}
+                try { c.disconnect() } catch (_: Throwable) {}
             }
-            out.close(); input.close(); c.disconnect()
-            true
         } catch (e: Exception) {
             Log.w(TAG, "整文件下载失败: ${e.message}")
             false
@@ -447,36 +492,35 @@ object UpdateChecker {
         totalBytes: Long,
         onProgress: (Long, Long) -> Unit
     ): Boolean {
+        var c: HttpURLConnection? = null
+        var input: java.io.InputStream? = null
+        var rf: RandomAccessFile? = null
         return try {
-            val c = URL(apkUrl).openConnection() as HttpURLConnection
+            c = URL(apkUrl).openConnection() as HttpURLConnection
             c.connectTimeout = 30000
             c.readTimeout = 60000
             c.setRequestProperty("Range", "bytes=$start-$end")
             c.connect()
 
             val code = c.responseCode
-            if (code != 206 && code != 200) {
-                throw java.io.IOException("服务器返回 $code，不支持分段下载")
-            }
             // 服务器对分段请求返回 200（忽略 Range 给全量）：各分段会同时写全量互相覆盖，
             // 且进度按 total 累加会远超真实大小。拒绝这种响应，整体降级为单线程整文件下载。
+            // code != 206 涵盖了所有非 2xx 与 200 全量两种情形
             if (code != 206) {
                 c.disconnect()
-                throw java.io.IOException("服务器忽略 Range 返回全量 200，降级单线程")
+                throw java.io.IOException(if (code == 200) "服务器忽略 Range 返回全量 200，降级单线程" else "服务器返回 $code，不支持分段下载")
             }
 
-            val input = c.inputStream
-            val buf = ByteArray(32768)
-            val rf = RandomAccessFile(target, "rw")
+            input = c.inputStream
+            rf = RandomAccessFile(target, "rw")
             rf.seek(start.toLong())
+            val buf = ByteArray(32768)
             var count: Int
             var lastUpdate = 0L
 
             while (true) {
                 if (cancelled.get()) {
-                    input.close()
-                    rf.close()
-                    c.disconnect()
+                    input.close(); rf.close(); c.disconnect()
                     return true
                 }
                 count = input.read(buf)
@@ -489,13 +533,16 @@ object UpdateChecker {
                     onProgress(total, totalBytes)
                 }
             }
-            rf.close()
-            input.close()
-            c.disconnect()
+            rf.close(); input.close(); c.disconnect()
             true
         } catch (e: Exception) {
             Log.w(TAG, "分段下载失败 [$start-$end]: ${e.message}")
             false
+        } finally {
+            // 分段重试时上一段的 rf/input/c 未关闭会泄漏 fd 与连接
+            try { input?.close() } catch (_: Throwable) {}
+            try { rf?.close() } catch (_: Throwable) {}
+            try { c?.disconnect() } catch (_: Throwable) {}
         }
     }
 

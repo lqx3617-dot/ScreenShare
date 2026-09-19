@@ -77,13 +77,15 @@ class AccountManager {
     return { userId, token, profile: this.getProfile(userId) };
   }
 
-  async login(nickname, password, deviceInfo = "") {
+  async login(nickname, password, deviceInfo = "", ip = "") {
     const name = this._normalizeNickname(nickname);
     this._assertNickname(name);
     if (typeof password !== "string" || password.length === 0) {
       throw new AccountError("invalid_credentials", "昵称或密码错误", 401);
     }
-    const lockKey = `login:${name}`;
+    // 锁定 key 含 IP：纯按昵称锁定时，攻击者可对任意昵称故意失败 5 次将其锁死 15 分钟
+    // （账号锁定 DoS）。含 IP 后只能锁自己 IP 的尝试。暴力破解由同 IP 的 5 次上限覆盖。
+    const lockKey = `login:${ip || "?"}:${name}`;
     if (!this.loginLimiter.hit(lockKey, LOGIN_MAX_FAILURES, LOGIN_LOCK_WINDOW_MS)) {
       throw new AccountError("too_many_attempts", "失败次数过多，请 15 分钟后再试", 429);
     }
@@ -96,6 +98,11 @@ class AccountManager {
     this.loginLimiter.reset(lockKey);
     const token = this._issueSession(user.id, deviceInfo);
     return { userId: user.id, token, profile: this.getProfile(user.id) };
+  }
+
+  /** 定期清理过期的登录失败记录，防止 loginLimiter 无界堆积 */
+  sweepLoginLimiter() {
+    this.loginLimiter.sweep();
   }
 
   logout(token) {
@@ -161,6 +168,13 @@ class AccountManager {
       if (nickname.length < 1) throw new AccountError("invalid_nickname", "昵称不能为空", 400);
       if (nickname.length > NICKNAME_MAX) {
         throw new AccountError("invalid_nickname", `昵称最多 ${NICKNAME_MAX} 个字符`, 400);
+      }
+      // 先查重再更新：直接 UPDATE 撞 UNIQUE 会抛原始 SQLITE 错误被兜底成 500
+      if (nickname !== user.nickname) {
+        const taken = this._findByNickname(this._normalizeNickname(nickname));
+        if (taken && taken.id !== userId) {
+          throw new AccountError("nickname_taken", "该昵称已被占用，请换一个", 409);
+        }
       }
       this.db.prepare(`UPDATE users SET nickname = ? WHERE id = ?`).run(nickname, userId);
     }

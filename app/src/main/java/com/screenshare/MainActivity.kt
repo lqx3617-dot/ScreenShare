@@ -142,7 +142,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var viewerJoined = false
     private var signalPendingOfferData: String? = null
     // 对端尚未加入时缓存的 ICE 候选（加入后连同 offer 一起补发，避免服务器"对端尚未加入"拒发丢失）
-    private var signalPendingCandidates = mutableListOf<IceCandidate>()
+    // WebRTC 信令线程回调 add、主线程 forEach+clear：普通 ArrayList 会
+    // ConcurrentModificationException 崩溃或候选丢失导致弱网连通失败，与 iceCandidates 一致用 COW
+    private val signalPendingCandidates = java.util.concurrent.CopyOnWriteArrayList<IceCandidate>()
     private var signalCode: String? = null
     // 房间口令：host 侧为服务器本次签发的 token（分享给观看方）；viewer 侧为待发送的加入口令
     private var signalRoomToken = ""
@@ -615,15 +617,26 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             signalMode = true
             isHost = true
             hostSessionActive = true
-            signalPeerReady = false
-            viewerJoined = false
-            signalPendingOfferData = null
-            signalSdpSent = false
+        signalPeerReady = false
+        viewerJoined = false
+        signalPendingOfferData = null
+        signalPendingCandidates.clear()
+        signalSdpSent = false
+        // 清空待处理 viewer：会话异常结束时残留 id 会在下次 startSessionCore 的
+        // 500ms flush 中被 handleViewerJoined 处理，为不存在的 viewer 创建连接并发 Offer
+        pendingViewerIds.clear()
             // 防御性清理：Activity 复用（onNewIntent）或前一会话残留时，先彻底释放旧 peer，
             // 避免 WebRTC native 资源泄漏累积导致后续会话加入即闪退（v1.169 诊断：viewer 加入闪退且重启可恢复）
             if (peer != null || signalClient != null) {
                 cleanupPeer()
                 resetUI()
+                // resetUI 会把 signalMode/hostSessionActive/isHost 重置为 false。此处是
+                // 防御性清理而非结束会议，之后不重新置位会导致 onOfferReady/
+                // onViewerOfferReady/onViewerIceCandidate 的 signalMode 守卫全部失效，
+                // SDP 与中继候选永不发送，会议建不起来
+                signalMode = true
+                hostSessionActive = true
+                isHost = true
             }
             updateUI("正在创建会议...")
             pendingInviteFriendId = intent.getStringExtra(EXTRA_INVITE_FRIEND_ID) ?: ""

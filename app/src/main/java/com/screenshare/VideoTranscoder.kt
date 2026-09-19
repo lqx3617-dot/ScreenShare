@@ -37,6 +37,8 @@ object VideoTranscoder {
     private const val AUDIO_BITRATE = 96_000
     private const val IFRAME_INTERVAL = 2
     private const val TIMEOUT_US = 15_000L
+    /** drain 空转上限：200 x 15ms = 3 秒无输出即判定编码卡死（部分机型 MediaCodec 静默失败）*/
+    private const val IDLE_SPIN_LIMIT = 200
 
     /**
      * 转码 content:// 视频到 outPath。失败抛异常。
@@ -83,44 +85,67 @@ object VideoTranscoder {
 
         val durationUs = if (vFmt.containsKey(MediaFormat.KEY_DURATION)) vFmt.getLong(MediaFormat.KEY_DURATION) else 0L
 
-        val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        val encFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH)
-        encFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-        encFormat.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE)
-        encFormat.setInteger(MediaFormat.KEY_FRAME_RATE, frameRate.coerceAtLeast(1))
-        encFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_INTERVAL)
-        // 不设 KEY_ROTATION：surface 输出时解码器通过 texMatrix 摆正，渲染已是正立帧，
-        // encoder 再旋转会导致画面方向错误
-        encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        val encoderSurface = encoder.createInputSurface()
+        // 配置期异常（encoder/decoder configure、渲染器初始化、音频 extractor）发生在
+        // 下方主 try 之外，已创建的编解码器与 EGL 上下文不会进入主 finally，永久泄漏
+        // 会耗尽设备编解码资源，导致后续所有转码失败。先以可空引用建立，失败时兜底释放
+        var enc: MediaCodec? = null
+        var dec: MediaCodec? = null
+        var aDec: MediaCodec? = null
+        var aEnc: MediaCodec? = null
+        var aExt: MediaExtractor? = null
+        var rend: SurfaceRender? = null
+        var encSurface: Surface? = null
+        try {
+            enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            val encFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, outW, outH)
+            encFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            encFormat.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE)
+            encFormat.setInteger(MediaFormat.KEY_FRAME_RATE, frameRate.coerceAtLeast(1))
+            encFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_INTERVAL)
+            // 不设 KEY_ROTATION：surface 输出时解码器通过 texMatrix 摆正，渲染已是正立帧，
+            // encoder 再旋转会导致画面方向错误
+            enc!!.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encSurface = enc!!.createInputSurface()
 
-        val renderer = SurfaceRender(outW, outH, encoderSurface)
-        val decoderInputSurface = renderer.inputSurface
-            ?: throw java.io.IOException("视频渲染器初始化失败，无法转码")
-        val decoder = MediaCodec.createDecoderByType(vFmt.getString(MediaFormat.KEY_MIME)!!)
-        decoder.configure(vFmt, decoderInputSurface, null, 0)
+            rend = SurfaceRender(outW, outH, encSurface!!)
+            val decoderInputSurface = rend!!.inputSurface
+                ?: throw java.io.IOException("视频渲染器初始化失败，无法转码")
+            dec = MediaCodec.createDecoderByType(vFmt.getString(MediaFormat.KEY_MIME)!!)
+            dec!!.configure(vFmt, decoderInputSurface, null, 0)
 
-        // 音频链（buffer 模式）
-        var audioDecoder: MediaCodec? = null
-        var audioEncoder: MediaCodec? = null
-        var audioExtractor: MediaExtractor? = null
-        if (audioTrack >= 0 && aFmt != null) {
-            val aMime = aFmt.getString(MediaFormat.KEY_MIME) ?: ""
-            if (aMime.startsWith("audio/")) {
-                val sampleRate = if (aFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) aFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
-                val channels = if (aFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) aFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-                audioDecoder = MediaCodec.createDecoderByType(aMime)
-                audioDecoder!!.configure(aFmt, null, null, 0)
-                val aEncFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels)
-                aEncFormat.setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BITRATE)
-                aEncFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                audioEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-                audioEncoder!!.configure(aEncFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                audioExtractor = MediaExtractor()
-                audioExtractor!!.setDataSource(context, uri, null)
-                audioExtractor!!.selectTrack(audioTrack)
+            // 音频链（buffer 模式）
+            if (audioTrack >= 0 && aFmt != null) {
+                val aMime = aFmt.getString(MediaFormat.KEY_MIME) ?: ""
+                if (aMime.startsWith("audio/")) {
+                    val sampleRate = if (aFmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) aFmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
+                    val channels = if (aFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) aFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
+                    aDec = MediaCodec.createDecoderByType(aMime)
+                    aDec!!.configure(aFmt, null, null, 0)
+                    val aEncFormat = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channels)
+                    aEncFormat.setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BITRATE)
+                    aEncFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                    aEnc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+                    aEnc!!.configure(aEncFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                    aExt = MediaExtractor()
+                    aExt!!.setDataSource(context, uri, null)
+                    aExt!!.selectTrack(audioTrack)
+                }
             }
+        } catch (t: Throwable) {
+            try { encSurface?.release() } catch (_: Throwable) {}
+            try { rend?.release() } catch (_: Throwable) {}
+            listOf(enc, dec, aDec, aEnc).forEach { c -> try { c?.release() } catch (_: Throwable) {} }
+            try { aExt?.release() } catch (_: Throwable) {}
+            Log.e(TAG, "转码器配置失败，已释放已创建资源: ${t.message}", t)
+            return
         }
+        val encoder = enc!!
+        val encoderSurface = encSurface!!
+        val renderer = rend!!
+        val decoder = dec!!
+        var audioDecoder: MediaCodec? = aDec
+        var audioEncoder: MediaCodec? = aEnc
+        var audioExtractor: MediaExtractor? = aExt
 
         var muxer: MediaMuxer? = null
         var vOutFmt: MediaFormat? = null
@@ -412,6 +437,7 @@ object VideoTranscoder {
         onChunk: (ByteBuffer, MediaCodec.BufferInfo) -> Unit
     ) {
         var done = false
+        var idleSpins = 0
         while (!done) {
             if (getErr() != null) return
             val idx = encoder.dequeueOutputBuffer(info, TIMEOUT_US)
@@ -421,15 +447,21 @@ object VideoTranscoder {
                     onChunk(buf, info)
                     if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) done = true
                     encoder.releaseOutputBuffer(idx, false)
+                    idleSpins = 0
                 }
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
-                else -> Unit // dequeueOutputBuffer 已按 TIMEOUT_US 阻塞，无需 busy-sleep
+                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { idleSpins = 0 }
+                else -> {
+                    // v1.294: 编码器已收到 EOS 却反复无输出（部分设备 MediaCodec 异常静默）会空转卡死，
+                    // 3 秒无进展即放弃，避免导出界面无限转圈
+                    if (++idleSpins > IDLE_SPIN_LIMIT) return
+                }
             }
         }
     }
 
     private fun drainAudio(encoder: MediaCodec, info: MediaCodec.BufferInfo, onChunk: (ByteBuffer, MediaCodec.BufferInfo) -> Unit) {
         var done = false
+        var idleSpins = 0
         while (!done) {
             val idx = encoder.dequeueOutputBuffer(info, TIMEOUT_US)
             when {
@@ -438,9 +470,12 @@ object VideoTranscoder {
                     onChunk(buf, info)
                     if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) done = true
                     encoder.releaseOutputBuffer(idx, false)
+                    idleSpins = 0
                 }
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}
-                else -> Unit // dequeueOutputBuffer 已按 TIMEOUT_US 阻塞，无需 busy-sleep
+                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { idleSpins = 0 }
+                else -> {
+                    if (++idleSpins > IDLE_SPIN_LIMIT) return
+                }
             }
         }
     }

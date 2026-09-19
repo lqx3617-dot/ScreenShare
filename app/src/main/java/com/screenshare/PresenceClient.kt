@@ -58,11 +58,12 @@ class PresenceClient(
             .build()
     }
     private val handler = Handler(Looper.getMainLooper())
-    private var webSocket: WebSocket? = null
-    private var token: String = ""
-    private var closedByUs = false
-    private var attempt = 0
-    private var authed = false
+    // 读写跨越 UI 线程与 OkHttp WebSocket 回调线程，需保证可见性
+    @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var token: String = ""
+    @Volatile private var closedByUs = false
+    @Volatile private var attempt = 0
+    @Volatile private var authed = false
 
     /** WS 已连接且 auth 认领完成，可发消息 */
     val isReady: Boolean

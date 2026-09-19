@@ -173,13 +173,20 @@ object AccountClient {
         }
     }
 
+    /** 列表解析统一保护：服务端返回非数组 JSON 或缺字段时降级为 Failure。
+     * call() 的对象解析有 runCatching 保护，callRaw 的列表解析此前裸调 JSONArray，
+     * 一次畸形响应即在协程内抛 JSONException 整应用崩溃 */
+    private inline fun <T> parseList(raw: String, parser: (JSONObject) -> T): ApiResult<List<T>> = try {
+        val arr = if (raw.isNotEmpty()) JSONArray(raw) else JSONArray()
+        ApiResult.Success((0 until arr.length()).map { parser(arr.getJSONObject(it)) })
+    } catch (e: Throwable) {
+        ApiResult.Failure("invalid_response", "数据解析失败: ${e.message}", 200)
+    }
+
     suspend fun getFriends(token: String): ApiResult<List<FriendItem>> {
         val r = callRaw("GET", "/friends", null, token)
         return when (r) {
-            is ApiResult.Success -> {
-                val arr = if (r.data.isNotEmpty()) JSONArray(r.data) else JSONArray()
-                ApiResult.Success((0 until arr.length()).map { parseFriendItem(arr.getJSONObject(it)) })
-            }
+            is ApiResult.Success -> parseList(r.data) { parseFriendItem(it) }
             is ApiResult.Failure -> r
         }
     }
@@ -229,12 +236,10 @@ object AccountClient {
     }
 
     /** 最近共享记录（我作为共享方或观看方） */
-    suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {        val r = callRaw("GET", "/shares/recent", null, token)
+    suspend fun getRecentShares(token: String): ApiResult<List<ShareItem>> {
+        val r = callRaw("GET", "/shares/recent", null, token)
         return when (r) {
-            is ApiResult.Success -> {
-                val arr = if (r.data.isNotEmpty()) JSONArray(r.data) else JSONArray()
-                ApiResult.Success((0 until arr.length()).map { parseShareItem(arr.getJSONObject(it)) })
-            }
+            is ApiResult.Success -> parseList(r.data) { parseShareItem(it) }
             is ApiResult.Failure -> r
         }
     }
@@ -254,17 +259,12 @@ object AccountClient {
     suspend fun getFriendRequests(token: String): ApiResult<List<FriendRequestItem>> {
         val r = callRaw("GET", "/friends/requests", null, token)
         return when (r) {
-            is ApiResult.Success -> {
-                val arr = if (r.data.isNotEmpty()) JSONArray(r.data) else JSONArray()
-                val list = (0 until arr.length()).map {
-                    val o = arr.getJSONObject(it)
-                    FriendRequestItem(
-                        requestId = o.getString("requestId"),
-                        from = parseProfile(o.getJSONObject("from")),
-                        createdAt = o.optLong("createdAt")
-                    )
-                }
-                ApiResult.Success(list)
+            is ApiResult.Success -> parseList(r.data) { o ->
+                FriendRequestItem(
+                    requestId = o.getString("requestId"),
+                    from = parseProfile(o.getJSONObject("from")),
+                    createdAt = o.optLong("createdAt")
+                )
             }
             is ApiResult.Failure -> r
         }

@@ -80,7 +80,7 @@ class AccountRouter {
         pattern: /^\/account\/login$/,
         auth: false,
         handler: (req, body) =>
-          this.accounts.login(body.nickname, body.password, req.headers["user-agent"] || ""),
+          this.accounts.login(body.nickname, body.password, req.headers["user-agent"] || "", remoteIp(req)),
       },
       {
         method: "POST",

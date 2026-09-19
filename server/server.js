@@ -127,11 +127,19 @@ const ipClientCount = new Map();
   }, 60 * 1000).unref();
 
 
+/** 常量时间比较，避免逐字节短路造成时序侧信道 */
+function safeCompare(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const ab = Buffer.from(a, "utf8"), bb = Buffer.from(b, "utf8");
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
 /** 校验诊断上报 token（x-diag-token header） */
 function diagAuthorized(req) {
   if (DIAG_TOKEN === "") return false;
   const t = req.headers["x-diag-token"];
-  return t === DIAG_TOKEN || (DIAG_TOKEN_OLD !== "" && t === DIAG_TOKEN_OLD);
+  return safeCompare(t, DIAG_TOKEN) || (DIAG_TOKEN_OLD !== "" && safeCompare(t, DIAG_TOKEN_OLD));
 }
 
 // 账号/好友系统：账号库、限流与 REST 路由（与信令同进程，在线状态与房间同内存）
@@ -160,7 +168,7 @@ const accountRouter = new AccountRouter({
   shareHistory,
   notifyUser: (userId, obj) => sendToUser(userId, obj),
 });
-setInterval(() => rateLimiter.sweep(), 60 * 1000).unref();
+setInterval(() => { rateLimiter.sweep(); accountManager.sweepLoginLimiter(); }, 60 * 1000).unref();
 
 const server = http.createServer((req, res) => {
   // 账号/好友 REST：命中 /account 或 /friends 时由 AccountRouter 接管（自带鉴权与限流）
@@ -376,7 +384,12 @@ wss.on("connection", (ws, request) => {
       return;
     }
 
-    switch (msg.type) {
+    // 消息分发整体兜底：switch 内的同步 DB 调用（shareHistory/friendManager/
+    // accountManager）在磁盘满或文件锁异常时同步抛出，沿 EventEmitter 冒泡为
+    // 未捕获异常会杀死整个进程（全项目无 process.on("uncaughtException")），
+    // 任一连接的 DB 抖动不应让所有房间连锁销毁
+    try {
+      switch (msg.type) {
       case "create": {
           if (!allowAuthAttempt(remoteIp(ws))) {
             send(ws, { type: "error", message: "操作过于频繁，请稍后再试" });
@@ -403,7 +416,8 @@ wss.on("connection", (ws, request) => {
         AuthManager.releaseTokens(code);
         const token = AuthManager.issueToken(code);
         send(ws, { type: "created", code, token });
-        console.log(`[room ${code}] created by host${REQUIRE_TOKEN ? ` (token=${token.slice(0, 8)}…)` : ""}`);
+        // token 为 8 位定长口令，slice(0,8) 等于明文记录完整加入口令，只打前 4 位
+        console.log(`[room ${code}] created by host${REQUIRE_TOKEN ? ` (token=${token.slice(0, 4)}…)` : ""}`);
         break;
       }
 
@@ -617,6 +631,13 @@ wss.on("connection", (ws, request) => {
                 reason: pushed ? "offline_pushed" : "offline",
               });
               console.log(`[invite] 对方离线，邀请已存，推送 pushed=${pushed} to=${toUserId.slice(0, 8)}… room=${inviteCode}`);
+            })
+            // 无 catch 时 .then 内的同步 DB 调用（clearPushToken）抛错会变成
+            // unhandled rejection，Node 22 默认 --unhandled-rejections=throw
+            // 会杀死整个进程（信令+账号+好友同进程），一次令牌清理异常即全部会议室连锁销毁
+            .catch((e) => {
+              console.error(`[invite] 推送链路异常 to=${toUserId.slice(0, 8)}…:`, e?.message || e);
+              try { send(ws, { type: "share-invite-result", inviteId, accepted: false, reason: "offline" }); } catch (_) {}
             });
         }
         break;
@@ -675,9 +696,19 @@ wss.on("connection", (ws, request) => {
         }
         const code = normalizeCode(msg.code || roomCode);
         const host = code ? rooms.getHost(code) : null;
-        if (host) {
+        // 归属校验：任何已登录用户知道 code 即可发提醒会被滥用骚扰。
+        // 已在该房间的 viewer 直接放行（最常见路径，免 DB 查询）；
+        // 否则必须是 host 的好友。rooms 非空房间必有 hostUserId（create 时注入）
+        const room = code ? rooms.rooms.get(code) : null;
+        const inRoom = role === "viewer" && roomCode === code;
+        const hostUid = room && room.hostUserId;
+        const isFriend = !inRoom && userId && hostUid && friendManager.list(userId).some((f) => f.userId === hostUid);
+        if (host && (inRoom || isFriend)) {
           send(host, { type: "come-on", code });
           console.log(`[room ${code}] viewer#${viewerId != null ? viewerId : "?"} pls-join (喊TA)`);
+        } else if (host) {
+          send(ws, { type: "error", message: "仅好友可发起提醒" });
+          console.log(`[room ${code}] pls-join rejected (not friend, user=${userId?.slice(0, 8)}…)`);
         } else {
           send(ws, { type: "error", message: "对方不在线，无法提醒（可先点这里创建房间等 TA）" });
         }
@@ -687,9 +718,16 @@ wss.on("connection", (ws, request) => {
       default:
         send(ws, { type: "error", message: `未知消息类型: ${msg.type}` });
     }
+    } catch (e) {
+      // 单条消息处理失败降级为该连接的错误响应，绝不冒泡到进程级
+      console.error(`[ws] message handler error (type=${msg?.type}, user=${userId?.slice(0, 8)}…):`, e?.message || e);
+      try { send(ws, { type: "error", message: "服务器内部错误，请重试" }); } catch (_) {}
+    }
   });
 
   ws.on("close", () => {
+    // close 回调内同样有同步 DB 调用（结账/通知），兜底防进程退出
+    try {
     allClients.delete(ws);
     if (userId) {
       const wentOffline = presenceManager.detach(userId, ws);
@@ -714,6 +752,8 @@ wss.on("connection", (ws, request) => {
       AuthManager.releaseTokens(roomCode);
       cancelPendingInvites(roomCode);
       r.remainingViewers.forEach((v) => send(v, { type: "host-left" }));
+      // pending 中的请求者也要通知，否则干等 30s 超时
+      r.pendingWs?.forEach((v) => send(v, { type: "join-cancelled" }));
       console.log(`[room ${roomCode}] closed (host left, ${r.remainingViewers.length} viewer(s) disconnected)`);
     } else if (r.pendingRemoved != null) {
       // pending 请求者断开：通知 host 取消
@@ -723,6 +763,10 @@ wss.on("connection", (ws, request) => {
       // viewer 离开：通知 host
       if (r.peerLeftWs) send(r.peerLeftWs, { type: "viewer-left", viewerId });
       console.log(`[room ${roomCode}] viewer#${viewerId} left`);
+    }
+    } catch (e) {
+      // 结账失败不应让进程退出；房间清理可由后续连接或超时兜底
+      console.error(`[ws] close handler error (room=${roomCode}, role=${role}):`, e?.message || e);
     }
   });
 

@@ -264,6 +264,12 @@ class MeetingActivity : AppCompatActivity() {
         favHandler.post(favPollRunnable)
     }
 
+    override fun onStop() {
+        super.onStop()
+        // 不可见时停轮询（onResume 会重新启动），避免后台每 5 秒空转并更新已隐藏的 UI
+        stopFavPolling()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopFavPolling()
@@ -375,7 +381,7 @@ class MeetingActivity : AppCompatActivity() {
             return
         }
         Toast.makeText(this, "已提醒对方，等 TA 来上屏...", Toast.LENGTH_LONG).show()
-        sendPlsJoin(fav.first)
+        PlsJoinSender.send(this, fav.first)
     }
 
     /** 专属房间点击：已设置直接进入；未设置弹窗输入房间号+选择角色 */
@@ -512,34 +518,6 @@ class MeetingActivity : AppCompatActivity() {
             diff < 86400_000 -> "${diff / 3600_000}小时前"
             else -> "${diff / 86400_000}天前"
         }
-    }
-
-    /** 用临时 WebSocket 短连接直接发 pls-join，随即断开（轻量投递"喊TA"给 host，不进入房间） */
-    private fun sendPlsJoin(code: String) {
-        val url = BuildConfig.SIGNAL_URL
-        if (url.isNullOrBlank()) return
-        val client = okhttp3.OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).build()
-        val wsReq = okhttp3.Request.Builder().url(url).build()
-        val ws = client.newWebSocket(wsReq, object : okhttp3.WebSocketListener() {
-            override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                webSocket.send(JSONObject().apply { put("type", "pls-join"); put("code", code) }.toString())
-                // 发完稍等即关闭
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ webSocket.close(1000, "done") }, 1200)
-            }
-            override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
-                val j = try { JSONObject(text) } catch (e: Exception) { return }
-                if (j.optString("type") == "error") {
-                    val msg = j.optString("message", "")
-                    runOnUiThread { Toast.makeText(this@MeetingActivity, if (msg.isBlank()) "提醒失败" else msg, Toast.LENGTH_SHORT).show() }
-                    webSocket.close(1000, "err")
-                }
-            }
-            override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                runOnUiThread { Toast.makeText(this@MeetingActivity, "提醒失败：无法连接服务器", Toast.LENGTH_SHORT).show() }
-            }
-        })
-        // 兜底延时关闭
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ ws.cancel() }, 3000)
     }
 
     private fun Int.dp(): Int = (this * resources.displayMetrics.density).toInt()
