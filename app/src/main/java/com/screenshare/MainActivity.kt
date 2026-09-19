@@ -3619,8 +3619,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
          // v1.298: 全屏方向跟随用户手机物理姿态，不再按 host 帧方向强转——
          // 折叠屏 host 展开态画面横宽（如 3000x2078）会强行把竖屏 viewer 转横屏，
-         // 违背用户持机姿势。FULL_SENSOR 下用户自己转手机即可切横屏
-         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+         // 违背用户持机姿势。FULL_USER 下用户自己转手机即可切横屏，
+         // 且尊重系统自动旋转开关：关闭时保持当前方向，打开时才跟随传感器
+         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
 
         // 沉浸式：隐藏系统栏
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -3788,7 +3789,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
         }
 
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
 
         // 主页容器由 gone→visible 后重新测量，布局完成后重新应用铺满判定
         binding.flRemoteVideo.post {
@@ -4676,7 +4677,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         viewerJoined = false
         signalPendingOfferData = null
         signalPendingCandidates.clear()
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
     }
 
     override fun onDestroy() {
