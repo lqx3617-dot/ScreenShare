@@ -22,6 +22,7 @@ import android.content.res.ColorStateList
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -96,7 +97,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     private lateinit var binding: ActivityMainBinding
     private var eglBaseContext: EglBase.Context? = null
-    private var peer: WebRTCPeer? = null
+    @Volatile private var peer: WebRTCPeer? = null
     @Volatile private var isHost = false
     private var hostSessionActive = false
     // 主动离开会议标记：避免 cleanupPeer 触发 onDisconnected 时重复跳转连接页
@@ -121,8 +122,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private val DUCK_LEVEL_THRESHOLD = 800.0
 
     // 口令共享（信令服务器模式）
-    private var signalClient: SignalClient? = null
-    private var signalMode = false
+    @Volatile private var signalClient: SignalClient? = null
+    @Volatile private var signalMode = false
     private var signalPeerReady = false
     // host 端：对方（viewer）是否已加入房间。服务器对 host 发的是 viewer-joined 而非 peer-ready，
     // 用此标记判断"对方已加入"（关闭会议号弹窗 / 授权后不弹窗）
@@ -137,17 +138,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 本次会话是否已发起屏幕授权请求（避免重复弹授权框）
     private var authorizationRequested = false
     // Trickle ICE：SDP 是否已通过信令发出，之后的候选才单独增量发送
-    private var signalSdpSent = false
+    @Volatile private var signalSdpSent = false
     // V4: 采集/主会话是否就绪（新 viewer 加入时据此决定立即发 Offer 或排队）
     private var screenCaptureReady = false
 
     // ICE 候选缓存（打包进信令 SDP 一起发送）
-    private val iceCandidates = mutableListOf<IceCandidate>()
+    private val iceCandidates = java.util.concurrent.CopyOnWriteArrayList<IceCandidate>()
     // 本机候选类型累计计数（避免每候选 O(n) 重扫全部）
-    private var candCountHost = 0
-    private var candCountSrflx = 0
-    private var candCountRelay = 0
-    private var candCountOther = 0
+    private var candCountHost = java.util.concurrent.atomic.AtomicInteger(0)
+    private var candCountSrflx = java.util.concurrent.atomic.AtomicInteger(0)
+    private var candCountRelay = java.util.concurrent.atomic.AtomicInteger(0)
+    private var candCountOther = java.util.concurrent.atomic.AtomicInteger(0)
 
     // 远程视频渲染
     private var remoteVideoSink: VideoSink? = null
@@ -207,7 +208,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var micMuted = false
 
     // 视频通话（双向摄像头人脸）：true=已开启视频通话（摄像头+麦克风联动）
-    private var videoCallOn = false
+    @Volatile private var videoCallOn = false
 
     // 观看端网络质量显示循环（RTT/接收帧率，帮助量化画面延迟）
     private var viewerStatsThread: android.os.HandlerThread? = null
@@ -221,6 +222,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private var stallRecoverStrikes = 0     // 连续正常次数（达到 3 次解除上报）
     private var stallReported = false       // 当前是否处于"已上报掉帧"状态
     private var lastDropPct = 0.0           // 最近一次采样窗口掉帧率（UI 显示用）
+    // v1.296: 抖动缓冲棘轮排空检测（观看端）——缓冲>500ms 且网络已恢复时请求关键帧
+    private var jbHighStrikes = 0
+    private var lastKeyFrameReqMs = 0L
 
     // 画中画（小窗）模式：true=处于系统 PiP，仅在 Android 8.0+ 有效
     private var inPipMode = false
@@ -263,12 +267,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 崩溃日志采集：Java 层崩溃写入外部存储文件并上报，便于定位真机闪退
-        installCrashHandler()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         // v1.248: 初始化落盘日志（真机排查用，可在「更多」面板「导出日志」一键分享）
+        // 崩溃兜底已在 App.kt 全局注册（落盘 + crash 文件 + /crash 上报 + 崩溃后重启）
         AppLogger.init(this)
+        // 诊断：区分首次启动与配置变更重建（折叠屏开合会触发），便于排查"共享中途退出"
+        // 必须在 AppLogger.init 之后调用，否则 writeLine 因 logFile==null 直接丢弃
+        if (savedInstanceState != null) AppLogger.app("MainActivity 因配置变更重建（会话状态可能丢失）")
 
         eglBaseContext = AppEglBase.context()
 
@@ -416,6 +422,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             Log.e(TAG, "进入画中画异常: ${t.message}")
             Toast.makeText(this, "进入小窗失败", Toast.LENGTH_SHORT).show()
         }
+        // 兜底：Android 12+ 系统可延迟/拒绝进入 PiP，若回调不到将导致标志恒真、小窗入口永久失效
+        binding.root.postDelayed({
+            if (pipEntering && !inPipMode && !isFinishing && !isDestroyed) {
+                pipEntering = false
+                Log.w(TAG, "进入画中画超时未回调，重置 pipEntering")
+            }
+        }, 3000)
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -521,6 +534,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 退出画中画：恢复摄像头小窗布局并按当前状态恢复控件显示 */
     private fun onExitPip() {
         restorePipLayout()
+        // 全屏观看模式：保持全屏语义（flFullscreen 仍可见），工具条/状态胶囊等不覆盖视频
+        if (isFullscreen) return
         binding.llStatus.visibility = View.VISIBLE
         if (peer != null) binding.btnStop.visibility = View.VISIBLE
         if (remoteVideoTrack != null) {
@@ -528,8 +543,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvZoomHint.visibility = View.VISIBLE
             binding.btnFullscreen.visibility = View.VISIBLE
             binding.btnAspectToggle.visibility = View.VISIBLE
-            if (isControlMode) binding.llCtrlStatus.visibility = View.VISIBLE
+            binding.btnFpsToggle.visibility = View.VISIBLE
         }
+        // 控制状态条：host 共享中可见，viewer 在控制模式可见
+        if (isHost || isControlMode) binding.llCtrlStatus.visibility = View.VISIBLE
+        // 观看端控制按钮组（远程控制/戳/标注/相册）
+        if (!isHost && remoteVideoTrack != null) binding.llVideoBtns.visibility = View.VISIBLE
         if (videoCallOn) {
             binding.btnMic.visibility = View.VISIBLE
             binding.btnCamera.visibility = View.VISIBLE
@@ -562,6 +581,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun handleMeetingIntent(intent: Intent?) {
         val action = intent?.getStringExtra(EXTRA_MEETING_ACTION)
         val code = intent?.getStringExtra(EXTRA_MEETING_CODE)
+        AppLogger.app("[MEETING] intent action=$action code=$code")
         if (action == ACTION_CREATE && !code.isNullOrEmpty()) {
             if (hostSessionActive || signalMode) {
                 // 已在会议中：提示用户先结束当前会议
@@ -670,45 +690,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         joinMeetingWithCode(code, token)
-    }
-
-    /** 崩溃日志采集：Java 层崩溃写入外部存储，便于下次启动查看/上报定位闪退 */
-    private fun installCrashHandler() {
-        try {
-            val prev = Thread.getDefaultUncaughtExceptionHandler()
-            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-                try {
-                    val sw = java.io.StringWriter()
-                    throwable.printStackTrace(java.io.PrintWriter(sw))
-                    val content = StringBuilder()
-                        .append("time=").append(System.currentTimeMillis()).append('\n')
-                        .append("thread=").append(thread.name).append('\n')
-                        .append(sw.toString())
-                    val dir = getExternalFilesDir(null)
-                    if (dir != null) {
-                        val f = java.io.File(dir, "crash-${System.currentTimeMillis()}.log")
-                        f.writeText(content.toString())
-                    }
-                    // 尽力上报信令服务器（诊断模式），失败则忽略；缩短超时避免拖慢进程退出
-                    try {
-                        val base = BuildConfig.SIGNAL_URL
-                            .replace("wss://", "https://").replace("ws://", "http://")
-                            .trimEnd('/')
-                        val url = base.substringBeforeLast('/', base)
-                        val body = content.toString().toByteArray().toRequestBody("text/plain".toMediaType())
-                        val req = okhttp3.Request.Builder()
-                            .url("$url/crash")
-                            .addHeader("x-diag-token", BuildConfig.DIAG_TOKEN)
-                            .post(body)
-                            .build()
-                        okhttp3.OkHttpClient.Builder().connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(2, java.util.concurrent.TimeUnit.SECONDS).build()
-                            .newCall(req).execute().close()
-                    } catch (_: Throwable) {}
-                } catch (_: Throwable) {}
-                prev?.uncaughtException(thread, throwable)
-            }
-        } catch (_: Throwable) {}
     }
 
     private val diagExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -1181,9 +1162,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 同步视频通话按钮文案与颜色：开启=绿色，关闭=默认 */
     private fun updateVideoCallButton() {
         // v1.265: 共享页深色玻璃上用亮色变体，避免状态色覆盖纯白后看不清
-        val p = peer
         val dark = darkGlass
-        val on = p?.isMicOn() == true
         binding.btnCamera.text = if (videoCallOn) "视频中" else "视频"
         binding.btnCamera.setTextColor(
             if (videoCallOn) Color.parseColor("#FF3ECF9E")
@@ -1192,7 +1171,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         )
         // 视频通话增强按钮随通话状态显示/隐藏；切换前后摄入口默认跟随父容器可见
         binding.btnFlipCamera.visibility = if (videoCallOn) View.VISIBLE else View.GONE
-        // 视频通话增强控件仅通话中显示
+        updateMicButtonState()
+    }
+
+    /** btnMic 的文案/颜色：updateMicButton 与 updateVideoCallButton 共用，避免逻辑分叉 */
+    private fun updateMicButtonState() {
+        val p = peer
+        val on = p?.isMicOn() == true
+        val dark = darkGlass
         binding.btnMic.text = when {
             !on -> "麦克风"
             micMuted -> "已静音"
@@ -1889,23 +1875,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
 
     /** 同步麦克风按钮文案与颜色：开启=绿色，静音=红色，未开启=默认 */
-    private fun updateMicButton() {
-        val p = peer
-        val on = p?.isMicOn() == true
-        val dark = darkGlass
-        binding.btnMic.text = when {
-            !on -> "麦克风"
-            micMuted -> "已静音"
-            else -> "对讲中"
-        }
-        binding.btnMic.setTextColor(
-            when {
-                !on -> if (dark) Color.WHITE else Color.parseColor("#FF4A3B44")
-                micMuted -> Color.parseColor("#FFFF7A8A")
-                else -> Color.parseColor("#FF3ECF9E")
-            }
-        )
-    }
+    private fun updateMicButton() = updateMicButtonState()
 
     /** 同步当前显示模式到普通/全屏两个渲染器。
      *  完整模式：renderer 尺寸手动设为视频等比适配容器后的尺寸并居中（scalingType=FIT），
@@ -2092,6 +2062,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         } catch (t: Throwable) {
             binding.tvScanResult.text = "❌ 共享服务启动失败: ${t.message}"
             updateUI("❌ 共享服务启动失败")
+            // 清理信令连接，避免僵尸会话：viewer 加入后永远等不到 Offer
+            handleMeetingFailure()
             return
         }
         updateUI("正在建立 WebRTC 连接...")
@@ -2133,6 +2105,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             peer = null
             binding.tvScanResult.text = "❌ PeerConnection 创建失败"
             updateUI("❌ PeerConnection 创建失败")
+            // 清理信令连接，避免僵尸会话：viewer 加入后永远等不到 Offer
+            handleMeetingFailure()
             return
         }
         binding.tvScanResult.text = "③ 启动屏幕采集..."
@@ -2146,7 +2120,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvScanResult.text = hint
             updateUI(hint)
             Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
-            ScreenProjectionService.stop(this)
+            // 清理信令连接，避免僵尸会话：viewer 加入后永远等不到 Offer
+            handleMeetingFailure()
             return
         }
         // V4: host 主连接仅作采集底座，ICE 永不 CONNECTED（onOfferReady isHost return），
@@ -2182,6 +2157,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         p.setViewerStall(active)
                         // v1.242: 诊断上报观看端掉帧反馈（远程排障：区分链路差/编码慢/接收端瓶颈）
                         reportDiagnostic("viewer-stall=${if (active) "on" else "off"}")
+                    }
+                    // v1.296: 观看端抖动缓冲棘轮排空——延迟尖峰后 jitter buffer 把高延迟当新目标
+                    // 主动维持（真机实测 RTT 已回 5-8ms、帧率 20fps、丢包 0%，缓冲仍 900ms+
+                    // 不回落，屏幕静止时冻结 8 分钟）。观看端检测到该状态时请求关键帧，
+                    // 接收端可借 I 帧丢弃全部待解码旧帧重新同步
+                    "keyframe-request" -> {
+                        p.requestKeyFrame()
+                        AppLogger.capture("观看端缓冲过高请求关键帧，已响应")
                     }
                     "album" -> onAlbumRequested(obj.optString("action", "upload"))
                     "camera" -> onCameraRequested(obj.optString("mode", "both") == "front")
@@ -2344,6 +2327,34 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         return true
     }
 
+    /**
+     * 申请屏幕采集权限，并带看门狗：授权弹窗可能因系统原因未弹出/被忽略，
+     * 此时对方已加入却一直收不到画面（room 5002 的卡死场景）。
+     * 10 秒未授权则重弹，最多 3 次，每次都落盘日志。
+     */
+    private fun requestCapturePermissionWithWatchdog(tryCount: Int = 0) {
+        if (isFinishing || isDestroyed) return
+        if (ScreenCapturerFactory.hasPermission()) {
+            AppLogger.app("[CAPTURE] 已有采集权限")
+            return
+        }
+        AppLogger.app("[CAPTURE] 请求屏幕采集权限（第 ${tryCount + 1} 次）")
+        try {
+            ScreenCapturerFactory.requestPermission(this)
+        } catch (t: Throwable) {
+            AppLogger.app("[CAPTURE] 请求权限异常: ${t.message}")
+        }
+        if (tryCount >= 2) return
+        android.os.Handler(Looper.getMainLooper()).postDelayed({
+            // 仍在 host 会议中且未授权：弹窗大概率没出来，重弹并明确提示
+            if (!isFinishing && !isDestroyed && isHost && signalMode && !ScreenCapturerFactory.hasPermission()) {
+                AppLogger.app("[CAPTURE] 10 秒未授权，重弹授权框（用户可能没看到弹窗）")
+                updateUI("⚠️ 共享未开始：请在弹出的屏幕授权框中点击【立即开始】")
+                requestCapturePermissionWithWatchdog(tryCount + 1)
+            }
+        }, 10_000L)
+    }
+
     private fun connectSignal(code: String, asHost: Boolean, joinToken: String = "") {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
@@ -2372,11 +2383,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // 对方加入时立即交换 SDP，避免"对方已加入但还没授权"的等待
                         dismissMeetingCodeDialog()
                         authorizationRequested = true
-                        ScreenCapturerFactory.requestPermission(this@MainActivity)
+                        requestCapturePermissionWithWatchdog()
                     } else {
                         // viewer：记住本次口令，断线/自动重连复用（服务器 REQUIRE_TOKEN=1 时必需）
                         if (pendingJoinToken.isNotEmpty()) saveMeetingResumeToken(pendingJoinToken)
                         updateUI("✅ 已加入会议，等待共享方就绪...")
+                        // 共享方可能卡在授权弹窗：25 秒还没就绪就给观看方一句实话，别让干等
+                        android.os.Handler(Looper.getMainLooper()).postDelayed({
+                            if (!isFinishing && !isDestroyed && !isHost && signalMode && !signalPeerReady) {
+                                updateUI("⏳ 共享方长时间未开始共享，可能未看到授权弹窗，请让对方重试")
+                            }
+                        }, 25_000L)
                     }
                 }
             }
@@ -2395,7 +2412,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             // 明确提示 + 兜底重新弹授权框，避免一直卡在"正在启动屏幕共享"
                             if (!authorizationRequested) {
                                 authorizationRequested = true
-                                ScreenCapturerFactory.requestPermission(this@MainActivity)
+                                requestCapturePermissionWithWatchdog()
                             }
                             updateUI("⚠️ 共享未开始：请在弹出的屏幕授权框中点击【立即开始】")
                         }
@@ -2619,6 +2636,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         SystemAudioBridge.stopPlayback()
         ScreenProjectionService.stop(this)
         ScreenCapturerFactory.clearPermission()
+        // 清理静态回调：避免无障碍服务的延迟回执打到已释放的 peer（M2）
+        RemoteControlService.execResultCallback = null
         micMuted = false
         binding.btnMic.visibility = View.GONE
     }
@@ -2626,35 +2645,37 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // ======================== WebRTCPeer.Listener 回调 ========================
 
     override fun onOfferReady(sdp: SessionDescription) {
-        // 诊断：解析 SDP，确认是否有视频轨道和候选（定位 P2P 卡住）
-        val hasVideo = sdp.description.contains("m=video")
-        val sdpCandCount = Regex("(?m)^a=candidate:").findAll(sdp.description).count()
+        // 整体切主线程：signalSdpSent/signalClient 的读写与 resetUI/joinMeeting 竞态
         runOnUiThread {
+            // 诊断：解析 SDP，确认是否有视频轨道和候选（定位 P2P 卡住）
+            val hasVideo = sdp.description.contains("m=video")
+            val sdpCandCount = Regex("(?m)^a=candidate:").findAll(sdp.description).count()
             binding.tvScanResult.text = "SDP诊断: 视频轨道=${if (hasVideo) "有" else "无"} SDP候选=$sdpCandCount"
             binding.tvScanResult.visibility = View.VISIBLE
-        }
-        if (signalMode) {
-            // V4: host 端主连接仅作采集底座，Offer 由每个 viewer 独立连接发送（onViewerOfferReady）；
-            // 主连接 Offer 不再转发，避免无 viewerId 的 offer 被服务器拒发
-            if (isHost) return
-            Log.d(TAG, "Offer 就绪，经信令服务器转发")
-            signalSdpSent = true
-            val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
-            // viewer 端主动重协商（视频通话开关）的 Offer 直接发送：
-            // 服务器只给 host 发 peer-ready，viewer 端 signalPeerReady 恒为 false，
-            // 若依赖该标志 Offer 会被永久缓存导致视频通话无画面（v1.164 诊断确认 OFFER CACHED）。
-            // 对端离线时服务器会以"对端尚未加入"拒绝并丢弃，无副作用。
-            signalClient?.sendRelay(encoded)
-            return
+            if (signalMode) {
+                // V4: host 端主连接仅作采集底座，Offer 由每个 viewer 独立连接发送（onViewerOfferReady）；
+                // 主连接 Offer 不再转发，避免无 viewerId 的 offer 被服务器拒发
+                if (isHost) return@runOnUiThread
+                Log.d(TAG, "Offer 就绪，经信令服务器转发")
+                signalSdpSent = true
+                val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
+                // viewer 端主动重协商（视频通话开关）的 Offer 直接发送：
+                // 服务器只给 host 发 peer-ready，viewer 端 signalPeerReady 恒为 false，
+                // 若依赖该标志 Offer 会被永久缓存导致视频通话无画面（v1.164 诊断确认 OFFER CACHED）。
+                // 对端离线时服务器会以"对端尚未加入"拒绝并丢弃，无副作用。
+                signalClient?.sendRelay(encoded)
+            }
         }
     }
 
     override fun onAnswerReady(sdp: SessionDescription) {
-        if (signalMode) {
-            Log.d(TAG, "Answer 就绪，经信令服务器转发")
-            signalSdpSent = true
-            val encoded = SignalManager.encodeAnswer(sdp, iceCandidates.toList())
-            signalClient?.sendRelay(encoded)
+        runOnUiThread {
+            if (signalMode) {
+                Log.d(TAG, "Answer 就绪，经信令服务器转发")
+                signalSdpSent = true
+                val encoded = SignalManager.encodeAnswer(sdp, iceCandidates.toList())
+                signalClient?.sendRelay(encoded)
+            }
         }
     }
 
@@ -2681,18 +2702,24 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // ======================== V4: 多 viewer 回调 ========================
 
     override fun onViewerIceCandidate(viewerId: Int, candidate: IceCandidate) {
-        // host：该 viewer 的候选，带 viewerId 转发
-        if (signalMode) {
-            signalClient?.sendRelay(SignalManager.encodeCandidate(candidate), viewerId)
+        // 切主线程：与 resetUI 的 signalClient=null 写竞态
+        runOnUiThread {
+            // host：该 viewer 的候选，带 viewerId 转发
+            if (signalMode) {
+                signalClient?.sendRelay(SignalManager.encodeCandidate(candidate), viewerId)
+            }
         }
     }
 
     override fun onViewerOfferReady(viewerId: Int, sdp: SessionDescription) {
-        // host：为新 viewer 生成 Offer，带 viewerId 发送
-        Log.d(TAG, "viewer#$viewerId Offer 就绪，经信令服务器转发")
-        if (signalMode) {
-            val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
-            signalClient?.sendRelay(encoded, viewerId)
+        // 切主线程：与 resetUI 的 signalClient=null 写竞态
+        runOnUiThread {
+            // host：为新 viewer 生成 Offer，带 viewerId 发送
+            Log.d(TAG, "viewer#$viewerId Offer 就绪，经信令服务器转发")
+            if (signalMode) {
+                val encoded = SignalManager.encodeOffer(sdp, iceCandidates.toList())
+                signalClient?.sendRelay(encoded, viewerId)
+            }
         }
     }
 
@@ -2764,15 +2791,15 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onIceCandidate(candidate: IceCandidate) {
         iceCandidates.add(candidate)
         when {
-            candidate.sdp.contains("typ host") -> candCountHost++
-            candidate.sdp.contains("typ srflx") -> candCountSrflx++
-            candidate.sdp.contains("typ relay") -> candCountRelay++
-            else -> candCountOther++
+            candidate.sdp.contains("typ host") -> candCountHost.incrementAndGet()
+            candidate.sdp.contains("typ srflx") -> candCountSrflx.incrementAndGet()
+            candidate.sdp.contains("typ relay") -> candCountRelay.incrementAndGet()
+            else -> candCountOther.incrementAndGet()
         }
         Log.d(TAG, "收到 ICE 候选: mid=${candidate.sdpMid} type=${candidate.sdp.substringAfter("typ ").substringBefore(" ")} 总数=${iceCandidates.size}")
         // 诊断：实时显示本机已收集候选数量
         runOnUiThread {
-            binding.tvScanResult.text = "本机候选: ${iceCandidates.size}个 host=$candCountHost srflx=$candCountSrflx relay=$candCountRelay"
+            binding.tvScanResult.text = "本机候选: ${iceCandidates.size}个 host=${candCountHost.get()} srflx=${candCountSrflx.get()} relay=${candCountRelay.get()}"
             binding.tvScanResult.visibility = View.VISIBLE
         }
         // Trickle ICE：SDP 已发出后，新候选即时增量发送（不等 gathering 完成）
@@ -3126,13 +3153,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 lastFrameH = fh
                 runOnUiThread {
                     applyModeScale()
-                    // host 旋转导致视频方向变化时，全屏观看自动跟随新方向
-                    if (isFullscreen && fw > 0 && fh > 0) {
-                        requestedOrientation = if (fw > fh)
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        else
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                    }
+                    // v1.298: host 旋转不再强制改变 viewer 方向，全屏跟随用户手机物理姿态
                 }
             }
         }
@@ -3525,16 +3546,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         rlp.setMargins(0, 0, 20, 30)
         moveView(binding.btnAspectToggle, binding.flFullscreen, rlp)
 
-        // 全屏跟随视频方向：横屏视频自动横屏、竖屏视频自动竖屏，画面最大化且不裁切
-        // （视频方向来自首帧旋转后的宽高）
-        if (lastFrameW > 0 && lastFrameH > 0) {
-            requestedOrientation = if (lastFrameW > lastFrameH)
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            else
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-        } else {
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        }
+         // v1.298: 全屏方向跟随用户手机物理姿态，不再按 host 帧方向强转——
+         // 折叠屏 host 展开态画面横宽（如 3000x2078）会强行把竖屏 viewer 转横屏，
+         // 违背用户持机姿势。FULL_SENSOR 下用户自己转手机即可切横屏
+         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
 
         // 沉浸式：隐藏系统栏
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -3616,12 +3631,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 lastFrameH = fh
                 runOnUiThread {
                     applyModeScale()
-                    if (isFullscreen && fw > 0 && fh > 0) {
-                        requestedOrientation = if (fw > fh)
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        else
-                            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                    }
+                    // v1.298: host 旋转不再强制改变 viewer 方向，全屏跟随用户手机物理姿态
                 }
             }
         }
@@ -3669,7 +3679,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             binding.tvZoomHint.visibility = View.VISIBLE
             binding.btnFullscreen.visibility = View.VISIBLE
             // 控制按钮移回更多面板（左列）
-            val lp = FrameLayout.LayoutParams(
+            // v1.298: 目标 llMorePanel 是 LinearLayout——LinearLayout 未重写 checkLayoutParams，
+            // addView 会把传入的 FrameLayout.LayoutParams 原样设给子 view，measure 时
+            // 强转成 LinearLayout.LayoutParams 崩溃（真机点"更多"必现，已复现 4 次）。
+            // LinearLayout.LayoutParams 同样支持 gravity，语义为子 view 在父容器中的对齐
+            val lp = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
@@ -3679,7 +3693,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             // 完整/铺满按钮移回更多面板（中列）
             binding.btnAspectToggle.visibility = View.VISIBLE
-            val rlp = FrameLayout.LayoutParams(
+            val rlp = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
@@ -4083,6 +4097,27 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                 stallRecoverStrikes = 0
                             }
                         }
+                        // v1.296: 抖动缓冲棘轮排空——网络已恢复（RTT 低、无丢帧）但缓冲持续
+                        // >500ms 时，请求共享方关键帧让接收端丢弃待解码旧帧重新同步。
+                        // 真机实测 RTT 回到 5-8ms 后缓冲仍 900ms+ 不回落（jitter buffer
+                        // 把尖峰延迟当新目标主动维持），屏幕静止时冻结 8 分钟，观感持续延迟。
+                        // 仅在帧率正常时请求（0fps 时关键帧也排不空，且 host 侧已有 linkRecovered）
+                        // v1.297: 阈值 500→400——真机实测峰值 481ms 未命中 500 阈值，
+                        // 缓冲在 420-480ms 停留 18 秒才缓慢回落（36 秒仅回落 118ms）
+                        if (jbMs > 400 && rtt in 1..200 && fps >= 5) {
+                            jbHighStrikes++
+                            if (jbHighStrikes >= 3) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastKeyFrameReqMs > 30_000) {
+                                    lastKeyFrameReqMs = now
+                                    peer?.sendControl("""{"type":"keyframe-request"}""")
+                                    AppLogger.capture("缓冲${"%.0f".format(jbMs)}ms RTT=${rtt}ms 帧率${fps} 已请求关键帧排空")
+                                }
+                                jbHighStrikes = 0
+                            }
+                        } else {
+                            jbHighStrikes = 0
+                        }
                         val rttText = if (rtt > 0) "${rtt}ms" else "--"
                         val hint = when {
                             rtt > 300 -> " ⚠️延迟高"
@@ -4178,15 +4213,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         getSharedPreferences("meeting_resume", MODE_PRIVATE).edit().clear().apply()
     }
 
-    /** 读取未结束会议记录（无则返回 null） */
-    private fun loadMeetingResume(): Pair<String, String>? {
-        val p = getSharedPreferences("meeting_resume", MODE_PRIVATE)
-        val action = p.getString("action", null) ?: return null
-        val code = p.getString("code", null) ?: return null
-        // 超过 24 小时视为过期，不再自动重连
-        if (System.currentTimeMillis() - p.getLong("ts", 0) > 24 * 3600 * 1000L) return null
-        return action to code
-    }
 
     private fun leaveMeeting(message: String) {
         leavingMeeting = true
@@ -4222,6 +4248,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     /** 更多面板展开/收起 */
     private fun toggleMorePanel() {
         val show = binding.llMorePanel.visibility != View.VISIBLE
+        AppLogger.app("更多面板 ${if (show) "展开" else "收起"}")
         binding.llMorePanel.visibility = if (show) View.VISIBLE else View.GONE
     }
 
@@ -4398,6 +4425,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
         // 屏幕采集权限
         if (ScreenCapturerFactory.handleActivityResult(requestCode, resultCode, data)) {
+            AppLogger.app("[CAPTURE] 授权成功，启动共享")
             // 授权成功：显示会议号弹窗（供复制给对方）+ 启动共享
             signalCode?.let { code ->
                 // 对方已加入（授权期间对方输入会议号加入）：不再弹会议号弹窗，
@@ -4411,6 +4439,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             startHostSession()
         } else if (requestCode == ScreenCapturerFactory.REQUEST_MEDIA_PROJECTION) {
             // 用户取消/拒绝了屏幕共享授权，明确提示（不再静默卡住），返回连接页
+            AppLogger.app("[CAPTURE] 授权被拒绝/取消 resultCode=$resultCode")
             Toast.makeText(this, "未授权屏幕共享，对方将无法看到画面", Toast.LENGTH_LONG).show()
             // 清除自动重连记录：否则 meeting_resume 残留会导致下次打开又自动连接（用户反馈"取消不了"）
             clearMeetingResume()
@@ -4467,11 +4496,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun updateUI(status: String) {
         // v1.263: 状态文案切换平滑过渡——淡出再淡入，重连中/已恢复不再生硬跳变
         val tv = binding.tvStatus
+        // 状态机必须落盘：以前只用 Log.d，上传日志看不到会议流程，卡在哪一步全靠猜
+        AppLogger.app("[UI] $status")
         if (tv.text.toString() == status) {
-            Log.d(TAG, status)
             return
         }
-        Log.d(TAG, status)
         if (tv.visibility != View.VISIBLE || tv.alpha < 1f) {
             tv.text = status
             tv.animate().cancel()
@@ -4563,10 +4592,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         videoScaleDetector = null
         currentVideoScale = 1f
         iceCandidates.clear()
-        candCountHost = 0
-        candCountSrflx = 0
-        candCountRelay = 0
-        candCountOther = 0
+        candCountHost.set(0)
+        candCountSrflx.set(0)
+        candCountRelay.set(0)
+        candCountOther.set(0)
         remoteVideoTrack?.removeSink(remoteVideoSink)
         remoteVideoSink = null
         remoteVideoTrack = null
@@ -4601,6 +4630,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         exitFullscreen()
         releaseFullscreenRenderer()
         releaseCameraPip()
+        // 停止工具条自动隐藏与状态呼吸动画，避免销毁后 Runnable/Animator 残留
+        stopToolbarAutoHide()
+        stopStatusBreathing()
+        // 清理心形迸发/远程标记的残留视图（其淡出回调挂在这些子 View 上，随容器一并释放）
+        binding.flHeartBurst.removeAllViews()
+        // 释放诊断上报线程池与连接池（每次 Activity 重建都会新建，不 shutdown 会累积泄漏）
+        try {
+            diagExecutor.shutdownNow()
+            diagClient.connectionPool.evictAll()
+            diagClient.dispatcher.executorService.shutdown()
+        } catch (_: Throwable) {}
         cleanupPeer()
         // 注意：不释放 eglBaseContext——它是进程级 EGL 上下文（AppEglBase 单例），
         // PeerConnectionFactory 单例绑定它，跨 Activity 复用；随 Activity 释放会导致
@@ -4613,6 +4653,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        AppLogger.app("配置变更 smallestSw=${newConfig.smallestScreenWidthDp} sw=${newConfig.screenWidthDp} orient=${newConfig.orientation}")
         // 全屏观看时横竖屏切换：复用 renderer 不重建（重建会黑屏卡顿）。
         // 只重置缩放并强制 relayout，让画面瞬间跟随新方向，切换最快。
         if (isFullscreen) {
@@ -4640,5 +4681,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             peer?.updateCaptureOrientation(w, h)
             updateUI("屏幕方向已更新")
         }
+        // 折叠屏开合后系统栏 inset 可能变化，重新应用底部边距避免工具条/面板被导航栏遮挡
+        binding.root.requestApplyInsets()
     }
 }

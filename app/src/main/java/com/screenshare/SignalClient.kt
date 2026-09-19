@@ -1,6 +1,6 @@
 package com.screenshare
 
-import android.util.Log
+
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -52,7 +52,7 @@ class SignalClient(
     }
 
     private companion object {
-        const val TAG = "SignalClient"
+        const val TAG = "SIGNAL"
         // 可重复使用的 HttpClient：支持 WS 时 60s 空闲自动断线重连兜底
         private val httpClient by lazy {
             OkHttpClient.Builder()
@@ -92,7 +92,7 @@ class SignalClient(
             val now = System.currentTimeMillis()
             // 已建立过 pong 基线且长期收不到 pong → 假死，主动取消连接触发 onFailure 重连
             if (lastPongMs > 0 && now - lastPongMs > PONG_TIMEOUT_MS) {
-                Log.w(TAG, "心跳超时(${now - lastPongMs}ms 无 pong)，判定 WS 假死，主动重连")
+                AppLogger.app("[$TAG] 心跳超时(${now - lastPongMs}ms 无 pong)，判定 WS 假死，主动重连")
                 webSocket?.cancel()
                 webSocket = null
                 scheduleRetry("信令心跳超时，自动重连中...")
@@ -117,7 +117,7 @@ class SignalClient(
 
     private fun tryConnect() {
         attempt++
-        Log.d(TAG, "WS 连接尝试 #$attempt")
+        AppLogger.app("[$TAG] WS 连接尝试 #$attempt")
         val request = Request.Builder().url(url).build()
         webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -125,7 +125,7 @@ class SignalClient(
                 // 此时不得再注册房间，否则回调会打到已销毁的 Activity 并在服务器残留僵尸会话
                 if (closedByUs) return
                 attempt = 0
-                Log.d(TAG, "WS 已连接，发送 create/join: code=$code asHost=$asHost")
+                AppLogger.app("[$TAG] WS 已连接，发送 create/join: code=$code asHost=$asHost")
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")
                     put("code", code)
@@ -146,14 +146,14 @@ class SignalClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 heartbeatHandler.removeCallbacksAndMessages(null)
                 if (closedByUs) return
-                Log.e(TAG, "WS 连接失败: ${t.message}")
+                AppLogger.app("[$TAG] WS 连接失败: ${t.message}")
                 scheduleRetry("无法连接信令服务器: ${t.message}")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 heartbeatHandler.removeCallbacksAndMessages(null)
                 if (closedByUs) return
-                Log.w(TAG, "WS 已关闭 code=$code reason=$reason")
+                AppLogger.app("[$TAG] WS 已关闭 code=$code reason=$reason")
                 scheduleRetry("信令连接已断开，自动重连中...")
             }
         })
@@ -197,7 +197,7 @@ class SignalClient(
             "relay" -> listener.onRelay(json.optString("data"), vid)
             "pong" -> { lastPongMs = System.currentTimeMillis() }
             "error" -> listener.onError(json.optString("message", "服务器错误"))
-            else -> Log.w(TAG, "未知消息: ${json.optString("type")}")
+            else -> AppLogger.app("[$TAG] 未知消息: ${json.optString("type")}")
         }
     }
 
@@ -251,7 +251,7 @@ class SignalClient(
             false
         }
         if (!ok) {
-            Log.w(TAG, "relay 发送失败（WS 未就绪），已入待发队列")
+            AppLogger.app("[$TAG] relay 发送失败（WS 未就绪），已入待发队列")
             pendingRelays.offer(msg.toString())
         }
     }
@@ -272,7 +272,7 @@ class SignalClient(
             }
         }
         if (pendingRelays.isNotEmpty()) {
-            Log.d(TAG, "补发完成，剩余 ${pendingRelays.size} 条待下次连接")
+            AppLogger.app("[$TAG] 补发完成，剩余 ${pendingRelays.size} 条待下次连接")
         }
     }
 
