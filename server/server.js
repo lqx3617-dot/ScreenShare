@@ -61,7 +61,10 @@ const DIAG_TOKEN_OLD = process.env.DIAG_TOKEN_OLD || "";
 // 兼容方案：设置 REQUIRE_TOKEN=1 才强制房间 token 认证，默认关闭保持旧客户端可用
 const REQUIRE_TOKEN = process.env.REQUIRE_TOKEN === "1";
 // 心跳超时（毫秒）：客户端每 10s 发 ping，超过该时长未有任何消息视为掉线，强制清理房间
-const HEARTBEAT_TIMEOUT = 45 * 1000;
+// 支持 env 覆盖仅为快速回归测试（协议 ping 保活），生产保持默认 45s
+const HEARTBEAT_TIMEOUT = parseInt(process.env.HEARTBEAT_TIMEOUT_MS, 10) || 45 * 1000;
+// 心跳扫描周期（毫秒），同样支持 env 覆盖以缩短测试等待
+const HEARTBEAT_SCAN_MS = parseInt(process.env.HEARTBEAT_SCAN_MS, 10) || 30 * 1000;
 // 所有 ws 连接（用于心跳扫描）
 const allClients = new Set();
 // 并发连接上限：防单 IP 打开大量 ws 耗尽服务端 FD/内存（DoS 兜底）
@@ -297,7 +300,7 @@ setInterval(() => {
     send(host, { type: "join-cancelled", viewerId });
     console.log(`[room ${roomCode}] pending join #${viewerId} expired`);
   });
-}, 30 * 1000).unref();
+}, HEARTBEAT_SCAN_MS).unref();
 
 const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 512 * 1024 });
 
@@ -383,6 +386,12 @@ wss.on("connection", (ws, request) => {
   }
   ipClientCount.set(ws._ip, perIp);
   allClients.add(ws);
+
+  // 协议级 ping/pong 也算活跃：OkHttp 的 pingInterval 只发 WS PING 帧，
+  // 不会触发 message 事件。若不在此刷新 lastSeen，纯协议保活的客户端
+  // 会被心跳扫描误判为空闲而踢掉，引发每 ~60s 一次的重连风暴。
+  ws.on("ping", () => { ws.lastSeen = Date.now(); });
+  ws.on("pong", () => { ws.lastSeen = Date.now(); });
 
   ws.on("message", (raw) => {
     ws.lastSeen = Date.now();

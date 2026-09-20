@@ -162,8 +162,13 @@ server.on("upgrade", (req, socket) => {
       handleMessage(msg, send);
     },
     () => { try { socket.destroy(); } catch (e) {} },
-    // 回空 payload 的 pong 帧（fin=1, opcode=0xA, len=0）
-    () => { try { socket.write(PONG_FRAME); } catch (e) {} }
+    // 回空 payload 的 pong 帧（fin=1, opcode=0xA, len=0）；
+    // 同时刷新 lastSeen——OkHttp pingInterval 只发 PING 帧而非文本消息，
+    // 不更新 lastSeen 会导致纯协议保活的客户端被心跳扫描误踢
+    () => {
+      socket.lastSeen = Date.now();
+      try { socket.write(PONG_FRAME); } catch (e) {}
+    }
   );
 
   function handleMessage(msg, send) {

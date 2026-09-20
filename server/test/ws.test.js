@@ -399,6 +399,39 @@ test("viewer 断开后超时未重连：结账并通知 host viewer-left", async
   }
 });
 
+test("协议级 ping 保活的连接不应被心跳扫描踢掉", async () => {
+  // 回归：OkHttp 的 pingInterval 只发 WS PING 帧（不触发 message 事件），
+  // 服务端必须把 ping/pong 也计为活跃，否则纯协议保活的客户端每 ~60s
+  // 被踢一次，引发重连风暴（可触发 WAF 封禁，表现为会议创建失败/好友列表空）
+  const { proc, port } = await startServer({ HEARTBEAT_TIMEOUT_MS: "2000", HEARTBEAT_SCAN_MS: "1000" });
+  try {
+    const a = await registerUser(port, "保活甲");
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const authed = new Promise((resolve, reject) => {
+      ws.on("message", (raw) => {
+        const m = JSON.parse(raw.toString());
+        if (m.type === "auth-ok" || m.type === "auth-error") resolve(m);
+      });
+      ws.on("open", () => ws.send(JSON.stringify({ type: "auth", token: a.token })));
+      ws.on("error", reject);
+    });
+    assert.equal((await authed).type, "auth-ok");
+
+    // 只发协议级 PING，绝不发任何文本消息
+    const pingIv = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, 500);
+
+    // 等过 2 个完整超时+扫描周期：旧逻辑下早已被 terminate
+    await new Promise((r) => setTimeout(r, 6000));
+    assert.equal(ws.readyState, WebSocket.OPEN, "仅协议 ping 保活的连接应存活");
+    clearInterval(pingIv);
+    ws.close();
+  } finally {
+    proc.kill("SIGKILL");
+  }
+});
+
 test("viewer 宽限期内第三个加入者被拒", async () => {
   const { proc, port } = await startServer({ RECONNECT_TIMEOUT_MS: "5000" });
   try {
