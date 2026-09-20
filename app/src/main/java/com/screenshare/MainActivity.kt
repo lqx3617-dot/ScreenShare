@@ -101,6 +101,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 好友邀请投递重试：账号 WS 重连窗口期最多 8 次、每次间隔 1.5s
         private const val MAX_INVITE_TRIES = 8
         private const val INVITE_RETRY_MS = 1500L
+
+        // 专属房间「进入等待」模式：观看方先进入，共享方可能尚未建房，
+        // 此时不应被「会议号不存在」直接踢出，而是自动喊 TA 并定时重试
+        // 常量定义在 MeetingActivity（EXTRA_FAV_WAIT），此处仅保留重试参数
+        private const val FAV_WAIT_MAX_RETRIES = 12
+        private const val FAV_WAIT_RETRY_MS = 10_000L
     }
 
     private lateinit var binding: ActivityMainBinding
@@ -149,6 +155,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 房间口令：host 侧为服务器本次签发的 token（分享给观看方）；viewer 侧为待发送的加入口令
     private var signalRoomToken = ""
     private var pendingJoinToken = ""
+    // 专属房间「进入等待」模式：共享方尚未建房时观看方留在会议室，定时重试 join 并自动喊 TA
+    @Volatile private var waitingForHost = false
+    private var favWaitRetryCount = 0
+    private val favWaitHandler = android.os.Handler(Looper.getMainLooper())
+    private var favWaitRunnable: Runnable? = null
     // 好友共享邀请：建房成功后投递的好友信息（FriendsFragment 传入，建房前邀请会被服务端拒绝）
     private var pendingInviteFriendId = ""
     private var pendingInviteFriendName = ""
@@ -658,6 +669,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             // 房间口令优先取 Intent（分享链接/输入），兜底取上次会话记录（自动重连场景）
             val joinToken = intent?.getStringExtra(EXTRA_MEETING_TOKEN)?.takeIf { it.isNotEmpty() }
                 ?: getSharedPreferences("meeting_resume", MODE_PRIVATE).getString("token", "").orEmpty()
+            // 专属房间「进入等待」：共享方可能尚未建房，失败时不能直接退出
+            waitingForHost = intent?.getBooleanExtra(MeetingActivity.EXTRA_FAV_WAIT, false) == true
+            favWaitRetryCount = 0
             joinMeetingWithCode(code, joinToken)
             return
         }
@@ -693,6 +707,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         if (hostSessionActive || signalMode || peer != null) {
             Toast.makeText(this, "已退出会议", Toast.LENGTH_SHORT).show()
             leavingMeeting = true
+            waitingForHost = false
+            stopFavWait()
             clearMeetingResume()
             // 与 leaveMeeting/handleMeetingFailure 对齐：退出前恢复通知模式（B9）
             restoreNotificationFilter()
@@ -2461,6 +2477,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // 房间已建好，此时邀请才会被服务端接受（校验本连接确实是 host）
                         sendPendingFriendInvite()
                     } else {
+                        // 已成功加入：专属房间等待模式结束，停止自动重试
+                        waitingForHost = false
+                        stopFavWait()
                         // viewer：记住本次口令，断线/自动重连复用（服务器 REQUIRE_TOKEN=1 时必需）
                         if (pendingJoinToken.isNotEmpty()) saveMeetingResumeToken(pendingJoinToken)
                         updateUI("✅ 已加入会议，等待共享方就绪...")
@@ -2581,6 +2600,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
             override fun onError(message: String) {
                 runOnUiThread {
+                    // 专属房间「进入等待」模式：共享方尚未建房，服务端返回"会议号不存在"时
+                    // 不退出，留在会议室自动喊 TA 并定时重试，直到对方建房成功
+                    if (waitingForHost && message.contains("会议号不存在")) {
+                        onFavWaitRetry(message)
+                        return@runOnUiThread
+                    }
                     updateUI("❌ $message")
                     handleMeetingFailure()
                 }
@@ -4334,6 +4359,49 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         finish()
     }
 
+    /** 专属房间等待模式：共享方尚未建房，自动喊 TA 并定时重试加入 */
+    private fun onFavWaitRetry(reason: String) {
+        if (isFinishing || isDestroyed) return
+        if (favWaitRetryCount == 0) {
+            AppLogger.app("[FAV-WAIT] 对方尚未建房：$reason，已喊 TA 并开始等待")
+        }
+        updateUI("⏳ 对方还没进入房间 ${signalCode.orEmpty()}，已提醒 TA 上屏…")
+        binding.tvScanResult.text = "等待对方上屏…\n每 10 秒自动重试，可随时按返回键退出"
+        binding.tvScanResult.visibility = View.VISIBLE
+        // 自动喊 TA（服务端 pls-join 限流 6 次/分，10 秒间隔在配额内）
+        val code = signalCode
+        if (!code.isNullOrEmpty()) {
+            try { PlsJoinSender.send(this, code) } catch (_: Throwable) {}
+        }
+        favWaitRetryCount++
+        if (favWaitRetryCount > FAV_WAIT_MAX_RETRIES) {
+            AppLogger.app("[FAV-WAIT] 等待 ${FAV_WAIT_MAX_RETRIES} 次仍未上屏，放弃")
+            waitingForHost = false
+            updateUI("❌ 对方一直未上屏，请稍后再试")
+            handleMeetingFailure()
+            return
+        }
+        stopFavWait()
+        val r = Runnable {
+            if (isFinishing || isDestroyed || !waitingForHost) return@Runnable
+            AppLogger.app("[FAV-WAIT] 第 $favWaitRetryCount 次重试加入 ${signalCode.orEmpty()}")
+            // 旧连接可能已关闭，先彻底断开再重连，避免 reconnectInFlight 去重误拦
+            signalClient?.disconnect()
+            signalClient = null
+            signalSdpSent = false
+            signalPendingOfferData = null
+            signalPendingCandidates.clear()
+            connectSignal(signalCode.orEmpty(), asHost = false, joinToken = pendingJoinToken)
+        }
+        favWaitRunnable = r
+        favWaitHandler.postDelayed(r, FAV_WAIT_RETRY_MS)
+    }
+
+    private fun stopFavWait() {
+        favWaitRunnable?.let { favWaitHandler.removeCallbacks(it) }
+        favWaitRunnable = null
+    }
+
     // ======================== 悬浮工具条 ========================
 
     /** 更多面板展开/收起 */
@@ -4705,6 +4773,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         stopDuckLoop()
         // v1.266: 兜底停止对讲轮询线程，避免 HandlerThread 在 Activity 销毁后残留（B7）
         setTalkPolling(false)
+        // 专属房间等待模式兜底：避免 Activity 销毁后自动重试 Runnable 残留
+        stopFavWait()
         // v1.262: 兜底恢复通知模式，避免 Activity 销毁后免打扰残留
         restoreNotificationFilter()
         albumWebView?.let { wv ->

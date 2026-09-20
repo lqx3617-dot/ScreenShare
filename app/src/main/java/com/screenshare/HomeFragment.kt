@@ -51,7 +51,7 @@ class HomeFragment : Fragment() {
             val fav = MeetingActivity.getFavoriteRoom(requireContext())
             if (fav != null) {
                 queryFavStatus(fav.first, fav.second)
-                favHandler.postDelayed(this, 5000)
+                favHandler.postDelayed(this, 10000)
             }
         }
     }
@@ -101,11 +101,12 @@ class HomeFragment : Fragment() {
     // ==================== 会议流程 ====================
 
     /** 跳转会议室（与 MeetingActivity.enterMeeting 同一协议） */
-    private fun enterMeeting(action: String, code: String, token: String = "") {
+    private fun enterMeeting(action: String, code: String, token: String = "", favWait: Boolean = false) {
         val intent = Intent(requireContext(), MainActivity::class.java)
             .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, action)
             .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
             .putExtra(MeetingActivity.EXTRA_MEETING_TOKEN, token)
+            .putExtra(MeetingActivity.EXTRA_FAV_WAIT, favWait)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         startActivity(intent)
     }
@@ -217,16 +218,19 @@ class HomeFragment : Fragment() {
         if (fav != null) {
             val isHostRole = fav.second == MeetingActivity.ACTION_CREATE
             val online = favOnline
+            // 观看方从专属房间进入一律开启「等待模式」：即使对方此刻不在线/未建房，
+            // 也留在会议室自动喊 TA 并重试，而不是被「会议号不存在」直接踢出
+            val wait = !isHostRole
             if (online == false && !isHostRole) {
                 showConfirmDialog(
                     title = "对方不在线",
                     message = "TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？",
                     positive = "进入等待",
                     negative = "取消"
-                ) { enterMeeting(fav.second, fav.first) }
+                ) { enterMeeting(fav.second, fav.first, favWait = wait) }
                 return
             }
-            enterMeeting(fav.second, fav.first)
+            enterMeeting(fav.second, fav.first, favWait = wait)
             return
         }
         showRoomDialog()

@@ -75,8 +75,12 @@ const ipClientCount = new Map();
   const AUTH_MAX_ATTEMPTS = 20;
   // 「喊TA」(pls-join) 单独限流 6 次/分，防提醒轰炸
   const PLS_JOIN_MAX_ATTEMPTS = 6;
+  // room-status 是纯查询（专属房间在线状态轮询，客户端每 10 秒一次），
+  // 与 create/join 的防枚举限流分开计数，避免多设备共用出口 IP 时互相挤占配额
+  const ROOM_STATUS_MAX_ATTEMPTS = 120;
   const authAttempts = new Map();
   const plsJoinAttempts = new Map();
+  const roomStatusAttempts = new Map();
 
   function remoteIp(obj) {
     if (!obj) return "unknown";
@@ -113,6 +117,17 @@ const ipClientCount = new Map();
     }
     entry.count += 1;
     return entry.count < PLS_JOIN_MAX_ATTEMPTS;
+  }
+
+  function allowRoomStatus(ip) {
+    const now = Date.now();
+    const entry = roomStatusAttempts.get(ip);
+    if (!entry || now >= entry.resetAt) {
+      roomStatusAttempts.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count < ROOM_STATUS_MAX_ATTEMPTS;
   }
 
   // 每分钟清理过期限流记录，避免长期运行内存堆积
@@ -226,7 +241,7 @@ const server = http.createServer((req, res) => {
   // 房间在线状态查询：客户端 GET /room-status?code=XXXX 判断该会议号是否有 host 在线
   // 用于专属房间卡片显示「对方在线/不在线」，纯查询不建连，不参与房间流程
   if (req.method === "GET" && req.url.startsWith("/room-status")) {
-      if (!allowAuthAttempt(remoteIp(req))) {
+      if (!allowRoomStatus(remoteIp(req))) {
         res.writeHead(429, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("too many requests");
         return;

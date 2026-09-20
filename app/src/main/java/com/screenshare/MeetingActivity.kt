@@ -42,6 +42,9 @@ class MeetingActivity : AppCompatActivity() {
         const val EXTRA_MEETING_TOKEN = "extra_meeting_token"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
+        // 专属房间「进入等待」模式：观看方先进入，共享方可能尚未建房，
+        // 此时不应被「会议号不存在」直接踢出，而是自动喊 TA 并定时重试
+        const val EXTRA_FAV_WAIT = "extra_fav_wait"
 
         private const val PREFS_HISTORY = "meeting_history"
         private const val KEY_LIST = "list"
@@ -152,7 +155,7 @@ class MeetingActivity : AppCompatActivity() {
             val fav = getFavoriteRoom(this@MeetingActivity)
             if (fav != null) {
                 queryFavStatus(fav.first)
-                favHandler.postDelayed(this, 5000)
+                favHandler.postDelayed(this, 10000)
             }
         }
     }
@@ -391,16 +394,19 @@ class MeetingActivity : AppCompatActivity() {
             // 已设置：确认在线状态后进入（在线直接进；不在线提示 + 可选择改角色或仍进入）
             val isHostRole = fav.second == ACTION_CREATE
             val online = favOnline
+            // 观看方从专属房间进入一律开启「等待模式」：即使对方未建房也留在会议室
+            // 自动喊 TA 并重试，而不是被「会议号不存在」直接踢出
+            val wait = !isHostRole
             if (online == false && !isHostRole) {
                 androidx.appcompat.app.AlertDialog.Builder(this)
                     .setTitle("对方不在线")
                     .setMessage("TA 还没有进入房间 ${fav.first}。\n是否先进入等你加入，或喊 TA 一下？")
-                    .setPositiveButton("进入等待") { _, _ -> enterMeeting(fav.second, fav.first) }
+                    .setPositiveButton("进入等待") { _, _ -> enterMeeting(fav.second, fav.first, favWait = wait) }
                     .setNegativeButton("取消", null)
                     .show()
                 return
             }
-            enterMeeting(fav.second, fav.first)
+            enterMeeting(fav.second, fav.first, favWait = wait)
             return
         }
         // 未设置：预填一个随机 4 位房间号，双方约定即可
@@ -426,7 +432,7 @@ class MeetingActivity : AppCompatActivity() {
                 }
                 setFavoriteRoom(this, chosenRole, code)
                 renderFavoriteCard()
-                enterMeeting(chosenRole, code)
+                enterMeeting(chosenRole, code, favWait = chosenRole == ACTION_JOIN)
             }
             .setNegativeButton("取消", null)
             .show()
@@ -590,11 +596,12 @@ class MeetingActivity : AppCompatActivity() {
     }
 
     /** 跳转会议室并退出连接页 */
-    private fun enterMeeting(action: String, code: String, token: String = "") {
+    private fun enterMeeting(action: String, code: String, token: String = "", favWait: Boolean = false) {
         val intent = Intent(this, MainActivity::class.java)
             .putExtra(EXTRA_MEETING_ACTION, action)
             .putExtra(EXTRA_MEETING_CODE, code)
             .putExtra(EXTRA_MEETING_TOKEN, token)
+            .putExtra(EXTRA_FAV_WAIT, favWait)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         startActivity(intent)
         finish()
