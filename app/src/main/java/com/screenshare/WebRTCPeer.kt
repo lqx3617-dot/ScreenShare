@@ -222,6 +222,13 @@ class WebRTCPeer(
     // 放开永不触发（与弱网 congestionForgetMs 同构）
     private val encFpsReleaseMs = 30_000L
     private val encFpsReleaseStep = 6
+    // v1.335: 采集档位上限（棘轮）。热降频后编码器在某档位上连最低帧率 15fps 都扛不住时，
+    // 记下该档位不可用，回升/降档目标都不再越过其下一档（1080p 不可用→停留 720p），
+    // 否则 1080p@15↔720p@15 每 6~10s 无解翻转（真机：一加热降频后 1080p 编码能力塌到
+    // <12fps 而 720p 仍能 15fps，每次回升到 1080p 立刻再降，每次翻转都重建采集管线）。
+    // 仅在已有帧率上限学习（encFpsCeiling>0）后才学习，避免开机波动误判（实测启动期
+    // 720p@28 目标下编码 8fps，属正常爬坡而非 720p 档位不可用）
+    private var encProfileCeiling = 0   // 采集档位下限（profile 越大分辨率越低），0=不限制
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -2138,12 +2145,24 @@ class WebRTCPeer(
                     // 变化向下追踪真实能力，也由 encFpsReleaseMs 计时器在无瓶颈证据后逐级上调。
                     // 相同值也刷新计时器：周期性超载期间放开不应生效
                     if (encodedFps > 0 && !viewerStallActive && qualityLimit != "bandwidth") {
+                        // v1.335: hadCeiling 须在学习前取值——learned 落地后 encFpsCeiling 必>0
+                        val hadCeiling = encFpsCeiling > 0
                         val learned = encodedFps.coerceAtLeast(15)
                         if (learned != encFpsCeiling) {
                             AppLogger.capture("编码帧率上限学习: $encFpsCeiling->$learned fps (目标$target)")
                             encFpsCeiling = learned
                         }
                         encFpsLearnMs = System.currentTimeMillis()
+                        // v1.335: 已有帧率上限学习却仍跌破 15fps → 当前采集档位本身超载，
+                        // 档位上限记到下一档（更低分辨率），回升不再回到该档位。
+                        // lastCaptureProfile 为降档前的档位（切换被冷却挡住时仍是旧档位，正是超载者）
+                        if (hadCeiling && encodedFps < 15) {
+                            val newCeiling = minOf(3, maxOf(encProfileCeiling, lastCaptureProfile + 1))
+                            if (newCeiling != encProfileCeiling) {
+                                AppLogger.capture("采集档位上限学习: 档位$lastCaptureProfile 超载，回升上限->$newCeiling")
+                                encProfileCeiling = newCeiling
+                            }
+                        }
                     }
                     encLoadDown = true
                     encLoadSamples = 0
@@ -2175,6 +2194,16 @@ class WebRTCPeer(
             AppLogger.capture("编码帧率上限放开: $encFpsCeiling->$released fps (无瓶颈证据${encFpsReleaseMs / 1000}s)")
             encFpsCeiling = released
             encFpsLearnMs = System.currentTimeMillis()
+        }
+        // v1.335: 档位上限放开更保守——须帧率上限已完全放开（当前档位已证明无编码瓶颈），
+        // 否则热降频期间每 30s 试探高分辨率都是白白翻转（每次都触发关键帧+采集管线重建）。
+        // 帧率上限卡在中间值时本块永不触发，热降频设备会话内稳定停留在低分辨率档
+        if (encProfileCeiling > 0 && encFpsCeiling >= highMotionFpsCap &&
+            encodedFps > 0 && encodedFps >= target * 0.9 &&
+            System.currentTimeMillis() - encFpsLearnMs >= encFpsReleaseMs) {
+            encProfileCeiling--
+            encFpsLearnMs = System.currentTimeMillis()
+            AppLogger.capture("采集档位上限放开: ->$encProfileCeiling (帧率上限已全开+无瓶颈证据${encFpsReleaseMs / 1000}s)")
         }
     }
 
@@ -2210,7 +2239,9 @@ class WebRTCPeer(
      * 与弱网自适应共用 lastCaptureProfile/lastCaptureSwitchMs 防抖。
      */
     private fun applyEncoderLoadProfile(down: Boolean) {
-        val targetProfile = if (down) 1 else 0
+        // v1.335: 下限取档位上限（encProfileCeiling，0=不限制），已知超载的分辨率档位
+        // 不再被回升或降档选中（降档时直接降到安全档，避免又停在被判超载的档位上）
+        val targetProfile = maxOf(if (down) 1 else 0, encProfileCeiling)
         val effective = maxOf(captureProfileForLevel(curAdaptLevel), targetProfile)
         // 编码瓶颈时除降分辨率外同步降采集帧率（30→24）。播放视频等高动态画面单靠降分辨率
         // 仍可能让 30fps 编不动，观看端一帧一帧跳；恢复时回弱网档位对应的基础帧率。
@@ -2523,8 +2554,10 @@ class WebRTCPeer(
         // cap 不变 → 切换块整段跳过，一旦某次切换被冷却挡住就再也不会重试，采集格式
         // 卡在 1080p 长达 19s（老设备实测：丢包 77% 降档到 6 时被挡，之后 rtt 升到
         // 2800ms 但档位/cap 未变，1080p 采集器持续灌死链路）。
+        // v1.335: 下限同样取 encProfileCeiling，与 applyEncoderLoadProfile 一致，
+        // 否则编码负载路径刚把档位降到安全值，此处置回 weakProfile 又翻回超载档位
         val weakProfile = captureProfileForLevel(curAdaptLevel)
-        val targetProfile = if (encLoadDown) maxOf(weakProfile, 1) else weakProfile
+        val targetProfile = maxOf(weakProfile, if (encLoadDown) 1 else 0, encProfileCeiling)
         // V1.187: 采集侧同步降帧率——档位>=2 时 30→28→24→20，异地/中继高 RTT 下
         // 单帧数据量变大、拥塞控制收敛慢，降帧率能显著缓解积压掉帧，观感更连续
         // v1.294: 帧率上限须与 applyEncoderLoadProfile 用同一公式（编码负载降档时夹到 24），
@@ -2659,6 +2692,7 @@ class WebRTCPeer(
         encNoStatSamples = 0
         encFpsCeiling = 0
         encFpsLearnMs = 0L
+        encProfileCeiling = 0
         viewerStallActive = false
         lastCaptureFps = 30
         manualFpsOverride = 0
