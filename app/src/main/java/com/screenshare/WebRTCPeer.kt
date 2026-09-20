@@ -208,6 +208,20 @@ class WebRTCPeer(
     // 编码帧率统计缺失连续采样计数（v1.240）：部分机型 outbound-rtp.framesPerSecond 恒不上报，
     // 恢复判定无法依赖帧率证据，改用"连续无瓶颈证据"缓慢恢复，防止统计缺失永久锁死降档
     @Volatile private var encNoStatSamples = 0
+    // v1.333: 编码器实测帧率上限（棘轮）。一加/OPPO 硬编在 1080p(1920x1329) 下实测
+    // 只能稳定输出 ~24fps，highMotionFpsCap=48 时 encodedFps 恒低于 target*0.78=37.4
+    // → 降 720p@24 → 轻松达标 4 次采样 → 回升 1080p@48 → 再次超载，形成 7~9s 周期的
+    // 1920@48 ↔ 1280@24 反复切换。每次 changeCaptureFormat 都重启采集管线并触发关键帧，
+    // 观看端冻结持续累加、抖动缓冲棘轮式攀升（实测 3 分钟冻结 20 次、缓冲 19→127ms）。
+    // 降档时把「编码器在该分辨率下实际能达到的帧率」记下来，回升目标夹到此值，
+    // 与弱网 minAdaptLevel 同理消除周期震荡。
+    @Volatile private var encFpsCeiling = 0      // 编码器实测上限（fps），0=未学习
+    private var encFpsLearnMs = 0L               // 最近一次学习时间，用于按证据逐级放开
+    // v1.333: 上限放开节奏——持续无编码瓶颈证据 30s 后上限 +6fps（24→30→36→42→48），
+    // 内容静止/设备降温等真实改善时可逐步回到高帧率；持续超载时学习事件刷新计时器，
+    // 放开永不触发（与弱网 congestionForgetMs 同构）
+    private val encFpsReleaseMs = 30_000L
+    private val encFpsReleaseStep = 6
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -2117,6 +2131,20 @@ class WebRTCPeer(
                 encLoadSamples++
                 encRecoverSamples = 0
                 if ((encodedFps > 0 && encodedFps < target * 0.60) || cpuBottleneck || viewerStallActive || encLoadSamples >= 2) {
+                    // v1.333: 降档时学习编码器实测帧率上限。仅编码侧证据可学习：有 fps 统计、
+                    // 非观看端接收瓶颈（接收侧卡顿不代表编码能力差）、且 qualityLimit 非 bandwidth
+                    // （带宽受限时 fps 被拥塞控制压低，非编码器能力上限，学了会误夹）。
+                    // 取本次实测值并取下限 15（与最深弱网档帧率一致）：既能随热降频/内容
+                    // 变化向下追踪真实能力，也由 encFpsReleaseMs 计时器在无瓶颈证据后逐级上调。
+                    // 相同值也刷新计时器：周期性超载期间放开不应生效
+                    if (encodedFps > 0 && !viewerStallActive && qualityLimit != "bandwidth") {
+                        val learned = encodedFps.coerceAtLeast(15)
+                        if (learned != encFpsCeiling) {
+                            AppLogger.capture("编码帧率上限学习: $encFpsCeiling->$learned fps (目标$target)")
+                            encFpsCeiling = learned
+                        }
+                        encFpsLearnMs = System.currentTimeMillis()
+                    }
                     encLoadDown = true
                     encLoadSamples = 0
                     applyEncoderLoadProfile(true)
@@ -2137,6 +2165,16 @@ class WebRTCPeer(
             } else {
                 encRecoverSamples = 0
             }
+        }
+        // v1.333: 上限棘轮放开。要求当前编码帧率已达标（达标才说明有余量试探更高目标），
+        // 且距最近一次学习已超 encFpsReleaseMs 无瓶颈证据。统计缺失时不放开（无余量证据）
+        if (encFpsCeiling > 0 && encFpsCeiling < highMotionFpsCap &&
+            (encodedFps <= 0 || encodedFps >= target * 0.9) &&
+            System.currentTimeMillis() - encFpsLearnMs >= encFpsReleaseMs) {
+            val released = minOf(highMotionFpsCap, encFpsCeiling + encFpsReleaseStep)
+            AppLogger.capture("编码帧率上限放开: $encFpsCeiling->$released fps (无瓶颈证据${encFpsReleaseMs / 1000}s)")
+            encFpsCeiling = released
+            encFpsLearnMs = System.currentTimeMillis()
         }
     }
 
@@ -2177,7 +2215,11 @@ class WebRTCPeer(
         // 编码瓶颈时除降分辨率外同步降采集帧率（30→24）。播放视频等高动态画面单靠降分辨率
         // 仍可能让 30fps 编不动，观看端一帧一帧跳；恢复时回弱网档位对应的基础帧率。
         val baseFps = captureFpsForLevel(curAdaptLevel)
-        val targetFps = if (down) minOf(baseFps, 24) else baseFps
+        // v1.333: 目标帧率夹到编码器实测上限（encFpsCeiling，0=未学习则不夹）。
+        // 降档与回升都取 min，回升不再回到编码器扛不住的 highMotionFpsCap，
+        // 消除 1920@48 ↔ 1280@24 的周期翻转
+        val ceiling = if (encFpsCeiling > 0) encFpsCeiling else Int.MAX_VALUE
+        val targetFps = if (down) minOf(baseFps, 24, ceiling) else minOf(baseFps, ceiling)
         // degradationPreference：编码瓶颈时保帧率降分辨率（动态画面流畅优先）
         val degradation = if (effective > 0) {
             RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
@@ -2610,6 +2652,8 @@ class WebRTCPeer(
         encLoadSamples = 0
         encRecoverSamples = 0
         encNoStatSamples = 0
+        encFpsCeiling = 0
+        encFpsLearnMs = 0L
         viewerStallActive = false
         lastCaptureFps = 30
         manualFpsOverride = 0
