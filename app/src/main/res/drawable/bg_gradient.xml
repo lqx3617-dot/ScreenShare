@@ -1,58 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 温柔浪漫背景：奶油粉白渐变 + 玫瑰/蜜桃光晕 + 底部若隐若现的爱心水印 -->
+<!-- 液态根背景 v3：高饱和夜空（用户反馈"太淡/色彩不够"）
+     底层 135° 深紫黑→饱和靛蓝→饱和玫红紫；上层 315° 亮玫红→深紫（不透明收尾，色块铺满不全透明）
+     angle 必须是 45 的倍数（GradientDrawable 硬性要求），原先 160 在真机 inflate 直接崩 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 基础奶油粉白渐变 -->
     <item>
         <shape android:shape="rectangle">
             <gradient
+                android:type="linear"
                 android:angle="135"
-                android:startColor="#FFFDF3F7"
-                android:centerColor="#FFFFF8F4"
-                android:endColor="#FFFBE7EE" />
+                android:startColor="#0C0524"
+                android:centerColor="#2B1368"
+                android:endColor="#5E1A6B" />
         </shape>
     </item>
-
-    <!-- 左上玫瑰光晕 -->
-    <item
-        android:width="420dp"
-        android:height="420dp"
-        android:gravity="top|start"
-        android:left="-160dp"
-        android:top="-160dp">
-        <shape android:shape="oval">
+    <item>
+        <shape android:shape="rectangle">
             <gradient
-                android:type="radial"
-                android:gradientRadius="210dp"
-                android:startColor="@color/glass_rose"
-                android:centerColor="@color/glass_rose_mid"
-                android:endColor="#00E85D8D" />
+                android:type="linear"
+                android:angle="315"
+                android:startColor="#9C2A6E"
+                android:centerColor="#5E1A6B"
+                android:endColor="#1A0A3E" />
         </shape>
     </item>
-
-    <!-- 右下蜜桃光晕 -->
-    <item
-        android:width="380dp"
-        android:height="380dp"
-        android:gravity="bottom|end"
-        android:right="-140dp"
-        android:bottom="-140dp">
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="190dp"
-                android:startColor="@color/glass_peach"
-                android:centerColor="@color/glass_peach_mid"
-                android:endColor="#00FAB49B" />
-        </shape>
-    </item>
-
-    <!-- 底部爱心水印（极淡，若有似无的浪漫点缀） -->
-    <item
-        android:width="300dp"
-        android:height="300dp"
-        android:gravity="bottom|start"
-        android:left="-80dp"
-        android:bottom="-90dp"
-        android:alpha="0.08"
-        android:drawable="@drawable/ic_heart_fill" />
 </layer-list>
