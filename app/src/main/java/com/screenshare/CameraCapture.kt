@@ -66,7 +66,11 @@ object CameraCapture {
             ?: Size(1280, 720)
 
         // 屏幕旋转角 → JPEG 方向（后置 90° 基准，前置镜像）
-        val displayRotation = context.display?.rotation ?: 0
+        // context.display 需 API 30，minSdk 24 的旧设备上调用了会崩溃；改用 DisplayManager
+        // 获取默认 Display，全 API 等价
+        val displayRotation = (context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager)
+            ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.rotation
+            ?: Surface.ROTATION_0
         val jpegOrientation = sensorToJpegOrientation(characteristics, displayRotation)
 
         val handlerThread = HandlerThread("camera-capture").apply { start() }

@@ -257,16 +257,22 @@ object UpdateChecker {
         nm.notify(NOTIFICATION_ID, builder.build())
 
         Thread {
+            // 分段下载的 onProgress 由 THREAD_COUNT 个线程并发调用，
+            // lastBytes/lastReport 的 check-then-act 必须加锁，否则并发下
+            // lastBytes 被覆盖成更小的旧值、delta 算出负数，速度显示错乱
+            val progressLock = Any()
             var lastBytes = 0L
             val lastReport = AtomicLong(0)
             val ok = downloadToFile(apkUrl, target, cancelled) { total, totalBytes ->
                 val now = System.currentTimeMillis()
                 var speedText = ""
-                val delta = now - lastReport.get()
-                if (delta >= 500) {
-                    speedText = "${formatSize((total - lastBytes) * 1000 / delta)}/s"
-                    lastBytes = total
-                    lastReport.set(now)
+                synchronized(progressLock) {
+                    val delta = now - lastReport.get()
+                    if (delta >= 500) {
+                        speedText = "${formatSize((total - lastBytes) * 1000 / delta)}/s"
+                        lastBytes = total
+                        lastReport.set(now)
+                    }
                 }
                 builder.setProgress(100, (total * 100 / totalBytes).toInt(), false)
                     .setContentText("${formatSize(total)}/${formatSize(totalBytes)} $speedText")

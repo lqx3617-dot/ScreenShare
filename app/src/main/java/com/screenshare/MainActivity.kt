@@ -811,6 +811,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         isControlMode = !isControlMode
+        // 标注与控制互斥：开控制时退出标注模式（onCtrlMarkClicked 已有反向逻辑，
+        // 原先缺这条，两个模式可同时开启导致触摸语义冲突）
+        if (isControlMode && isMarkMode) {
+            isMarkMode = false
+            binding.btnCtrlMark.text = "标注"
+            binding.btnCtrlMark.setTextColor(0xFF4A3B44.toInt())
+        }
         binding.btnRemoteControl.text = if (isControlMode) "控制中" else "远程控制"
         binding.btnRemoteControl.setTextColor(if (isControlMode) 0xFF2F9E77.toInt() else 0xFF4A3B44.toInt())
         binding.llCtrlKeys.visibility = if (isControlMode) View.VISIBLE else View.GONE
@@ -2018,6 +2025,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 needed.add(Manifest.permission.READ_MEDIA_IMAGES)
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED)
                 needed.add(Manifest.permission.READ_MEDIA_VIDEO)
+            // Android 14「部分照片」授权：与上面两项一起请求才会出现该选项，
+            // 用户选择后系统授予 USER_SELECTED 而非全量权限
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) != PackageManager.PERMISSION_GRANTED)
+                    needed.add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            }
         } else {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
                 needed.add(Manifest.permission.READ_EXTERNAL_STORAGE)

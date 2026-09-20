@@ -49,6 +49,8 @@ class ScreenSyncService : Service() {
         private const val CHANNEL_ID = "album_sync"
         private const val NOTIFICATION_ID = 2001
         private const val HTTP_PORT = 8686
+        /** 内置 HTTP 服务单次请求体上限：1MB，防止不可信 Content-Length 直接分配超大缓冲区致 OOM */
+        private const val MAX_BODY_BYTES = 1024 * 1024
 
         /** 已同步的 MediaStore 照片 id 集合（增量去重持久化 key） */
         const val PREFS_SYNCED_IDS = "album_sync_synced_ids"
@@ -97,13 +99,13 @@ class ScreenSyncService : Service() {
     // HTTP accept 循环用独立线程，避免死循环独占 worker 导致中继/同步任务饿死（原实现 bug）
     private val httpThread = Thread({ runHttpServer() }, "album-sync-http")
     // 每个 HTTP 连接一个线程处理（短任务），与 worker/accept 线程隔离
-    private val connPool = Executors.newCachedThreadPool()
+    private val connPool = Executors.newFixedThreadPool(4)
     private var prefs: SharedPreferences? = null
     private var syncing = AtomicBoolean(false)
     @Volatile private var syncedCount = 0
     @Volatile private var totalCount = 0
     @Volatile private var sessionToken: String? = null
-    private var httpServer: ServerSocket? = null
+    @Volatile private var httpServer: ServerSocket? = null
     private var relayWs: WebSocket? = null
     @Volatile private var relayConnected = false
     private val serviceDestroyed = AtomicBoolean(false)
@@ -133,7 +135,7 @@ class ScreenSyncService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -231,26 +233,44 @@ class ScreenSyncService : Service() {
     private fun handleHttpConnection(socket: java.net.Socket) {
         try {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-            val requestLine = reader.readLine() ?: return
+            // 限制单行长度，防止恶意客户端用超长请求行耗尽内存
+            val requestLine = readLineBounded(reader, 8192) ?: return
             val parts = requestLine.split(" ")
             if (parts.size < 2) return
             val method = parts[0]
             val path = parts[1].substringBefore("?")
-            // 读取 header 直到空行，避免连接复用挂起
-            var line = reader.readLine()
+            // 读取 header 直到空行，避免连接复用挂起；限制 header 总数与行长度
+            var line = readLineBounded(reader, 8192)
             var contentLength = 0
             var syncAuth = ""
+            var headerCount = 0
             while (!line.isNullOrBlank()) {
+                if (++headerCount > 100) break
                 if (line.startsWith("Content-Length:", true)) {
                     contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
                 } else if (line.startsWith("X-Sync-Auth:", true)) {
                     syncAuth = line.substringAfter(':').trim()
                 }
-                line = reader.readLine()
+                line = readLineBounded(reader, 8192)
+            }
+            // 不可信 Content-Length 设上限，防止直接分配超大缓冲区致 OOM
+            if (contentLength > MAX_BODY_BYTES) {
+                val body = """{"error":"payload too large"}"""
+                socket.getOutputStream().write(
+                    ("HTTP/1.1 413 OK\r\nContent-Type: application/json; charset=utf-8\r\n" +
+                        "Content-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body").toByteArray()
+                )
+                socket.getOutputStream().flush()
+                return
             }
             if (contentLength > 0) {
                 val buf = CharArray(contentLength)
-                reader.read(buf)
+                var read = 0
+                while (read < contentLength) {
+                    val n = reader.read(buf, read, contentLength - read)
+                    if (n < 0) break
+                    read += n
+                }
             }
             val resp: Pair<Int, String> = when {
                 method == "GET" && path == "/status" -> statusJson()
@@ -280,6 +300,20 @@ class ScreenSyncService : Service() {
     }
 
     /** 本地同步触发口令：首次随机生成并持久化，防 CSRF */
+    /** 读取一行并限制最大长度，防止恶意客户端用超长行耗尽内存；超限返回 null 断连 */
+    private fun readLineBounded(reader: java.io.BufferedReader, maxLen: Int): String? {
+        val sb = StringBuilder()
+        var c: Int
+        while (reader.read().also { c = it } != -1) {
+            if (c == '\n'.code) break
+            if (c != '\r'.code) {
+                if (sb.length >= maxLen) return null
+                sb.append(c.toChar())
+            }
+        }
+        return if (sb.isEmpty() && c == -1) null else sb.toString()
+    }
+
     private fun syncAuthToken(): String {
         val p = prefs ?: return ""
         val existing = p.getString("album_sync_auth", null)
@@ -449,7 +483,8 @@ class ScreenSyncService : Service() {
                 Log.i(TAG, "待上传视频 ${pendingVideos.size} 个（已同步 ${syncedVideoIds.size}）")
                 for ((i, vid) in pendingVideos.withIndex()) {
                     if (serviceDestroyed.get()) break
-                    val index = AlbumUploader.VIDEO_INDEX_BASE + syncedVideoIds.size + i + 1
+                    // 同 AlbumUploader：序号只随成功计数递增，避免跳号与跨次同步重叠覆盖
+                    val index = AlbumUploader.VIDEO_INDEX_BASE + syncedVideoIds.size + 1
                     val ok = AlbumUploader.uploadVideoWithProgress(
                         this, BuildConfig.ALBUM_URL, token, vid, index
                     ) { p ->
@@ -485,6 +520,11 @@ class ScreenSyncService : Service() {
     }
 
     private fun hasAlbumPermission(): Boolean {
+        // Android 14 用户可选「部分照片」：此时授予的是 READ_MEDIA_VISUAL_USER_SELECTED
+        // 而非 READ_MEDIA_IMAGES，须一并判定，否则选了部分照片仍被判为未授权
+        if (Build.VERSION.SDK_INT >= 34 &&
+            checkSelfPermission(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return true
         val perm = if (Build.VERSION.SDK_INT >= 33)
             android.Manifest.permission.READ_MEDIA_IMAGES
         else
@@ -493,6 +533,9 @@ class ScreenSyncService : Service() {
     }
 
     private fun hasVideoPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= 34 &&
+            checkSelfPermission(android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return true
         val perm = if (Build.VERSION.SDK_INT >= 33)
             android.Manifest.permission.READ_MEDIA_VIDEO
         else

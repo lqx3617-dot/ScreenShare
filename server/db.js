@@ -63,6 +63,10 @@ function migrateToNicknameLogin(db) {
   const cols = db.prepare("PRAGMA table_info(users)").all();
   const emailCol = cols.find((c) => c.name === "email");
   if (!emailCol || emailCol.notnull === 0) return false;
+  // 旧表可能已有 push_token（v1.313 之后的库又落到迁移前的表结构），
+  // users_new 须同步带上该列并拷贝原值，否则迁移后 migrateUsersPushToken
+  // 只会补一个空列，老用户的离线推送 token 被静默丢弃
+  const hasPushToken = cols.some((c) => c.name === "push_token");
   db.exec("BEGIN");
   try {
     db.exec(`
@@ -74,14 +78,15 @@ function migrateToNicknameLogin(db) {
         nickname      TEXT NOT NULL UNIQUE,
         avatar        TEXT NOT NULL DEFAULT '0',
         friend_code   TEXT NOT NULL UNIQUE,
+        ${hasPushToken ? "push_token    TEXT," : ""}
         created_at    INTEGER NOT NULL
       );
     `);
     const rows = db.prepare("SELECT * FROM users").all();
     const usedNicknames = new Set();
     const insert = db.prepare(
-      `INSERT OR ROLLBACK INTO users_new (id, email, password_hash, salt, nickname, avatar, friend_code, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT OR ROLLBACK INTO users_new (id, email, password_hash, salt, nickname, avatar, friend_code${hasPushToken ? ", push_token" : ""}, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?${hasPushToken ? ", ?" : ""}, ?)`
     );
     for (const r of rows) {
       let nick = String(r.nickname || r.email || "").split("@")[0] || `用户${String(r.friend_code || "").slice(0, 4)}`;
@@ -92,7 +97,11 @@ function migrateToNicknameLogin(db) {
         unique = `${nick}${String(r.friend_code || "").slice(0, 2)}${suffix++}`;
       }
       usedNicknames.add(unique);
-      insert.run(r.id, r.email || null, r.password_hash, r.salt, unique, r.avatar || "0", r.friend_code, r.created_at);
+      if (hasPushToken) {
+        insert.run(r.id, r.email || null, r.password_hash, r.salt, unique, r.avatar || "0", r.friend_code, r.push_token || null, r.created_at);
+      } else {
+        insert.run(r.id, r.email || null, r.password_hash, r.salt, unique, r.avatar || "0", r.friend_code, r.created_at);
+      }
     }
     db.exec("DROP TABLE users");
     db.exec("ALTER TABLE users_new RENAME TO users");

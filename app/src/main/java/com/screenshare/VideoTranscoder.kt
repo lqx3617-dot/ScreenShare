@@ -248,7 +248,12 @@ object VideoTranscoder {
                         // 必须先把解码帧释放到 SurfaceTexture（render=true），updateTexImage 才能取到这一帧；
                         // 顺序颠倒会导致纹理永远慢一帧且首帧为黑
                         decoder.releaseOutputBuffer(outIdx, true)
-                        if (info.size > 0) renderer.render(info.presentationTimeUs)
+                        // Surface 输出模式下 info.size 恒为 0（数据已进 SurfaceTexture），
+                        // 用 size>0 门控会让整段视频一帧都不渲染 → 输出全黑/丢帧。
+                        // 有有效 pts 即渲染，EOS 标记的空帧不渲染
+                        if (info.presentationTimeUs >= 0 && (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0) {
+                            renderer.render(info.presentationTimeUs)
+                        }
                         if (durationUs > 0) onProgress((info.presentationTimeUs.toFloat() / durationUs).coerceIn(0f, 1f))
                     }
                     outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {}

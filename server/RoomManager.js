@@ -73,8 +73,14 @@ class RoomManager {
       // 除 readyState 外加 lastSeen 判据：客户端每 10s ping，15s 无消息即为半开死连接
       // （TCP 半开时 readyState 仍为 OPEN，只有心跳能判定），缩短重连被拒的窗口期。
       const now = Date.now();
+      const purged = [];
       for (const [vid, vws] of room.viewers) {
-        if (vws.readyState !== 1 || now - (vws.lastSeen || 0) > 15 * 1000) room.viewers.delete(vid);
+        if (vws.readyState !== 1 || now - (vws.lastSeen || 0) > 15 * 1000) {
+          room.viewers.delete(vid);
+          // 返回给调用方：须通知 host viewer-left（否则 host 侧 PC 永不回收）并
+          // terminate 僵尸 socket（否则 close 事件要等心跳扫描才触发，落入未知分支不结账）
+          purged.push({ viewerId: vid, ws: vws });
+        }
       }
       // 宽限期已过期但定时器尚未触发的兜底清理
       for (const [vid, e] of room.reconnecting) {
@@ -85,7 +91,12 @@ class RoomManager {
       }
       if (room.viewers.size > 0 || room.reconnecting.size > 0) {
         // 槽位被占：正在共享或对方正在重连，拒绝第三个加入者
-        return { ok: false, error: room.reconnecting.size > 0 ? "对方正在重新连接，请稍后再试" : "该会议已被对方加入，仅支持 1 对 1 共享" };
+        return { ok: false, error: room.reconnecting.size > 0 ? "对方正在重新连接，请稍后再试" : "该会议已被对方加入，仅支持 1 对 1 共享", purged };
+      }
+      if (purged.length) {
+        const vid = ++this.viewerSeq;
+        room.viewers.set(vid, viewerWs);
+        return { ok: true, viewerId: vid, purged };
       }
     }
     const viewerId = ++this.viewerSeq;
@@ -197,9 +208,18 @@ class RoomManager {
    */
   resumeViewer(code, userId, viewerWs) {
     const room = this.rooms.get(code);
-    if (!room || !userId) return null;
+    if (!room) return null;
+    // host 已断开（close 清理时序竞态，房间尚未销毁）时不可恢复：
+    // 恢复成功后 host 侧连接已死，viewer 会卡在空房间白等
+    if (room.host.readyState !== 1) {
+      this.rooms.delete(code);
+      return null;
+    }
     for (const [vid, entry] of room.reconnecting) {
-      if (entry.userId === userId) {
+      // 未登录 viewer（entry.userId 为 null）也允许重连：
+      // 1 对 1 场景同房间最多一条未登录记录，按 null 匹配即可，
+      // 否则游客断线后宽限期内无法恢复，只能被当新加入者拒之门外
+      if (entry.userId === userId || (!entry.userId && !userId)) {
         clearTimeout(entry.timer);
         room.reconnecting.delete(vid);
         room.viewers.set(vid, viewerWs);

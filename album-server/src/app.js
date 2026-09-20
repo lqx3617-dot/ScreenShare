@@ -144,9 +144,13 @@ function serializeVideoWrite(file, fn) {
   const prev = videoWriteLocks.get(file) || Promise.resolve();
   const next = prev.then(fn, fn);
   videoWriteLocks.set(file, next);
-  next.finally(() => {
-    if (videoWriteLocks.get(file) === next) videoWriteLocks.delete(file);
-  });
+  // fn 抛错时 next 拒绝，调用方通过 await 自行捕获；但 .finally() 派生的清理 promise
+  // 无人 await，其拒绝会成为 unhandledRejection 致进程退出。须先 catch 吸收再 finally
+  next
+    .catch(() => {})
+    .finally(() => {
+      if (videoWriteLocks.get(file) === next) videoWriteLocks.delete(file);
+    });
   return next;
 }
 

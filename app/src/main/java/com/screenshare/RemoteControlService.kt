@@ -173,6 +173,13 @@ class RemoteControlService : AccessibilityService() {
             execResultCallback?.invoke("""{"type":"status-error","code":"no-focused-input"}""")
             return
         }
+        // 安全边界：密码框不允许远端注入文本，避免明文密码经远控通道传输（S9）
+        if (node.isPassword) {
+            Log.w(TAG, "聚焦输入框为密码框，拒绝远端输入")
+            node.recycle()
+            execResultCallback?.invoke("""{"type":"status-error","code":"password-field-blocked"}""")
+            return
+        }
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -186,7 +193,9 @@ class RemoteControlService : AccessibilityService() {
     private fun focusedEditable(): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
         val found = findFocusedEditable(root)
-        root.recycle()
+        // 返回的节点可能就是 root 本身，不能先 recycle 再返回（use-after-recycle，
+        // ACTION_SET_TEXT 必然失败）。仅当命中者不是 root 时才回收 root
+        if (found !== root) root.recycle()
         return found
     }
 
@@ -195,8 +204,10 @@ class RemoteControlService : AccessibilityService() {
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val hit = findFocusedEditable(child)
-            child.recycle()
+            // hit 可能就是 child 本身，须先判定再回收：未命中时才 recycle child，
+            // 命中时整条祖先链保持有效交给调用方使用，由 execText 统一回收
             if (hit != null) return hit
+            child.recycle()
         }
         return null
     }

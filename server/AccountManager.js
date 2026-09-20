@@ -37,8 +37,15 @@ function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+// scrypt 必须用异步版本：scryptSync 单次约数十毫秒且完全阻塞事件循环，
+// 并发登录/注册请求会互相放大成实际 DoS（同步执行期间无法处理任何其他连接）
 function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString("hex");
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, b) => {
+      if (err) reject(err);
+      else resolve(b.toString("hex"));
+    });
+  });
 }
 
 class AccountManager {
@@ -65,7 +72,7 @@ class AccountManager {
           `INSERT INTO users (id, email, password_hash, salt, nickname, avatar, friend_code, created_at)
            VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
         )
-        .run(userId, hashPassword(password, salt), salt, name, DEFAULT_AVATAR, friendCode, Date.now());
+        .run(userId, await hashPassword(password, salt), salt, name, DEFAULT_AVATAR, friendCode, Date.now());
     } catch (e) {
       if (String(e.message).includes("UNIQUE")) {
         throw new AccountError("nickname_taken", "该昵称已被占用，请换一个", 409);
@@ -91,7 +98,7 @@ class AccountManager {
     }
 
     const user = this._findByNickname(name);
-    const ok = user ? this._verifyPassword(password, user.salt, user.password_hash) : false;
+    const ok = user ? await this._verifyPassword(password, user.salt, user.password_hash) : false;
     if (!ok) {
       throw new AccountError("invalid_credentials", "昵称或密码错误", 401);
     }
@@ -103,6 +110,12 @@ class AccountManager {
   /** 定期清理过期的登录失败记录，防止 loginLimiter 无界堆积 */
   sweepLoginLimiter() {
     this.loginLimiter.sweep();
+  }
+
+  /** 清理所有过期会话：authenticate 只在命中时删自己那一条，
+   * 长期不登录的会话会一直留在 sessions 表无界增长 */
+  sweepExpiredSessions() {
+    this.db.prepare(`DELETE FROM sessions WHERE expires_at < ?`).run(Date.now());
   }
 
   logout(token) {
@@ -164,12 +177,14 @@ class AccountManager {
     if (!user) throw new AccountError("not_found", "账号不存在", 404);
 
     if (patch.nickname !== undefined) {
-      const nickname = String(patch.nickname).trim();
-      if (nickname.length < 1) throw new AccountError("invalid_nickname", "昵称不能为空", 400);
-      if (nickname.length > NICKNAME_MAX) {
-        throw new AccountError("invalid_nickname", `昵称最多 ${NICKNAME_MAX} 个字符`, 400);
+      // 显式拒绝 null/非字符串：String(null) 会得到 "null" 字符串并被当合法昵称存入
+      if (typeof patch.nickname !== "string") {
+        throw new AccountError("invalid_nickname", "昵称格式无效", 400);
       }
-      // 先查重再更新：直接 UPDATE 撞 UNIQUE 会抛原始 SQLITE 错误被兜底成 500
+      const nickname = this._normalizeNickname(patch.nickname);
+      // 与注册统一走 _assertNickname：原先只查 length<1 允许了 1 字符昵称，
+      // 与 NICKNAME_MIN=2 的注册约束不一致
+      this._assertNickname(nickname);
       if (nickname !== user.nickname) {
         const taken = this._findByNickname(this._normalizeNickname(nickname));
         if (taken && taken.id !== userId) {
@@ -201,10 +216,12 @@ class AccountManager {
   }
 
   _verifyPassword(password, salt, expectedHex) {
-    const actual = Buffer.from(hashPassword(password, salt), "hex");
-    const expected = Buffer.from(expectedHex, "hex");
-    if (actual.length !== expected.length) return false;
-    return crypto.timingSafeEqual(actual, expected);
+    return hashPassword(password, salt).then((hex) => {
+      const actual = Buffer.from(hex, "hex");
+      const expected = Buffer.from(expectedHex, "hex");
+      if (actual.length !== expected.length) return false;
+      return crypto.timingSafeEqual(actual, expected);
+    });
   }
 
   _findByNickname(nickname) {

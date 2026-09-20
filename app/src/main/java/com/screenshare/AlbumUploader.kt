@@ -235,7 +235,10 @@ object AlbumUploader {
                 Log.w(TAG, "跳过损坏照片 id=$id: ${t.message}")
                 continue
             }
-            val index = alreadySynced.size + done + 1
+            // index 只随成功计数递增：失败项不占用序号（下次重试时该序号被重用）。
+            // 原先 size+done+1 会让成功项序号每次跳 2（size 与 done 同时 +1），
+            // 跨次同步时新序号会与旧序号重叠，导致照片被覆盖
+            val index = alreadySynced.size + 1
             var success = false
             for (attempt in 1..3) {
                 try {
@@ -493,7 +496,8 @@ object AlbumUploader {
         val uploaded = AtomicInteger(0)
         val skipped = AtomicInteger(0)
         val failed = AtomicReference<Throwable?>(null)
-        val uriByIndex = HashMap<Int, Uri>()
+        // v1.294: 并发线程池内写索引表，HashMap 并发 put 在 rehash 时会丢条目甚至破坏结构
+        val uriByIndex = java.util.concurrent.ConcurrentHashMap<Int, Uri>()
         val pool = Executors.newFixedThreadPool(CONCURRENCY)
         try {
             for (uri in uris) {

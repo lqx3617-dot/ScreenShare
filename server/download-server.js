@@ -197,15 +197,26 @@ body{font-family:-apple-system,sans-serif;background:#f5f7fa;margin:0;display:fl
 }
 
 // 版本信息缓存：每次读取 build.gradle.kts 的 versionCode/versionName + 计算 APK md5
+// 缓存键须含 host：不同 Host/DOWNLOAD_BASE 生成的 url 不同，未含 host 会让首个请求的
+// url 被后续所有请求复用（下载地址错指向其他域名）
 let cachedVersion = null;
+let cachedVersionUrl = null;
 let cachedMtime = 0;
 let buildingVersion = null; // 正在计算的 Promise，避免并发重复计算
 // 相册查看 APP 独立版本缓存（version.json 只反映主 APP；AlbumViewer 用独立端点）
 let cachedAlbumVersion = null;
+let cachedAlbumUrl = null;
 let cachedAlbumMtime = 0;
 let buildingAlbumVersion = null;
 // APK 下载 URL：优先用 DOWNLOAD_BASE 环境变量（公网域名，反代会把 Host 改写为 localhost，
 // 此时用请求 Host 生成的 url 手机端无法访问），否则随请求 Host 动态生成（http/https 统一 https）
+// Host 头由客户端完全可控，直接拼入 HTML/URL 会造成反射型 XSS 与下载 URL 劫持（供应链），
+// 须先清洗为合法 host:port（字母/数字/点/横杠/冒号），非法一律回退 localhost
+function safeHost(raw) {
+  const h = String(raw || "").trim();
+  if (/^[A-Za-z0-9._:-]+$/.test(h)) return h;
+  return "localhost";
+}
 function fileMd5(file) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash("md5");
@@ -221,7 +232,7 @@ async function buildVersion(host) {
   const vn = /versionName\s*=\s*"([^"]+)"/.exec(gradle);
   const stat = fs.statSync(APK);
   const md5 = await fileMd5(APK);
-  const base = (process.env.DOWNLOAD_BASE || host || "localhost").trim().replace(/^https?:\/\//i, "");
+  const base = (process.env.DOWNLOAD_BASE || safeHost(host)).trim().replace(/^https?:\/\//i, "");
   return {
     versionCode: vc ? parseInt(vc[1], 10) : 0,
     versionName: vn ? vn[1] : "0",
@@ -243,10 +254,11 @@ async function getVersion(host) {
     cachedVersion = null;
     return { error: "APK not found" };
   }
-  if (cachedVersion && cachedMtime === mtime) return cachedVersion;
+  if (cachedVersion && cachedMtime === mtime && cachedVersionUrl === host) return cachedVersion;
   if (!buildingVersion) {
     buildingVersion = buildVersion(host).then((v) => {
       cachedVersion = v;
+      cachedVersionUrl = host;
       cachedMtime = mtime;
       buildingVersion = null;
       return v;
@@ -267,7 +279,7 @@ async function buildAlbumVersion(host) {
   const vn = /versionName\s*=\s*"([^"]+)"/.exec(gradle);
   const stat = fs.statSync(ALBUM_APK);
   const md5 = await fileMd5(ALBUM_APK);
-  const base = (process.env.DOWNLOAD_BASE || host || "localhost").trim().replace(/^https?:\/\//i, "");
+  const base = (process.env.DOWNLOAD_BASE || safeHost(host)).trim().replace(/^https?:\/\//i, "");
   return {
     versionCode: vc ? parseInt(vc[1], 10) : 0,
     versionName: vn ? vn[1] : "0",
@@ -287,10 +299,11 @@ async function getAlbumVersion(host) {
     cachedAlbumVersion = null;
     return { error: "AlbumViewer APK not found" };
   }
-  if (cachedAlbumVersion && cachedAlbumMtime === mtime) return cachedAlbumVersion;
+  if (cachedAlbumVersion && cachedAlbumMtime === mtime && cachedAlbumUrl === host) return cachedAlbumVersion;
   if (!buildingAlbumVersion) {
     buildingAlbumVersion = buildAlbumVersion(host).then((v) => {
       cachedAlbumVersion = v;
+      cachedAlbumUrl = host;
       cachedAlbumMtime = mtime;
       buildingAlbumVersion = null;
       return v;
@@ -310,7 +323,7 @@ const server = http.createServer((req, res) => {
   };
   // 下载引导首页：手机浏览器打开根路径时展示两个 APK 下载入口 + 加速提示
   if (urlPath === "/" && req.method === "GET") {
-    const base = (process.env.DOWNLOAD_BASE || req.headers.host || "localhost").trim().replace(/^https?:\/\//i, "");
+    const base = (process.env.DOWNLOAD_BASE || safeHost(req.headers.host)).trim().replace(/^https?:\/\//i, "");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>共享屏界 下载中心</title><style>
 body{font-family:-apple-system,sans-serif;background:#f4f7fb;margin:0;padding:24px 16px;color:#0f172a}
@@ -364,8 +377,12 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       const versionName = String(payload.versionName || "").trim();
       const changelog = String(payload.changelog || "").trim();
       const app = String(payload.app || "both");
-      // minVersion: 可选，启用版本门禁的最低 versionCode。缺省/0 = 保持现有门禁配置不变
-      const minVersion = parseInt(payload.minVersion, 10) || 0;
+      // minVersion: 可选，启用版本门禁的最低 versionCode。缺省 = 保持现有门禁配置不变；
+      // 显式传 0 = 解除门禁。二者须区分：缺省为 undefined，显式 0 为数字 0
+      const rawMin = payload.minVersion;
+      const minVersion = rawMin === undefined || rawMin === null
+        ? undefined
+        : (parseInt(rawMin, 10) || 0);
       if (!/^\d+\.\d+$/.test(versionName)) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "版本号格式应为 数字.数字（如 1.183）" }));
@@ -610,12 +627,40 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
 
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
-    let start = m && m[1] ? parseInt(m[1], 10) : 0;
-    let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+    let start = 0;
+    let end = total - 1;
+    let parsed = !!m;
+    if (m) {
+      const hasStart = m[1] !== "";
+      const hasEnd = m[2] !== "";
+      if (hasStart) {
+        start = parseInt(m[1], 10);
+        end = hasEnd ? parseInt(m[2], 10) : total - 1;
+      } else if (hasEnd) {
+        // 后缀范围 bytes=-N：RFC 7233 语义为取最后 N 字节，原实现误当作 0..N
+        const suffix = parseInt(m[2], 10);
+        if (Number.isFinite(suffix) && suffix > 0) {
+          start = Math.max(0, total - suffix);
+          end = total - 1;
+        } else {
+          parsed = false;
+        }
+      }
+    }
     // 钳制非法/越界 Range（含 NaN、start>end），防负 Content-Length / 非安全整数导致进程崩溃；
     // 带 Range 的请求一律返回 206（除非请求的恰好是完整 0-(total-1)），
     // 避免客户端分段请求（如 bytes=0--1）拿到 200 全量后各段互相覆盖导致下载卡死
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) { start = 0; end = total - 1; }
+    if (!parsed || !Number.isFinite(start) || !Number.isFinite(end) || start > end) { start = 0; end = total - 1; }
+    if (start >= total) {
+      // 起点超出文件长度：按 RFC 返回 416，避免 createReadStream 越界
+      res.writeHead(416, {
+        "Content-Range": `bytes */${total}`,
+        "Content-Type": "application/vnd.android.package-archive",
+      });
+      res.end();
+      done(416);
+      return;
+    }
     start = Math.max(0, Math.min(start, total - 1));
     end = Math.max(start, Math.min(end, total - 1));
     if (start === 0 && end === total - 1 && m && m[1] === "" && m[2] === "") {

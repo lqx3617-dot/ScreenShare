@@ -142,6 +142,9 @@ const ipClientCount = new Map();
     for (const [ip, entry] of plsJoinAttempts) {
       if (now >= entry.resetAt) plsJoinAttempts.delete(ip);
     }
+    for (const [ip, entry] of roomStatusAttempts) {
+      if (now >= entry.resetAt) roomStatusAttempts.delete(ip);
+    }
   }, 60 * 1000).unref();
 
 
@@ -186,7 +189,7 @@ const accountRouter = new AccountRouter({
   shareHistory,
   notifyUser: (userId, obj) => sendToUser(userId, obj),
 });
-setInterval(() => { rateLimiter.sweep(); accountManager.sweepLoginLimiter(); }, 60 * 1000).unref();
+setInterval(() => { rateLimiter.sweep(); accountManager.sweepLoginLimiter(); accountManager.sweepExpiredSessions(); }, 60 * 1000).unref();
 
 const server = http.createServer((req, res) => {
   // 账号/好友 REST：命中 /account 或 /friends 时由 AccountRouter 接管（自带鉴权与限流）
@@ -381,6 +384,9 @@ wss.on("connection", (ws, request) => {
   const perIp = (ipClientCount.get(ws._ip) || 0) + 1;
   if (allClients.size >= MAX_TOTAL_CLIENTS || perIp > MAX_CLIENTS_PER_IP) {
     console.log(`[ws] reject ${ws._ip} (total=${allClients.size}, perIp=${perIp})`);
+    // 拒接的连接仍需注册 error 处理：客户端在 close 到达前突然断开时
+    // ws 会抛 unhandled error，未注册监听即进程级未捕获异常
+    ws.on("error", (e) => { console.log(`[ws] rejected-conn error ${ws._ip}: ${e.message}`); });
     try { ws.close(1013, "try again later"); } catch (e) {}
     return;
   }
@@ -462,23 +468,32 @@ wss.on("connection", (ws, request) => {
           console.log(`[room ${code}] join rejected (bad token)`);
           return;
         }
-        // 重连恢复优先：同 userId 在宽限期内断开过，直接恢复原 viewerId 槽位，
-        // 会话不结账、host 侧 PC 幂等复用（ICE 失败会自动 restart）
-        if (userId) {
-          const resumed = rooms.resumeViewer(code, userId, ws);
-          if (resumed) {
-            roomCode = code;
-            role = "viewer";
-            viewerId = resumed.viewerId;
-            send(ws, { type: "joined", code, viewerId });
-            const host = rooms.getHost(code);
-            // reconnected=true：host 侧 PC 幂等复用，不重发 offer（ICE 断会自动 restart 重建）
-            if (host) send(host, { type: "viewer-joined", viewerId, reconnected: true });
-            console.log(`[room ${code}] viewer#${viewerId} reconnected (resumed)`);
-            break;
-          }
+        // 重连恢复优先：同身份在宽限期内断开过，直接恢复原 viewerId 槽位，
+        // 会话不结账、host 侧 PC 幂等复用（ICE 失败会自动 restart）。
+        // 未登录 viewer 也走此路径（resumeViewer 内部按 null userId 匹配）
+        const resumed = rooms.resumeViewer(code, userId, ws);
+        if (resumed) {
+          roomCode = code;
+          role = "viewer";
+          viewerId = resumed.viewerId;
+          send(ws, { type: "joined", code, viewerId });
+          const host = rooms.getHost(code);
+          // reconnected=true：host 侧 PC 幂等复用，不重发 offer（ICE 断会自动 restart 重建）
+          if (host) send(host, { type: "viewer-joined", viewerId, reconnected: true });
+          console.log(`[room ${code}] viewer#${viewerId} reconnected (resumed)`);
+          break;
         }
         const res = rooms.requestJoin(code, ws);
+        // 僵尸 viewer 被清理时须通知 host viewer-left 并终止死 socket：
+        // 不然 host 侧 PC 永不回收，且僵尸 close 落入未知分支不结账
+        if (res.purged) {
+          const h = rooms.getHost(code);
+          for (const p of res.purged) {
+            if (h && h.readyState === 1) send(h, { type: "viewer-left", viewerId: p.viewerId });
+            try { p.ws.terminate(); } catch (e) {}
+          }
+          console.log(`[room ${code}] purged ${res.purged.length} zombie viewer(s)`);
+        }
         if (!res.ok) {
           send(ws, { type: "error", message: res.error });
           return;

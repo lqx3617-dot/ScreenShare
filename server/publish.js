@@ -168,8 +168,8 @@ function updateConfig(task) {
   const cfg = loadConfig();
   cfg.changelog = task.changelog;
   cfg.forced = false;
-  // 版本门禁：发布时显式传 minVersion>0 则更新门禁值；传 0 表示解除门禁；缺省保留现有配置
-  if (task.minVersion) cfg.minVersionCode = task.minVersion;
+  // 版本门禁：显式传 minVersion>0 则更新门禁值；显式传 0 解除门禁；缺省（undefined）保留现有配置
+  if (task.minVersion !== undefined) cfg.minVersionCode = task.minVersion;
   saveConfig(cfg);
   task.log.push(`更新版本配置 release-config.json（minVersionCode=${cfg.minVersionCode}）`);
 }

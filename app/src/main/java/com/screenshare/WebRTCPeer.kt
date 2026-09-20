@@ -220,8 +220,25 @@ class WebRTCPeer(
     // v1.333: 上限放开节奏——持续无编码瓶颈证据 30s 后上限 +6fps（24→30→36→42→48），
     // 内容静止/设备降温等真实改善时可逐步回到高帧率；持续超载时学习事件刷新计时器，
     // 放开永不触发（与弱网 congestionForgetMs 同构）
+    // v1.336: 放开节奏改为与当前上限挂钩——上限越低（编码器越吃紧）步长越小，
+    // 避免低上限区 +6 一步跨过编码器真实能力（真机 15→21→27 放开过程中 20fps
+    // 实测编码 20-22fps，+6 到 27 后 3 秒即塌回 20fps 并重新学习）
     private val encFpsReleaseMs = 30_000L
-    private val encFpsReleaseStep = 6
+    private fun encFpsReleaseStep(ceiling: Int): Int = when {
+        ceiling >= 36 -> 6
+        ceiling >= 24 -> 4
+        else -> 3
+    }
+    // v1.336: 放开失败回退。放开后若在 encFpsReleaseBackoffMs 内又触发新的学习，
+    // 说明这一步跨太远（编码器并未真正恢复），回退到放开前的 ceiling 并延长下一次
+    // 放开冷却（指数退避 30s→60s→120s）。持续成功后冷却回落到 30s 基线。
+    // 真机证据：38→44 放开后 9 秒塌到 14fps，直接触发档位上限学习掉到 360p，
+    // 若能回退到 38 而非从 15 重爬，可省掉整轮 6 分钟的低分辨率期
+    private var encFpsPreRelease = 0          // 最近一次放开前的 ceiling，用于失败回退
+    private var encFpsLastReleaseMs = 0L      // 最近一次放开时间，用于判定放开失败
+    private var encFpsReleaseFailures = 0     // 连续放开失败次数（驱动指数退避，位移上限 2）
+    private var encFpsLastReleaseRolledBack = false  // 上一次放开是否被回退（未回退才算成功）
+    private val encFpsReleaseBackoffMs = 15_000L  // 放开后判定失败的时间窗
     // v1.335: 采集档位上限（棘轮）。热降频后编码器在某档位上连最低帧率 15fps 都扛不住时，
     // 记下该档位不可用，回升/降档目标都不再越过其下一档（1080p 不可用→停留 720p），
     // 否则 1080p@15↔720p@15 每 6~10s 无解翻转（真机：一加热降频后 1080p 编码能力塌到
@@ -902,9 +919,11 @@ class WebRTCPeer(
                 listener.onConnectionFailed()
                 return@post
             }
+            // 计数须在 removeViewer 之后写：removeViewer 内部会清掉 viewerRestartCounts，
+            // 先写后清等于每次重连都从 0 重新计数，viewerMaxRestarts 永远无法触发
+            removeViewer(viewerId)
             viewerRestartCounts[viewerId] = count
             AppLogger.network("viewer#$viewerId restarting connection ($count/$viewerMaxRestarts)")
-            removeViewer(viewerId)
             val conn = createViewerConnection(viewerId)
             if (conn != null) {
                 listener.onViewerRestarted(viewerId)
@@ -2148,11 +2167,30 @@ class WebRTCPeer(
                         // v1.335: hadCeiling 须在学习前取值——learned 落地后 encFpsCeiling 必>0
                         val hadCeiling = encFpsCeiling > 0
                         val learned = encodedFps.coerceAtLeast(15)
-                        if (learned != encFpsCeiling) {
-                            AppLogger.capture("编码帧率上限学习: $encFpsCeiling->$learned fps (目标$target)")
-                            encFpsCeiling = learned
+                        // v1.336: 放开后短期内又学习 → 上一次放开跨太远，编码器并未真正
+                        // 恢复到 released 值。须在 learned 写入前判定（写入后 ceiling 已是
+                        // 低值，无法区分「放开过冲」与「更深降档」）：
+                        // 当前 ceiling 仍是某次放开后的高位、且距放开不足回退窗口 → 过冲，
+                        // 回退到放开前曾证明可持续的 preRelease，学习到的低值不保留——
+                        // 它是过冲态下的瞬时测量（44 目标下 14fps）而非真实能力下限。
+                        // 真机：38→44 放开 9s 后塌到 14fps，不回退则要从 15 重爬 6 分钟
+                        val now = System.currentTimeMillis()
+                        val overshot = encFpsPreRelease > 0 && encFpsCeiling > encFpsPreRelease &&
+                            now - encFpsLastReleaseMs < encFpsReleaseBackoffMs
+                        val applied = if (overshot) encFpsPreRelease else learned
+                        if (applied != encFpsCeiling) {
+                            if (overshot) {
+                                AppLogger.capture("编码帧率上限回退: $encFpsCeiling->$applied fps (放开${(now - encFpsLastReleaseMs) / 1000}s 后再超载，丢弃过冲测量值$learned)")
+                            } else {
+                                AppLogger.capture("编码帧率上限学习: $encFpsCeiling->$applied fps (目标$target)")
+                            }
+                            encFpsCeiling = applied
                         }
-                        encFpsLearnMs = System.currentTimeMillis()
+                        if (overshot) {
+                            encFpsLastReleaseRolledBack = true
+                            if (encFpsReleaseFailures < Int.MAX_VALUE) encFpsReleaseFailures++
+                        }
+                        encFpsLearnMs = now
                         // v1.335: 已有帧率上限学习却仍跌破 15fps → 当前采集档位本身超载，
                         // 档位上限记到下一档（更低分辨率），回升不再回到该档位。
                         // lastCaptureProfile 为降档前的档位（切换被冷却挡住时仍是旧档位，正是超载者）
@@ -2166,7 +2204,9 @@ class WebRTCPeer(
                     }
                     encLoadDown = true
                     encLoadSamples = 0
-                    applyEncoderLoadProfile(true)
+                    // 须 post 到主线程：applyEncoderLoadProfile 操作 sender 参数，
+                    // 与 startCameraVideo/setViewerStall 的主线程调用并发会竞争 RtpParameters（S3）
+                    mainHandler.post { applyEncoderLoadProfile(true) }
                 }
             } else {
                 encLoadSamples = 0
@@ -2179,31 +2219,42 @@ class WebRTCPeer(
                 if (encRecoverSamples >= 4) {
                     encLoadDown = false
                     encRecoverSamples = 0
-                    applyEncoderLoadProfile(false)
+                    mainHandler.post { applyEncoderLoadProfile(false) }
                 }
             } else {
                 encRecoverSamples = 0
             }
         }
         // v1.333: 上限棘轮放开。要求当前编码帧率已达标（达标才说明有余量试探更高目标），
-        // 且距最近一次学习已超 encFpsReleaseMs 无瓶颈证据。统计缺失时不放开（无余量证据）
+        // 且距最近一次学习已超放开冷却无瓶颈证据。统计缺失时不放开（无余量证据）
+        // v1.336: 步长随当前 ceiling 收窄（低上限区 +3/+4，高上限区 +6），并对连续
+        // 放开失败施加指数退避（30s→60s→120s 封顶）。学习块在放开后 15s 内再次触发
+        // 时回退到 encFpsPreRelease 并把 failures+1，此处冷却随之延长，下次放开更保守。
+        // 上一次放开挺过回退窗口（未回退）→ 连续失败计数清零，新一轮从基线冷却开始
+        val shift = minOf(2, if (encFpsLastReleaseRolledBack) encFpsReleaseFailures else 0)
+        val releaseCooldown = if (shift <= 0) encFpsReleaseMs else encFpsReleaseMs shl shift
         if (encFpsCeiling > 0 && encFpsCeiling < highMotionFpsCap &&
-            (encodedFps <= 0 || encodedFps >= target * 0.9) &&
-            System.currentTimeMillis() - encFpsLearnMs >= encFpsReleaseMs) {
-            val released = minOf(highMotionFpsCap, encFpsCeiling + encFpsReleaseStep)
-            AppLogger.capture("编码帧率上限放开: $encFpsCeiling->$released fps (无瓶颈证据${encFpsReleaseMs / 1000}s)")
+            encodedFps > 0 && encodedFps >= target * 0.9 &&
+            System.currentTimeMillis() - encFpsLearnMs >= releaseCooldown) {
+            if (!encFpsLastReleaseRolledBack) encFpsReleaseFailures = 0
+            val step = encFpsReleaseStep(encFpsCeiling)
+            val released = minOf(highMotionFpsCap, encFpsCeiling + step)
+            AppLogger.capture("编码帧率上限放开: $encFpsCeiling->$released fps (无瓶颈证据${releaseCooldown / 1000}s)")
+            encFpsPreRelease = encFpsCeiling
             encFpsCeiling = released
-            encFpsLearnMs = System.currentTimeMillis()
+            encFpsLastReleaseMs = System.currentTimeMillis()
+            encFpsLastReleaseRolledBack = false
+            encFpsLearnMs = encFpsLastReleaseMs
         }
         // v1.335: 档位上限放开更保守——须帧率上限已完全放开（当前档位已证明无编码瓶颈），
         // 否则热降频期间每 30s 试探高分辨率都是白白翻转（每次都触发关键帧+采集管线重建）。
         // 帧率上限卡在中间值时本块永不触发，热降频设备会话内稳定停留在低分辨率档
         if (encProfileCeiling > 0 && encFpsCeiling >= highMotionFpsCap &&
             encodedFps > 0 && encodedFps >= target * 0.9 &&
-            System.currentTimeMillis() - encFpsLearnMs >= encFpsReleaseMs) {
+            System.currentTimeMillis() - encFpsLearnMs >= releaseCooldown) {
             encProfileCeiling--
             encFpsLearnMs = System.currentTimeMillis()
-            AppLogger.capture("采集档位上限放开: ->$encProfileCeiling (帧率上限已全开+无瓶颈证据${encFpsReleaseMs / 1000}s)")
+            AppLogger.capture("采集档位上限放开: ->$encProfileCeiling (帧率上限已全开+无瓶颈证据${releaseCooldown / 1000}s)")
         }
     }
 
@@ -2692,6 +2743,10 @@ class WebRTCPeer(
         encNoStatSamples = 0
         encFpsCeiling = 0
         encFpsLearnMs = 0L
+        encFpsPreRelease = 0
+        encFpsLastReleaseMs = 0L
+        encFpsReleaseFailures = 0
+        encFpsLastReleaseRolledBack = false
         encProfileCeiling = 0
         viewerStallActive = false
         lastCaptureFps = 30
