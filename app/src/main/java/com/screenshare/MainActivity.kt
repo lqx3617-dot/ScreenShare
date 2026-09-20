@@ -262,7 +262,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 视频通话功能：小窗是否被用户点击放大全屏 / 隐藏、是否保持屏幕常亮
     private var cameraPipMaximized = false
     private var cameraPipHidden = false
-    private var keepScreenOnForCall = false
+    // 屏幕常亮：共享/观看期间（P2P 已连接）或视频通话期间保持屏幕不熄灭
+    private var keepScreenOn = false
 
     // 相册查看（主 App 内 WebView 加载聚合相册页，无需链接）
     private var albumWebView: WebView? = null
@@ -1139,8 +1140,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }
         videoCallOn = true
         // 视频通话保持屏幕常亮（避免观看过程中黑屏）
-        if (!keepScreenOnForCall) {
-            keepScreenOnForCall = true
+        if (!keepScreenOn) {
+            keepScreenOn = true
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         // 麦克风联动：开摄像头自动开麦（未开时自动开启；仅挂载不协商，统一在下方触发一次）
@@ -1181,8 +1182,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun closeVideoCall(notify: Boolean) {
         val p = peer
         // 视频通话关闭：移除屏幕常亮（peer 可能已断开，常亮仍需清理）
-        if (keepScreenOnForCall) {
-            keepScreenOnForCall = false
+        if (keepScreenOn) {
+            keepScreenOn = false
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         if (p == null) {
@@ -2181,6 +2182,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 立即建立，不能依赖主连接 ICE 状态。host 端不显示本地预览视频（共享方看自己的屏幕即可）。
         if (isHost) {
             updateUI("✅ 屏幕共享进行中...")
+            // host 主连接 ICE 永不 CONNECTED（onConnected 不触发），此处与 viewer 对齐开启屏幕常亮
+            if (!keepScreenOn) {
+                keepScreenOn = true
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             startStatusBreathing()
             enterMeetingUI()
             binding.btnMic.visibility = View.VISIBLE
@@ -2724,6 +2730,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     private fun cleanupPeer() {
         stopAdaptiveLoop()
         stopViewerStatsLoop()
+        // 兜底关闭屏幕常亮：onDisconnected 的终止分支会处理，此处防止漏走该分支的退出路径
+        if (keepScreenOn) {
+            keepScreenOn = false
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         albumCancel = true
         peer?.disconnect()
          peer = null
@@ -3023,6 +3034,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onConnected() {        runOnUiThread {
             // v1.261: 从重连态恢复——无感继续会议，提示"连接已恢复"
             p2pConnected = true
+            // 共享/观看期间保持屏幕常亮（视频通话沿用同一标志），避免看到一半黑屏
+            if (!keepScreenOn) {
+                keepScreenOn = true
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
             if (reconnecting) {
                 reconnecting = false
                 updateUI("连接已恢复")
@@ -3073,6 +3089,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 stopAdaptiveLoop()
                 stopViewerStatsLoop()
                 stopDuckLoop()
+                // 连接结束：关闭屏幕常亮（视频通话的常亮也由此统一兜底）
+                if (keepScreenOn) {
+                    keepScreenOn = false
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
                 updateUI("连接已断开")
                 stopStatusBreathing()
                 SystemAudioBridge.stopPlayback()
@@ -4734,8 +4755,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 呼吸灯动画随会话结束停止，避免 INFINITE ValueAnimator 泄漏（B6）
         stopStatusBreathing()
         binding.llCallExtras.visibility = View.GONE
-        if (keepScreenOnForCall) {
-            keepScreenOnForCall = false
+        if (keepScreenOn) {
+            keepScreenOn = false
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         binding.llStatus.visibility = View.VISIBLE
