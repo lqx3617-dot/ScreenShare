@@ -2530,8 +2530,13 @@ class WebRTCPeer(
         // v1.294: 帧率上限须与 applyEncoderLoadProfile 用同一公式（编码负载降档时夹到 24），
         // 否则 level 0 + 编码降档时此处把 captureFps 抬回 48，而采集器仍是 24fps，
         // adaptToEncoderLoad 用 target=48 判定编码滞后又降回 24，24↔48 振荡且永久无法恢复（M2）
+        // v1.333: 升级为夹到 encFpsCeiling（编码器实测上限）。仅 encLoadDown=true 时夹 24
+        // 不够：回升后 encLoadDown=false，此处又把 captureFps 顶回 highMotionFpsCap=48，
+        // 棘轮夹取被覆盖，1080p@48↔720p@24 周期翻转照旧（真机日志 19:57:26 回升到
+        // 1920x1329@15，8 秒后此处改回 @48，19:57:34 再次超载学习，上限在 15~25 反复）
         val baseFps = captureFpsForLevel(curAdaptLevel)
-        val targetFps = if (encLoadDown) minOf(baseFps, 24) else baseFps
+        val ceiling = if (encFpsCeiling > 0) encFpsCeiling else Int.MAX_VALUE
+        val targetFps = if (encLoadDown) minOf(baseFps, 24, ceiling) else minOf(baseFps, ceiling)
         val profileChanged = targetProfile != lastCaptureProfile
         if (profileChanged || targetFps != captureFps) {
             val now = System.currentTimeMillis()
