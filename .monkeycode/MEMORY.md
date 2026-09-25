@@ -639,3 +639,46 @@ Entries discovered by the Agent during task execution should follow this format:
   - **根因（app/src/main/java/com/screenshare/VideoTranscoder.kt 的 SurfaceRender）**：①`SurfaceTexture` 用纹理名 0 在 EGL 上下文创建之前（字段初始化阶段）构造，会在「无当前 GL 上下文」时另生成内部纹理，着色器采样的 `texId` 永远拿不到解码帧 → 每帧全黑；必须先 `initEgl()` + `initGl()`（生成 texId），再 `SurfaceTexture(texId)`。②解码帧渲染顺序颠倒：应先 `decoder.releaseOutputBuffer(outIdx, true)` 再 `renderer.render(...)`（其内 `updateTexImage`），否则纹理慢一帧、首帧黑。
   - v1.246(249) 产物：ScreenShare-allarch-signed.apk md5=6ccdb148709207a2bd929bf19ec51a0b、arm64 md5=50ff41b631d8c72b46302e391371c5ea；构建脚本 /tmp/opencode/build_v1246.sh。commit acca326（已 push）。
   - 注意：修复前已上传的黑视频不会自动恢复，需用修复版 App 重新上传相册才会生成正常视频。
+
+## v1.248 老设备共享卡顿（自适应自我降档死循环 + 候选对 RTT）+ 运行日志导出（2026-09-14）
+
+[Project Knowledge Summary]
+- Date: 2026-09-14
+- Context: 老设备共享播放视频实测 FPS 2 / Bitrate 0.8M / Delay 713ms，路径为 LAN 直连（host 192.168.5.x）
+- Category: Troubleshooting & Debugging & Operations & Deployment
+- Instructions:
+  - **自适应「带宽匹配降档」自我降档死循环（WebRTCPeer.applyNetworkAdaptation）**：旧逻辑把 `actualBitrateBps`（实测发送码率）当作链路带宽估计，而实测值又被档位上限压着 → 档位越低→`setBitrate` 目标越低→实测越低→判定带宽越差→继续降档，一旦内容短暂静止或编码输出变少就自锁最低档 800k（Bitrate 显示恰好等于 `adaptBitrateCaps[6]` 即此症）。修复：只在「实测 < 下发目标×0.55（linkShortfall）且 qualityLimitationReason=bandwidth（机型不报该字段时退回 loss≥1% 或 rtt≥250ms）」时才按实测降档；实测≈目标判为内容/编码所致不降档。参照基准 `lastEncoderTargetBps` 在 `setBitrate(cap*0.7)` 时记录。
+  - **候选对 RTT 取值**：`candidate-pair` 统计旧逻辑对所有 `nominated=true` 的对 last-wins，ICE 重连/多次提名后会命中历史遗留对读到过期偏高的 RTT（本次 LAN 直连误报 713ms）→ rttLevel=4 误降档。修复：优先取 `transport.selectedCandidatePairId` 指向的对，缺失时退回 nominated 且 `state=succeeded` 的对（collectStatsFor）。
+  - **运行日志落盘 + 导出**：AppLogger 现除 logcat 外写入 `filesDir/logs/screenshare.log`（超 1MB 截断保留后半段），`AppLogger.init(context)` 在 MainActivity.onCreate 调用；「更多」面板新增「导出日志」按钮，经 FileProvider（`file_paths.xml` 加 `<files-path name="logs" path="logs/"/>`）用 ACTION_SEND 分享，现场排查无需抓 logcat。
+  - v1.248(251) 产物：ScreenShare-allarch-signed.apk md5=de9b84590662a4e7e37e236acd00f1dc、arm64 md5=57ddd21e0ff2ec8f0c84452a2b301f7a；构建脚本 /tmp/opencode/build_v1248.sh；8090 version.json 已自动同步 251/1.248。
+  - v1.249(252) 诊断增强（配合上述卡顿排查）：全屏统计循环原先 `if (!isFullscreen) return`（MainActivity:3378），普通使用下导出的日志缺少 NETWORK/WEBRTC 数据。现把关键统计改为始终落盘——`WebRTCPeer.applyNetworkAdaptation` 每次采样记录「档位/上限/目标/实发/丢包/rtt/瓶颈」，观看方 `startViewerStatsLoop` 每 2s 记录「收帧率/分辨率/rtt/掉帧率/路径」。产物 md5：allarch=c8610af7ec71c3a6a16391be1c267c4e、arm64=99cc6c135188ac5855c9b6d420f404fd；脚本 /tmp/opencode/build_v1249.sh。
+  - 已确认共享方机型=realme RMX3350(Android12)，非低端判定（6/8G RAM → largeMemoryClass>256 → isLowEndDevice=false），故开局采集 959x1920@48；曾因观看端反馈掉帧降到 639x1280@24 档位1。
+  - 下次复现步骤：两端都更新到最新版 → 共享方正常使用（无需全屏）→ 复现延迟高 → 「导出日志」上传，日志中 `NETWORK viewer ...`/`NETWORK viewer#N 档位...` 两行即可对照。
+
+## v1.250 host 端自适应循环从未启动（共享方卡顿真正根因）（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.248/v1.249 已修两处自适应根因，但共享方导出日志仍无 `NETWORK ...` 统计行，卡顿未改善
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **根因**：`MainActivity.startAdaptiveLoop()`（弱网/编码自适应的唯一驱动）唯一调用点是 `onConnected()`（行 ~2555）。但 host 端 `onConnected()` 从不触发——主连接仅作采集底座、ICE 永不 CONNECTED（V4 设计，见行 ~1896 注释），而 `WebRTCPeer.createViewerConnection` 的 per-viewer `onIceConnectionChange` CONNECTED 分支只打日志 + `requestKeyFrame()`，**未回调 `listener.onConnected()`**。结果：共享方自适应全程不运行，停留在初始码率（1/4/12M），RTT 升高/无线排队时不会降码率或降分辨率 → 延迟持续累积。此前 v1.240~v1.249 的所有自适应改进在 host 端实际从未生效（v1.248 日志里那次降档来自观看端 stream-stall 反馈 `setViewerStall` → 直接 `applyEncoderLoadProfile`，与循环无关，故时间戳紧邻 18ms）。
+  - **排查手法**：host 导出日志只出现 `viewer#N connection created/ICE/connected` 与 `CAPTURE`，无 `NETWORK`；在 `applyNetworkAdaptation` 末尾的无条件 log 仍不出现 → 证明函数未被调用（而非被提前 return）。判断「某段逻辑是否执行」优先看无条件日志是否出现。
+  - **修复**：`handleViewerJoined` 建连成功后 `if (adaptiveHandler == null) startAdaptiveLoop()`，不再依赖 `onConnected`。另修一个潜在坑：viewer 若先于采集启动加入（`screenCaptureReady=false`），`createViewerConnection` 时 `localVideoTrack` 为空 → `conn.videoSender` 永久为 null（无视频且自适应空转）；现将挂轨逻辑抽成 `attachScreenTrack(viewerId, conn)`，并在 `startScreenCapture` 末尾调 `attachScreenTrackToViewers()` 补挂到已创建连接。
+  - v1.250(253) 产物：allarch md5=fc59a38096fc5ff3705170b4061dd84c、arm64 md5=1d91ff5fc2b2975c3120400426d9ac84；构建脚本 /tmp/opencode/build_v1250.sh；8090 version.json 已自动同步 253/1.250；commit a15c0af。
+  - 复测预期：共享方日志应出现周期 `NETWORK viewer#N 档位X 上限Xk 目标Xk 实发Xk 丢包X% rtt=Xms 瓶颈=...`（约 1.5s 一行）。
+
+## v1.251 共享方自适应震荡与开局卡顿收敛（2026-09-15）
+
+[Project Knowledge Summary]
+- Date: 2026-09-15
+- Context: v1.250 启用 host 自适应后，用户反馈「开局播放视频很卡，2~3 分钟后不卡但仍有延迟」，导出日志显示档位 0↔6 周期震荡、RTT 在 5ms 与 2000-3000ms 间成块跳变
+- Category: Troubleshooting & Debugging & Build Methods
+- Instructions:
+  - **现象**：`NETWORK` 行显示档位每几十秒在 0（9M）与 6（800k）间往返；开局 00:20:33 实发 11213k（超 9M 上限）→ 1.5s 后丢包 65.6%/rtt 1543ms → 崩到档位 6。档位 800k 时实发仍达 1800~2600k。稳定区在档位 2（4M）附近（rtt 4~31ms）。
+  - **根因①编码器上限未跟随档位**：`applyNetworkAdaptation` 只调 `pc.setBitrate(min,target,max)`（拥塞控制目标），从未改 `sender.parameters.encodings[].maxBitrateBps`，编码器一直按初始 9M 出帧；弱网降档后编码器仍输出高码率 → 发送队列积压 → 实测超档、RTT 秒级。修复：cap 变化时同步 `enc.maxBitrateBps = cap`、`enc.minBitrateBps = min(500k, cap)`。
+  - **根因②恢复无记忆**：拥塞信号一消失就每 6s 回升一档直到 9M，随即再拥塞 → 周期震荡。修复：新增 `minAdaptLevel`（降档发生时记录被降档位，恢复不得越过其下一档），仅当连续 60s 无降档事件才逐级松弛（`congestionForgetMs`）。
+  - **根因③开局冲动**：`curAdaptLevel` 初值 0（9M）+ 起始采集 1080p@48，弱 WiFi 开局瞬间打满空口。修复：初值改 2（4M），`startScreenCapture` 起始采集改用 `captureProfileForLevel(curAdaptLevel)`/`captureFpsForLevel(curAdaptLevel)`（→720p@28），避免两次抖动；网络好约 12s 内回升 1080p。`initialCaptureProfile()` 已删除。
+  - 共享方 `NETWORK` 行新增 `路径=`（来自 `collectStatsFor` 的 `lastStatsPathType`），用于识别是否走 relay 中继（relay 会显著抬高 RTT）。
+  - v1.251(254) 产物：allarch md5=1a5dddac6a9068c2a11c73fbf9b4ab14、arm64 md5=3dc9a9c28dad99a1d0b4f1bab083445c；构建脚本 /tmp/opencode/build_v1251.sh；8090 version.json 已自动同步 254/1.251；commit 6c1012d。
+  - 关键统计 JSON 字段（collectStatsFor）：`inFps/outFps/rtt/inBytes/outBytes/outW/outH/lost/lostTotal/nack/inDropped/inDecoded/outLost/outSent/outLossPct/encImpl/qualityLimit/path/pathType`。`fractionLost` 本 SDK 上报 0~255 字节值，>1 时需 /256 还原（已修）。

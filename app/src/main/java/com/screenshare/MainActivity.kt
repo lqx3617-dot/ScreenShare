@@ -49,6 +49,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.screenshare.databinding.ActivityMainBinding
@@ -239,6 +240,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         installCrashHandler()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // v1.248: 初始化落盘日志（真机排查用，可在「更多」面板「导出日志」一键分享）
+        AppLogger.init(this)
 
         eglBaseContext = AppEglBase.context()
 
@@ -260,6 +263,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnToolbarMore.setOnClickListener { toggleMorePanel() }
         binding.btnCameraCapture.setOnClickListener { onCameraCaptureClicked() }
         binding.tvCheckUpdate.setOnClickListener { onCheckUpdateClicked() }
+        binding.btnExportLog.setOnClickListener { exportLogFile() }
         binding.btnFullscreen.setOnClickListener { enterFullscreen() }
         binding.btnExitFullscreen.setOnClickListener { exitFullscreen() }
         binding.btnFpsToggle.setOnClickListener { onFpsToggleClicked() }
@@ -465,6 +469,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnAlbum.visibility = View.GONE
         binding.btnCameraCapture.visibility = View.GONE
         binding.tvCheckUpdate.visibility = View.GONE
+        binding.btnExportLog.visibility = View.GONE
         binding.tvTitleBrand.visibility = View.GONE
         binding.btnPip.visibility = View.GONE
         if (binding.flFullscreen.visibility != View.VISIBLE) {
@@ -1284,6 +1289,32 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             return
         }
         UpdateChecker.check(this, manual = true)
+    }
+
+    /**
+     * v1.248: 导出运行日志——把落盘的 logs/screenshare.log 通过系统分享面板发送出去，
+     * 便于用户在不连电脑抓 logcat 的情况下反馈老设备卡顿等问题。
+     */
+    private fun exportLogFile() {
+        try {
+            val f = AppLogger.logFile()
+            if (f == null || !f.exists() || f.length() == 0L) {
+                Toast.makeText(this, "暂无日志可导出", Toast.LENGTH_SHORT).show()
+                return
+            }
+            AppLogger.app("用户导出日志文件 (${f.length()}B)")
+            val uri: Uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "ScreenShare 运行日志")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "导出日志"))
+        } catch (t: Throwable) {
+            Log.w(TAG, "导出日志失败: ${t.message}")
+            Toast.makeText(this, "导出日志失败，请稍后重试", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** 标题三连击计数：2 秒内连续点击标题 3 次触发相册入口（隐藏入口） */
@@ -2424,6 +2455,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("⚠️ 与对方建立连接失败")
             return
         }
+        // host 端主连接 ICE 永不 CONNECTED（onConnected 不触发），弱网/编码自适应循环必须在此显式启动，
+        // 否则共享方全程停留在初始码率，弱网下 RTT 排队延迟持续累积、观看端卡顿（v1.250 修复）
+        if (adaptiveHandler == null) startAdaptiveLoop()
         // 采集已就绪则立即发 Offer（Trickle ICE，候选随后增量）
         if (screenCaptureReady) {
             p.createOfferFor(viewerId)
@@ -3532,9 +3566,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                                 lastAdaptOutMs = nowMs
                             }
                             if (vid > 0) {
-                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs, actualBps)
+                                peer?.adaptViewerNetwork(vid, outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit)
                             } else {
-                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs, actualBps)
+                                peer?.adaptToNetwork(outLossPct, outSent, outLost, rttMs, actualBps, qualityLimit)
                             }
                             peer?.adaptToEncoderLoad(outFps, qualityLimit)
                         }
@@ -3634,6 +3668,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         val dropText = if (lastDropPct >= 5.0) " · 掉帧${"%.0f".format(lastDropPct)}%" else ""
                         val maskedPath = if (selPath.isNotBlank()) maskIp(selPath) else ""
                         val pathText = if (maskedPath.isNotBlank()) " | 路径:${maskedPath.take(50)}" else ""
+                        // v1.249: 观看方统计落盘（不依赖全屏），导出日志可对照两端 RTT/收帧率/掉帧
+                        AppLogger.network(
+                            "viewer 收帧${fps}fps ${w}x$h rtt=${rtt}ms 掉帧${"%.0f".format(lastDropPct)}% path=${selPath.ifEmpty { "-" }}"
+                        )
                         val text = "延迟 $rttText · ${fps}fps${if (w > 0) " · ${w}x$h" else ""}$dropText$pathText$hint"
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed && peer != null) {
