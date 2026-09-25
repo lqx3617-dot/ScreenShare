@@ -968,3 +968,26 @@ Entries discovered by the Agent during task execution should follow this format:
   - 关键陷阱：设置采集帧率/档位的地方有四处（startScreenCapture 初始化、applyEncoderLoadProfile、applyNetworkAdaptation），任一处不夹到棘轮值都会被另一条路径覆盖，棘轮形同虚设——v1.333 就是这样失效的
   - 真机数据（热降频的一加）：棘轮收敛后采集格式切换从 v1.334 的每 7s 一次降到每 4 分钟一次，稳定段（480p@20-26fps、丢包 0%、缓冲 110ms）连续 134 个采样零冻结；残余冻结精确聚集在 3 次坍塌时刻（各 +5 次），是 changeCaptureFormat 的固有代价无法消除
   - 热降频设备的稳态循环无法根除：480p 帧率放回到 48 → 档位放开到 720p → 坍塌 → 回 480p，周期约 4 分钟。进一步收紧档位放开节奏收益有限（坍塌是 720p 真的扛不住，不是试探时机问题）
+
+[Project Knowledge Summary]
+- Date: 2026-09-20
+- Context: Discovered by Agent while 排查用户报「会议创建不了、好友列表消失」（realme RMX3350 v1.336）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - **账号长连接重连风暴根因（服务端已修，commit 91856df）**：server.js 心跳扫描只在 `ws.on("message")` 刷新 `ws.lastSeen`，而 OkHttp 的 `pingInterval(20s)` 发的是协议级 WS PING 帧——ws 库会自动回 PONG 但**不触发 message 事件**，纯协议保活的连接被误判空闲而 `terminate`。客户端每 ~60s 重连一次，持续数小时累计数百次连接，是触发反向代理 WAF（长亭 Chaitin，47.110.81.74）封禁手机出口 IP 的导火索，封禁后表现为 TCP 全部 10s 超时（会议创建失败、好友接口走同一域名故列表空）
+  - 排查方法论（可复用）：服务端日志的 `[heartbeat] ws NNNNN idle > 45000ms` 里 NNNNN 是 `ws._socket.remotePort`（socketId）**不是空闲时长**；判定连接寿命要看 app 侧日志成对时间戳（WS 已连接→WS 异常）。连接寿命恒为 45-75s（=45s 超时+30s 扫描周期）即 idle-kill 特征
+  - 协议帧 vs 应用帧保活的区分验证：公网探测脚本只发 PING 帧被 +73s 踢断（1006）、只发 `{"type":"ping"}` 文本可活过 90s，证明隧道透传两种帧、问题在服务端 lastSeen 口径
+  - 修复：server.js 加 `ws.on("ping"/"pong")` 刷新 lastSeen；relay-server.js 的 createWsParser onPing 回调同步刷新（注意该 parser 签名只有 onText/onClose/onPing 三个参数，不能多加）；HEARTBEAT_TIMEOUT_MS/HEARTBEAT_SCAN_MS 支持 env 覆盖仅为回归测试（生产默认 45s/30s 不变）
+  - 部署方式：kill 监听 8095/8097 的 node 进程，supervise-server.sh 守护 15s 内自动用新代码拉起；服务端热更新无需发 App 版本
+
+  - **服务端改代码后忘重启的症状特征（v1.345 情侣空间排查）**：修改 /workspace/server/*.js 后若未 kill 对应端口进程，生产环境仍跑旧代码；特征是新增路由的请求落到 signaling 默认兜底，返回 `Content-Type: text/plain` 的 `ScreenShare signaling server is running`（而非 JSON），客户端 AccountClient.call 用 JSONObject 解析该文本失败，UI 提示「响应格式错误」（HTTP 状态仍是 200，callRaw 的 2xx 分支不报 HTTP 错误）。排查命令：`ps -o pid,lstart -p <监听8095的PID>` 对比 `stat -c '%y' server/AccountRouter.js`；进程时间早于文件修改时间即中招。修复：kill PID 后 supervise-server.sh 15s 内自动拉起新代码
+
+[Project Knowledge Summary]
+- Date: 2026-09-22
+- Context: Discovered by Agent while 配置高德逆地理编码（情侣空间位置显示地址，v1.348）
+- Category: Environment Configuration
+- Instructions:
+  - 服务端环境变量统一在 `/tmp/opencode/supervise-server.sh` 各 check 行的 env 参数中（如 8095 行的 AMAP_KEY/JPUSH_*）；修改后必须 kill 守护脚本所在后台终端并用 background_terminal_create 重跑脚本——bash while 循环已把旧命令读入内存，kill 8095 node 进程只会让旧环境重拉
+  - 正确的环境变量更新顺序：改脚本 → background_terminal_kill 旧守护终端 → 立即重起守护脚本 → kill 目标端口 node 进程 → 守护 15s 内用新环境拉起
+  - 高德 Web 服务 Key 可直接调 restapi.amap.com/v3/geocode/regeo，无需绑定 SHA1/包名；服务端 GeoCoder.js 只从 process.env.AMAP_KEY 读取，未配置时 reverse() 返回 null 由客户端降级经纬度
+  - 发布签名 SHA1（keytool -list -v -keystore /workspace/signing/release.keystore -storepass 见签名配置，alias screenshare）：69:EA:C9:B2:0A:AF:06:5D:99:A0:7F:70:84:62:C0:19:E7:9C:2E:3F，包名 com.screenshare

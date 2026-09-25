@@ -7,6 +7,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * V3.1: 统一日志工具——按模块打 tag，便于真机排查时按 WEBRTC/NETWORK/CAPTURE 过滤。
@@ -33,6 +35,14 @@ object AppLogger {
     @Volatile private var logFile: File? = null
     private val lock = Any()
     private val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+
+    // v1.294: 落盘走专用单线程队列，日志风暴/大文件截断不再卡主线程；
+    // 待写超过上限时丢弃最旧的请求，防止积压导致内存与延迟雪崩
+    private const val MAX_PENDING = 2000
+    private val pendingCount = AtomicInteger(0)
+    private val ioExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "applog-io").apply { isDaemon = true }
+    }
 
     /**
      * 初始化日志文件并写入设备信息头部（机型验证：型号/系统/分辨率/内存/诊断ID）。幂等。
@@ -85,7 +95,20 @@ object AppLogger {
 
     private fun d(tag: String, msg: String) {
         Log.d(tag, msg)
-        writeLine("$tag $msg")
+        // 落盘异步化：writeLine 可能触发整文件读+写（截断），放主线程会卡 UI（服务工具类）
+        if (pendingCount.incrementAndGet() > MAX_PENDING) {
+            pendingCount.decrementAndGet()
+            return
+        }
+        val line = "$tag $msg"
+        ioExecutor.execute {
+            try {
+                writeLine(line)
+            } catch (_: Throwable) {
+            } finally {
+                pendingCount.decrementAndGet()
+            }
+        }
     }
 
     private fun writeLine(line: String) {

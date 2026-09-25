@@ -8,6 +8,8 @@ const { openDb } = require("../db");
 const { RateLimiter } = require("../RateLimiter");
 const { AccountManager, AccountError } = require("../AccountManager");
 const { AccountRouter } = require("../AccountRouter");
+const { CoupleManager } = require("../CoupleManager");
+const { FriendManager } = require("../FriendManager");
 
 const PASSWORD = "Passw0rd!";
 
@@ -15,7 +17,13 @@ function makeEnv() {
   const db = openDb(":memory:");
   const rateLimiter = new RateLimiter();
   const manager = new AccountManager(db);
-  return { db, rateLimiter, manager };
+  return {
+    db,
+    rateLimiter,
+    manager,
+    couples: new CoupleManager(db, null),
+    friends: new FriendManager(db),
+  };
 }
 
 async function registerUser(env, nickname, password = PASSWORD) {
@@ -117,6 +125,75 @@ test("资料更新校验昵称长度与头像档位", async () => {
   assert.throws(
     () => env.manager.updateProfile(reg.userId, { avatar: "9" }),
     (e) => e instanceof AccountError && e.code === "invalid_avatar"
+  );
+});
+
+test("好友码修改：校验格式与唯一性，改码作废待处理邀请", async () => {
+  const env = makeEnv();
+  const a = await registerUser(env, "改码用户");
+  const b = await registerUser(env, "占位用户");
+
+  // 正常修改
+  const updated = env.manager.updateProfile(a.userId, { friendCode: "XYZ234" });
+  assert.equal(updated.friendCode, "XYZ234");
+
+  // 小写自动转大写
+  assert.equal(env.manager.updateProfile(a.userId, { friendCode: "abc567" }).friendCode, "ABC567");
+
+  // 格式非法：长度、含 I/O/0/1
+  for (const bad of ["ABC12", "ABCDEFG", "ABCIO0", "ABC 12"]) {
+    assert.throws(
+      () => env.manager.updateProfile(a.userId, { friendCode: bad }),
+      (e) => e instanceof AccountError && e.code === "invalid_friend_code",
+      `应拒绝非法好友码: ${bad}`
+    );
+  }
+
+  // 与他人冲突
+  assert.throws(
+    () => env.manager.updateProfile(a.userId, { friendCode: b.profile.friendCode }),
+    (e) => e instanceof AccountError && e.code === "friend_code_taken"
+  );
+
+  // 与自己相同的好友码可通过（幂等）
+  assert.equal(env.manager.updateProfile(a.userId, { friendCode: "ABC567" }).friendCode, "ABC567");
+});
+
+test("改好友码作废自己名下待处理的情侣邀请与好友申请", async () => {
+  const env = makeEnv();
+  const a = await registerUser(env, "邀请方");
+  const b = await registerUser(env, "被邀请方");
+  const c = await registerUser(env, "第三方");
+
+  // b 的旧码：a 用旧码发起情侣邀请，c 用旧码发起好友申请
+  const oldCode = b.profile.friendCode;
+  env.couples.invite(a.userId, oldCode);
+  env.friends.request(c.userId, oldCode);
+
+  const pendingCouple = env.db.prepare(
+    `SELECT status FROM couple_invitations WHERE to_user = ? AND status = 'pending'`
+  ).get(b.userId);
+  const pendingFriend = env.db.prepare(
+    `SELECT status FROM friend_requests WHERE to_user = ? AND status = 'pending'`
+  ).get(b.userId);
+  assert.ok(pendingCouple && pendingFriend, "改码前应存在待处理邀请");
+
+  // b 改好友码
+  env.manager.updateProfile(b.userId, { friendCode: "NEW888" });
+
+  const cancelledCouple = env.db.prepare(
+    `SELECT status FROM couple_invitations WHERE to_user = ? AND status = 'pending'`
+  ).get(b.userId);
+  const cancelledFriend = env.db.prepare(
+    `SELECT status FROM friend_requests WHERE to_user = ? AND status = 'pending'`
+  ).get(b.userId);
+  assert.equal(cancelledCouple, undefined, "情侣邀请应已作废");
+  assert.equal(cancelledFriend, undefined, "好友申请应已作废");
+
+  // 旧码查无此人，新邀请直接失败
+  assert.throws(
+    () => env.couples.invite(a.userId, oldCode),
+    (e) => e instanceof Error && e.code === "invalid_code"
   );
 });
 

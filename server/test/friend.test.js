@@ -368,38 +368,16 @@ test("推送令牌端点", async () => {
   }
 });
 
-test("FcmPusher 缺私钥时禁用，合法结构时启用", () => {
-  const { FcmPusher } = require("../FcmPusher");
-  const missing = new FcmPusher("/nonexistent/path.json");
-  assert.equal(missing.enabled, false);
-
-  // 伪造合法结构的服务账号（不联网，只验证解析与启用判断）
-  const fs = require("fs");
-  const os = require("os");
-  const path = require("path");
-  const { generateKeyPairSync } = require("crypto");
-  const privateKey = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-    format: { type: "pkcs8" },
-    privateKeyEncoding: { type: "pkcs1", format: "pem" },
-  }).privateKey;
-  const tmp = path.join(os.tmpdir(), `fcm-fake-${Date.now()}.json`);
-  fs.writeFileSync(
-    tmp,
-    JSON.stringify({
-      type: "service_account",
-      project_id: "fake-project",
-      private_key: privateKey,
-      client_email: "fake@fake-project.iam.gserviceaccount.com",
-    })
-  );
-  try {
-    const pusher = new FcmPusher(tmp);
-    assert.equal(pusher.enabled, true);
-    assert.equal(pusher.projectId, "fake-project");
-  } finally {
-    fs.unlinkSync(tmp);
-  }
+test("JPushPusher 缺凭据时禁用，齐全时启用且不泄漏 secret", () => {
+  const { JPushPusher } = require("../JPushPusher");
+  // 空凭据：整体禁用
+  assert.equal(new JPushPusher("", "").enabled, false);
+  assert.equal(new JPushPusher("key-only", "").enabled, false);
+  // 齐全：启用，authHeader 为 base64，不含明文 secret
+  const pusher = new JPushPusher("the-appkey", "the-secret");
+  assert.equal(pusher.enabled, true);
+  assert.ok(pusher.authHeader.startsWith("Basic "));
+  assert.ok(!pusher.authHeader.includes("the-secret"));
 });
 
 test("REST 拒绝申请与删除好友（DELETE /friends/{id}）", async () => {

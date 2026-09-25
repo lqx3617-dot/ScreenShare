@@ -174,10 +174,20 @@ class WebRTCPeer(
         var controlChannel: DataChannel? = null,
         // 防重入：该连接上是否有未完成的 Offer 协商（避免并发 createOffer 竞态导致协商失败）
         val negotiating: AtomicBoolean = AtomicBoolean(false),
+        // 协商超时兜底任务。成功/失败回调必须先取消它，否则第 1 次协商的陈旧超时
+        // 会把第 2 次正在进行的协商锁提前释放（compareAndSet(true,false)），导致
+        // 后续 createOffer 并发进入、SDP 协商互相干扰失败
+        var negotiateTimeout: Runnable? = null,
         // 该连接是否已请求过关键帧。首次 CONNECTED 后置位；后续 ICE 抖动/COMPLETED 不再触发，
         // 避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态场景尤其致命）。
         var keyFrameRequested: Boolean = false
-    )
+    ) {
+        /** 取消该连接的协商超时兜底任务（协商完成/失败时调用） */
+        fun cancelNegotiateTimeout(h: Handler) {
+            negotiateTimeout?.let { h.removeCallbacks(it) }
+            negotiateTimeout = null
+        }
+    }
     private val viewerConnections = ConcurrentHashMap<Int, ViewerConnection>()
     // viewer 断线重建计数（防持续弱网下无限重建）与上限。
     // ICE/观察者回调在 WebRTC native 线程执行，重建/移除会被该线程触发，需并发安全。
@@ -740,11 +750,14 @@ class WebRTCPeer(
         // 超时兜底：WebRTC 内部竞态可能导致 createOffer/setLocalDescription 的回调
         // 从不触发（既无 onSuccess 也无 onFailure），negotiating 永久为 true 后该
         // viewer 再也无法重新协商（画面卡死只能重建连接）。15s 后强制释放锁。
-        mainHandler.postDelayed({
+        // 任务引用存进 conn，成功/失败回调先取消，避免陈旧超时误释放后续协商的锁
+        val timeout = Runnable {
             if (conn.negotiating.compareAndSet(true, false)) {
                 Log.w(TAG, "viewer#$viewerId 协商超时，强制释放 negotiating 锁")
             }
-        }, 15000)
+        }
+        conn.negotiateTimeout = timeout
+        mainHandler.postDelayed(timeout, 15000)
         val pc = conn.pc
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -752,13 +765,16 @@ class WebRTCPeer(
         }
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {
+                conn.cancelNegotiateTimeout(mainHandler)
                 pc.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
+                        conn.cancelNegotiateTimeout(mainHandler)
                         conn.negotiating.set(false)
                         val ld = pc.localDescription
                         listener.onViewerOfferReady(viewerId, ld ?: sdp)
                     }
                     override fun onSetFailure(error: String?) {
+                        conn.cancelNegotiateTimeout(mainHandler)
                         conn.negotiating.set(false)
                         Log.e(TAG, "viewer#$viewerId setLocalDescription 失败: $error")
                     }
@@ -767,6 +783,7 @@ class WebRTCPeer(
                 }, sdp)
             }
             override fun onCreateFailure(error: String?) {
+                conn.cancelNegotiateTimeout(mainHandler)
                 conn.negotiating.set(false)
                 Log.e(TAG, "viewer#$viewerId 创建 Offer 失败: $error")
             }
@@ -879,6 +896,8 @@ class WebRTCPeer(
      * 在回调线程内释放正在回调的 PC 会 use-after-free 崩溃。 */
     fun removeViewer(viewerId: Int) {
         val conn = viewerConnections.remove(viewerId) ?: return
+        // 取消未完成的协商超时，避免 conn 移出 map 后仍跑无意义的 CAS
+        conn.cancelNegotiateTimeout(mainHandler)
         // 与 handleViewerAnswer/handleViewerOffer 的写入用同一把锁，避免迭代时 CME（S5）
         synchronized(pendingViewerCandidates) { pendingViewerCandidates.remove(viewerId) }
         viewerRestartCounts.remove(viewerId)
@@ -2156,7 +2175,19 @@ class WebRTCPeer(
             if (isEncLag) {
                 encLoadSamples++
                 encRecoverSamples = 0
-                if ((encodedFps > 0 && encodedFps < target * 0.60) || cpuBottleneck || viewerStallActive || encLoadSamples >= 2) {
+                // v1.372: 纯帧率信号（无 cpu 瓶颈、无观看端反馈）降档门槛抬高。
+                // 内容静止时编码器主动降 fps 属正常行为（qualityLimit 非 cpu、链路无拥塞），
+                // 原先 <目标78% 累积 2 次即降分辨率，导致画面在 1080p↔720p 周期闪烁
+                // （真机日志：丢包 0.0%、rtt 6ms、瓶颈 none，仍在 1376x1920↔917x1280
+                // 每 10s 翻转一次，用户观感就是清晰-模糊反复闪）。
+                // cpu 瓶颈/观看端掉帧反馈路径不变，仍即时降档保护。
+                val fpsOnly = !cpuBottleneck && !viewerStallActive
+                val shouldDown = if (fpsOnly) {
+                    encLoadSamples >= 4 && encodedFps > 0 && encodedFps < target * 0.5
+                } else {
+                    (encodedFps > 0 && encodedFps < target * 0.60) || cpuBottleneck || viewerStallActive || encLoadSamples >= 2
+                }
+                if (shouldDown) {
                     // v1.333: 降档时学习编码器实测帧率上限。仅编码侧证据可学习：有 fps 统计、
                     // 非观看端接收瓶颈（接收侧卡顿不代表编码能力差）、且 qualityLimit 非 bandwidth
                     // （带宽受限时 fps 被拥塞控制压低，非编码器能力上限，学了会误夹）。
@@ -2787,6 +2818,9 @@ class WebRTCPeer(
         systemAudioListener = null
         try { controlChannel?.dispose() } catch (_: Throwable) {}
         controlChannel = null
+        // 远端音频 DataChannel 同样持 native 引用，不释放会随会话累积泄漏
+        try { audioReceiveChannel?.dispose() } catch (_: Throwable) {}
+        audioReceiveChannel = null
         controlListener = null
         videoSender = null
         micSender = null

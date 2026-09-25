@@ -60,9 +60,11 @@ class SignalClient(
                 .pingInterval(20, TimeUnit.SECONDS)
                 .build()
         }
-        // 自动重连：最多重试次数与基础间隔（1s、2s、3s...）
-        const val MAX_ATTEMPTS = 4
+        // 自动重连：线性退避 1s、2s、3s... 封顶 30s（与 PresenceClient 一致）。
+        // 服务器重启或长时间断网后仍持续重试、恢复即自动重连；媒体通道一旦建立，
+        // 信令断连期间不受影响，无需用户手动重进
         const val RETRY_BASE_MS = 1000L
+        const val RETRY_MAX_MS = 30000L
         // V3.1: 应用层心跳间隔（保持 WS 活跃，防止移动网络假断开）
         const val HEARTBEAT_INTERVAL_MS = 10000L
         // V3.2: 心跳 pong 超时判定——超过 30s 未收到 pong 视为 WS 假死，主动重连
@@ -170,19 +172,16 @@ class SignalClient(
         })
     }
 
-    /** 自动重连：网络波动（如 Software caused connection abort）时几次重试通常能恢复 */
+    /** 自动重连：网络波动（如 Software caused connection abort）时几次重试通常能恢复；
+     *  服务器重启/长时间断网时持续退避重连，恢复后自动回到房间 */
     private fun scheduleRetry(failMsg: String) {
         if (closedByUs) return
         // 去重：心跳超时与 cancel() 触发的 onFailure 可能先后到达，只保留第一条调度
         if (reconnectInFlight) return
         reconnectInFlight = true
-        if (attempt >= MAX_ATTEMPTS) {
-            reconnectInFlight = false
-            listener.onError(failMsg)
-            return
-        }
-        val delayMs = RETRY_BASE_MS * attempt
-        listener.onRetrying("信令连接异常，${delayMs / 1000} 秒后自动重试（第 $attempt/$MAX_ATTEMPTS 次）...")
+        // 线性 1s/2s/3s… 封顶 30s：前几次快速重试覆盖瞬时波动，之后放慢避免空耗流量
+        val delayMs = (RETRY_BASE_MS * attempt).coerceAtMost(RETRY_MAX_MS)
+        listener.onRetrying("信令连接异常，${delayMs / 1000} 秒后自动重连（第 $attempt 次）...")
         retryHandler.postDelayed({ tryConnect() }, delayMs)
     }
 
