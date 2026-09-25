@@ -74,7 +74,7 @@ class ShareHistory {
   }
 
   /** 我的最近共享（作为 host 或 viewer），含对方资料与时长 */
-  recent(userId, limit = 20) {
+  recent(userId, limit = 5) {
     const rows = this.db
       .prepare(
         `SELECT s.id, s.room_code, s.host_user, s.viewer_user, s.started_at, s.ended_at,

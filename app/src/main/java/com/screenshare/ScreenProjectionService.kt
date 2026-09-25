@@ -83,7 +83,7 @@ class ScreenProjectionService : Service() {
             onReady = null
             try { cb() } catch (t: Throwable) { Log.w(TAG, "onReady 回调异常: ${t.message}") }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

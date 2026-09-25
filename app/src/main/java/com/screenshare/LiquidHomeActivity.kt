@@ -70,6 +70,7 @@ class LiquidHomeActivity : AppCompatActivity() {
 
     private var homeFragment: HomeFragment? = null
     private var friendsFragment: FriendsFragment? = null
+    private var coupleFragment: CoupleFragment? = null
     private var settingsFragment: SettingsFragment? = null
     private var currentTab = -1
     /** 当前打开的子页面（如音频设置），非 null 时隐藏底部 tab */
@@ -97,7 +98,8 @@ class LiquidHomeActivity : AppCompatActivity() {
             when (restored) {
                 is HomeFragment -> { homeFragment = restored; currentTab = 0 }
                 is FriendsFragment -> { friendsFragment = restored; currentTab = 1 }
-                is SettingsFragment -> { settingsFragment = restored; currentTab = 2 }
+                is CoupleFragment -> { coupleFragment = restored; currentTab = 2 }
+                is SettingsFragment -> { settingsFragment = restored; currentTab = 3 }
                 else -> {
                     // 恢复的是设置子页面：保持子页面状态，tabBar 继续隐藏
                     subFragment = restored
@@ -143,6 +145,35 @@ class LiquidHomeActivity : AppCompatActivity() {
             runOnUiThread {
                 showToast("已和 $friendNickname 成为好友")
                 friendsFragment?.refresh()
+            }
+        }
+
+        override fun onCoupleInvite(fromNickname: String) {
+            runOnUiThread {
+                showToast("收到 $fromNickname 的情侣邀请")
+                coupleFragment?.onCoupleChanged()
+            }
+        }
+
+        override fun onCoupleBound(partnerNickname: String) {
+            runOnUiThread {
+                showToast("已和 $partnerNickname 绑定情侣")
+                coupleFragment?.onCoupleChanged()
+            }
+        }
+
+        override fun onCoupleDissolved() {
+            runOnUiThread {
+                CoupleMediaCache.clear(this@LiquidHomeActivity)
+                showToast("情侣关系已解除")
+                coupleFragment?.onCoupleChanged()
+            }
+        }
+
+        override fun onCoupleCheckin(fromNickname: String) {
+            runOnUiThread {
+                showToast("$fromNickname 完成了今日打卡")
+                coupleFragment?.onCoupleChanged()
             }
         }
 
@@ -195,8 +226,8 @@ class LiquidHomeActivity : AppCompatActivity() {
         val token = SessionStore.getToken(this) ?: return
         // 进程级长连接：若已存在（从会议室返回时）复用，不重复建连
         App.instance.connectPresence(token, presenceListener)
-        // 顺带刷新 FCM 令牌：令牌可能随应用升级/清数据轮换，保证离线推送可达
-        FcmRegistrar.register(this)
+        // 顺带刷新极光标识：可能随应用升级/清数据轮换，保证离线推送可达
+        JPushRegistrar.register(this)
     }
 
     /** 收到好友的共享邀请：接受则进观看端，拒绝则通知对方 */
@@ -373,22 +404,27 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
     }
 
-    /** 底部 tab：点击切换内容区 Fragment，当前项高亮 */
+    /** 底部 tab：点击或横向滑动切换内容区 Fragment，当前项高亮 */
     private fun setupTabs() {
-        val tabs = arrayOf(binding.tabHome, binding.tabFriends, binding.tabSettings)
-        tabs.forEachIndexed { index, tab ->
-            tab.setOnClickListener { switchTab(index) }
-        }
+        binding.tabBar.onTabSelected = { switchTab(it) }
+        applyGlideSensitivity()
         // 恢复场景：FragmentManager 已 attach 旧 Fragment，只更新高亮；否则显示首页
         if (subFragment != null) {
             // 恢复到子页面：保持隐藏 tabBar，不切页
             binding.tabBar.visibility = View.GONE
-            updateTabHighlight(currentTab)
+            binding.tabBar.selectSilent(currentTab)
         } else if (currentTab == -1) {
             switchTab(0, animate = false)
         } else {
-            updateTabHighlight(currentTab)
+            binding.tabBar.selectSilent(currentTab)
         }
+    }
+
+    /** 应用滑动灵敏度设置（设置页实时调用 + 启动时读取） */
+    fun applyGlideSensitivity() {
+        val level = getSharedPreferences("glide_settings", MODE_PRIVATE)
+            .getInt(SettingsFragment.GLIDE_LEVEL, 1)
+        binding.tabBar.setSensitivity(SettingsFragment.levelToFactor(level))
     }
 
     /** 打开设置子页面：替换内容区并隐藏底部 tab */
@@ -408,6 +444,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         val target = when (currentTab) {
             0 -> homeFragment ?: HomeFragment().also { homeFragment = it }
             1 -> friendsFragment ?: FriendsFragment().also { friendsFragment = it }
+            2 -> coupleFragment ?: CoupleFragment().also { coupleFragment = it }
             else -> settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         }
         val ft = supportFragmentManager.beginTransaction()
@@ -430,6 +467,7 @@ class LiquidHomeActivity : AppCompatActivity() {
         val frag = when (index) {
             0 -> homeFragment ?: HomeFragment().also { homeFragment = it }
             1 -> friendsFragment ?: FriendsFragment().also { friendsFragment = it }
+            2 -> coupleFragment ?: CoupleFragment().also { coupleFragment = it }
             else -> settingsFragment ?: SettingsFragment().also { settingsFragment = it }
         }
         val ft = supportFragmentManager.beginTransaction()
@@ -438,19 +476,8 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
         ft.replace(R.id.contentArea, frag)
         ft.commit()
-        updateTabHighlight(index)
+        binding.tabBar.select(index)
         currentTab = index
-    }
-
-    /** tab 高亮：图标与文字颜色随选中态切换 */
-    private fun updateTabHighlight(index: Int) {
-        val tabs = arrayOf(binding.tabHome, binding.tabFriends, binding.tabSettings)
-        tabs.forEachIndexed { i, t ->
-            t.isActivated = i == index
-            val color = if (i == index) Color.WHITE else 0x99FFFFFF.toInt()
-            (t.getChildAt(0) as ImageView).setColorFilter(color)
-            (t.getChildAt(1) as TextView).setTextColor(color)
-        }
     }
 
     /** toast：底部滑入，2 秒后滑出；供三个 Fragment 共用 */

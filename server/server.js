@@ -45,8 +45,9 @@ const { openDb } = require("./db");
 const { RateLimiter } = require("./RateLimiter");
 const { AccountManager } = require("./AccountManager");
 const { FriendManager } = require("./FriendManager");
+const { CoupleManager } = require("./CoupleManager");
 const { ShareHistory } = require("./ShareHistory");
-const { FcmPusher } = require("./FcmPusher");
+const { JPushPusher } = require("./JPushPusher");
 const { PresenceManager } = require("./PresenceManager");
 const { AccountRouter } = require("./AccountRouter");
 
@@ -169,25 +170,19 @@ const rateLimiter = new RateLimiter();
 const accountManager = new AccountManager(accountDb);
 const friendManager = new FriendManager(accountDb);
 const presenceManager = new PresenceManager();
+const coupleManager = new CoupleManager(accountDb, presenceManager);
 const shareHistory = new ShareHistory(accountDb);
-// FCM 推送：私钥文件路径由 FCM_KEY_FILE 指定，否则自动找 server/*firebase-adminsdk*.json
-const fcmKeyFile =
-  process.env.FCM_KEY_FILE ||
-  (() => {
-    const found = require("fs")
-      .readdirSync(__dirname)
-      .find((f) => /firebase-adminsdk.*\.json$/.test(f));
-    return found ? path.join(__dirname, found) : "";
-  })();
-const fcmPusher = new FcmPusher(fcmKeyFile);
-console.log(`[fcm] 推送 ${fcmPusher.enabled ? "已启用" : "未启用（缺私钥文件）"}`);
+// 极光推送：AppKey + Master Secret 从环境变量读取，绝不入库
+const jpushPusher = new JPushPusher(process.env.JPUSH_APPKEY, process.env.JPUSH_MASTER_SECRET);
+console.log(`[jpush] 推送 ${jpushPusher.enabled ? "已启用" : "未启用（缺 AppKey/Master Secret）"}`);
 const accountRouter = new AccountRouter({
   accountManager,
   friendManager,
+  coupleManager,
   rateLimiter,
   presence: presenceManager,
   shareHistory,
-  notifyUser: (userId, obj) => sendToUser(userId, obj),
+  notifyUser: (userId, obj) => notifyUser(userId, obj),
 });
 setInterval(() => { rateLimiter.sweep(); accountManager.sweepLoginLimiter(); accountManager.sweepExpiredSessions(); }, 60 * 1000).unref();
 
@@ -330,6 +325,32 @@ function sendToUser(userId, obj) {
   for (const target of presenceManager.socketsOf(userId)) send(target, obj);
 }
 
+// 通知投递：在线走 WS；离线查推送令牌发 JPush 提醒（按消息类型生成文案）
+const NOTIFY_TEXT = {
+  "friend-request": (o) => ["好友申请", `${o.from?.nickname || "有人"} 请求添加你为好友`],
+  "friend-accepted": (o) => ["好友通过", `${o.friend?.nickname || "好友"} 已通过你的申请`],
+  "couple-invite": (o) => ["情侣邀请", `${o.from?.nickname || "TA"} 想与你绑定情侣关系`],
+  "couple-bound": (o) => ["情侣绑定", `${o.partner?.nickname || "TA"} 已与你绑定`],
+  "couple-dissolved": () => ["解绑提醒", "你们的情侣关系已解除"],
+  "couple-checkin": (o) => ["情侣打卡", `${o.from?.nickname || "TA"} 完成了今日打卡，快去打卡吧`],
+  "couple-memory": (o) => ["一年前的今天", `一年前的今天，你们保存了 ${o.count} 个相册瞬间，打开情侣空间回顾一下吧`],
+};
+function notifyUser(userId, obj) {
+  sendToUser(userId, obj);
+  if (presenceManager.isOnline(userId)) return;
+  const mk = NOTIFY_TEXT[obj && obj.type];
+  if (!mk) return;
+  const pushToken = accountManager.getPushToken(userId);
+  if (!pushToken || !jpushPusher.enabled) return;
+  const [title, body] = mk(obj);
+  jpushPusher
+    .send(pushToken, title, body)
+    .then((r) => {
+      if (r === "invalid_token") accountManager.clearPushToken(userId);
+    })
+    .catch((e) => console.error(`[notify] 推送异常 to=${String(userId).slice(0, 8)}…:`, e?.message || e));
+}
+
 // 用户上下线时向其好友广播在线状态
 function broadcastPresence(userId, online) {
   for (const f of friendManager.list(userId)) {
@@ -370,6 +391,22 @@ setInterval(() => {
     if (now - inv.createdAt > 5 * 60 * 1000) pendingInvites.delete(id);
   }
 }, 60 * 1000).unref();
+
+// 「一年前的今天」相册回忆：每小时扫描一次，去年同月同日有照片的情侣给双方推送提醒。
+// 去重用 couples.last_memory_push（上海日期），服务重启后同日不会重复推
+setInterval(() => {
+  try {
+    for (const cand of coupleManager.listMemoryCandidates()) {
+      for (const uid of cand.partnerIds) {
+        notifyUser(uid, { type: "couple-memory", count: cand.count });
+      }
+      coupleManager.markMemoryPushed(cand.coupleId);
+      console.log(`[memory] 一年前的今天 couple=${String(cand.coupleId).slice(0, 8)}… count=${cand.count}`);
+    }
+  } catch (e) {
+    console.error("[memory] 回忆推送扫描失败:", e?.message || e);
+  }
+}, 60 * 60 * 1000).unref();
 
 wss.on("connection", (ws, request) => {
   let roomCode = null;
@@ -655,7 +692,7 @@ wss.on("connection", (ws, request) => {
             console.log(`[invite] 对方离线且无推送令牌 to=${toUserId.slice(0, 8)}… room=${inviteCode}`);
             break;
           }
-          fcmPusher
+          jpushPusher
             .send(pushToken, "共享邀请", `${fromNickname || "好友"} 邀请你观看 TA 的屏幕共享`)
             .then((r) => {
               if (r === "invalid_token") {

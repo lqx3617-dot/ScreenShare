@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="3dp">
+
+    <com.screenshare.SquareImageView
+        android:id="@+id/ivThumb"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#221F2A"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop" />
+
+    <ImageView
+        android:id="@+id/ivVideoBadge"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="6dp"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_play_badge"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/btnDelete"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="6dp"
+        android:background="#99000000"
+        android:gravity="center"
+        android:text="×"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
+</FrameLayout>

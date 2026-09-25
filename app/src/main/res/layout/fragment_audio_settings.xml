@@ -73,7 +73,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/bg_liquid_card"
+            android:background="@drawable/bg_card"
             android:padding="18dp">
 
             <LinearLayout
@@ -115,7 +115,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/bg_liquid_card"
+            android:background="@drawable/bg_card"
             android:padding="18dp"
             android:layout_marginTop="14dp">
 
@@ -159,7 +159,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="@drawable/bg_liquid_card"
+            android:background="@drawable/bg_card"
             android:padding="18dp"
             android:layout_marginTop="14dp">
 

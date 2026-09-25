@@ -142,7 +142,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 口令共享（信令服务器模式）
     @Volatile private var signalClient: SignalClient? = null
     @Volatile private var signalMode = false
-    private var signalPeerReady = false
+    // WebRTC ICE 回调线程读、主线程写，缺 @Volatile 会读到陈旧值导致候选缓存/直发判断错误
+    @Volatile private var signalPeerReady = false
     // host 端：对方（viewer）是否已加入房间。服务器对 host 发的是 viewer-joined 而非 peer-ready，
     // 用此标记判断"对方已加入"（关闭会议号弹窗 / 授权后不弹窗）
     private var viewerJoined = false
@@ -333,6 +334,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnMic.setOnClickListener { onMicClicked() }
         binding.btnCamera.setOnClickListener { onVideoCallClicked() }
         binding.btnAudioSettings.setOnClickListener { showAudioSettings() }
+        binding.btnWatchTogether.setOnClickListener {
+            WatchTogetherActivity.start(this, isHost)
+        }
         binding.btnAlbum.setOnClickListener { onAlbumClicked() }
         binding.tvTitleBrand.setOnClickListener { onBrandTripleTap() }
         binding.btnRemoteControl.setOnClickListener { onRemoteControlToggle() }
@@ -1386,7 +1390,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 }
             }
             talkStatsHandler?.removeCallbacksAndMessages(null)
-            talkStatsHandler?.post(talkStatsRunnable!!)
+            talkStatsRunnable?.let { talkStatsHandler?.post(it) }
             // 主线程 UI 轮询：每 250ms 读电平刷新指示
             talkPoller = object : Runnable {
                 override fun run() {
@@ -1415,7 +1419,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             talkStatsRunnable = null
             talkStatsHandler?.looper?.quitSafely()
             talkStatsHandler = null
-            talkStatsThread?.join(500)
+            // 不再 join：quitSafely 已让线程自然退出，主线程 join(500) 会阻塞 UI 最多半秒（ANR 风险）
             talkStatsThread = null
             binding.tvTalkIndicator.text = "对讲待机"
             binding.tvTalkIndicator.setTextColor(Color.parseColor("#FF4A3B44"))
@@ -1462,8 +1466,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     // 平滑过渡（每 250ms 逼近 40%），避免音量突变刺耳
                     appliedMediaVol += ((target - appliedMediaVol) * 0.4f).toInt()
                     if (appliedMediaVol != target) {
-                        // 差距小于 1 时直接对齐，否则浮点尾差会让音量永远差一点
-                        if (kotlin.math.abs(target - appliedMediaVol) <= 1) appliedMediaVol = target
+                        // 向零截断后会卡在距目标 2 的位置（2*0.4=0.8→0），阈值须覆盖 2 才能收敛
+                        if (kotlin.math.abs(target - appliedMediaVol) <= 2) appliedMediaVol = target
                     }
                     SystemAudioBridge.setMediaVolume(appliedMediaVol.coerceIn(0, 100) / 100f)
                 }
@@ -4130,7 +4134,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                             // 供弱网自适应把采集档位压到与蜂窝等受限链路匹配，保帧率优先
                             val outBytes = json.optLong("outBytes", 0)
                             val nowMs = System.currentTimeMillis()
-                            val actualBps = if (lastAdaptOutBytes > 0 && outBytes > lastAdaptOutBytes && lastAdaptOutMs > 0) {
+                            val actualBps = if (lastAdaptOutBytes > 0 && outBytes > lastAdaptOutBytes && lastAdaptOutMs > 0 && nowMs > lastAdaptOutMs) {
                                 ((outBytes - lastAdaptOutBytes) * 8000.0 / (nowMs - lastAdaptOutMs)).toInt()
                             } else 0
                             if (outBytes > 0) {
@@ -4616,6 +4620,21 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
+        // 一起看：选完本地视频后进入全屏播放，画面随共享流同步给对方
+        if (requestCode == WatchTogetherActivity.REQUEST_PICK_VIDEO) {
+            val videoUri = data?.data
+            if (resultCode == RESULT_OK && videoUri != null) {
+                try {
+                    startActivity(Intent(this, WatchTogetherActivity::class.java).apply {
+                        setData(videoUri)
+                    })
+                } catch (t: Throwable) {
+                    Toast.makeText(this, "无法播放该视频: ${t.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            return
+        }
+
         // 屏幕采集权限
         if (ScreenCapturerFactory.handleActivityResult(requestCode, resultCode, data)) {
             AppLogger.app("[CAPTURE] 授权成功，启动共享")
@@ -4775,6 +4794,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.llStatus.visibility = View.VISIBLE
         videoRenderer?.scaleX = 1f
         videoRenderer?.scaleY = 1f
+        // 先解绑 sink 再释放 renderer：sink 的 onFrame 会投递给 renderer，
+        // 反序会在 removeSink 生效前对已 release 的 SurfaceViewRenderer 投帧（native 崩溃窗口）
+        remoteVideoTrack?.removeSink(remoteVideoSink)
+        remoteVideoSink = null
+        remoteVideoTrack = null
         videoRenderer?.let { r ->
             if (r.parent == binding.flRemoteVideo) {
                 binding.flRemoteVideo.removeView(r)
@@ -4789,9 +4813,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         candCountSrflx.set(0)
         candCountRelay.set(0)
         candCountOther.set(0)
-        remoteVideoTrack?.removeSink(remoteVideoSink)
-        remoteVideoSink = null
-        remoteVideoTrack = null
         hostSessionActive = false
         signalMode = false
         signalPeerReady = false

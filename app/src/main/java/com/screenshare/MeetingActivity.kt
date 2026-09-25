@@ -48,7 +48,7 @@ class MeetingActivity : AppCompatActivity() {
 
         private const val PREFS_HISTORY = "meeting_history"
         private const val KEY_LIST = "list"
-        private const val MAX_HISTORY = 8
+        private const val MAX_HISTORY = 5
 
         // ==================== 专属房间（情侣快捷入口） ====================
         private const val PREFS_FAVORITE = "favorite_room"
@@ -444,7 +444,7 @@ class MeetingActivity : AppCompatActivity() {
         binding.llRecent.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
         val container = binding.llRecentList
         container.removeAllViews()
-        list.forEach { entry ->
+        list.take(MAX_HISTORY).forEach { entry ->
             container.addView(buildRecentItem(entry))
             // 分隔线
             val divider = View(this).apply {

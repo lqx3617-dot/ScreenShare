@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 底部毛玻璃导航条（对应 .tab-bar） -->
+<!-- 底部毛玻璃导航条：深色半透明底 + 内层白色高光（Android 12+ 由 RenderEffect 模糊背景） -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="24dp" />
-            <solid android:color="#1FFFFFFF" />
+            <corners android:radius="14dp" />
+            <solid android:color="#80000000" />
         </shape>
     </item>
     <item
@@ -13,8 +13,8 @@
         android:right="1dp"
         android:bottom="1dp">
         <shape android:shape="rectangle">
-            <corners android:radius="23dp" />
-            <solid android:color="#14FFFFFF" />
+            <corners android:radius="13dp" />
+            <solid android:color="#1FFFFFFF" />
         </shape>
     </item>
 </layer-list>

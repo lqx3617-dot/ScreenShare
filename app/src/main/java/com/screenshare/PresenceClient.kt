@@ -38,6 +38,14 @@ class PresenceClient(
         fun onShareInviteResult(inviteId: String, accepted: Boolean, reason: String)
         /** 对方结束了会议，暂存邀请作废，应关掉已弹出的邀请框 */
         fun onInviteCancelled(inviteId: String)
+        /** 情侣邀请：对方想与我绑定 */
+        fun onCoupleInvite(fromNickname: String)
+        /** 情侣绑定成功（对方接受了我的邀请，或我接受了对方的邀请） */
+        fun onCoupleBound(partnerNickname: String)
+        /** 情侣关系被对方解除 */
+        fun onCoupleDissolved()
+        /** 对方完成了每日打卡 */
+        fun onCoupleCheckin(fromNickname: String)
         /** 连接异常（将自动重连，仅提示） */
         fun onRetrying(message: String)
         /** 不可恢复错误 */
@@ -181,6 +189,19 @@ class PresenceClient(
             )
             // host 结束会议时，暂存邀请作废：关掉被邀请方已弹出的邀请框
             "invite-cancelled" -> listener.onInviteCancelled(json.optString("inviteId"))
+            "couple-invite" -> {
+                val from = json.optJSONObject("from")
+                listener.onCoupleInvite(from?.optString("nickname") ?: "")
+            }
+            "couple-bound" -> {
+                val partner = json.optJSONObject("partner")
+                listener.onCoupleBound(partner?.optString("nickname") ?: "")
+            }
+            "couple-dissolved" -> listener.onCoupleDissolved()
+            "couple-checkin" -> {
+                val from = json.optJSONObject("from")
+                listener.onCoupleCheckin(from?.optString("nickname") ?: "TA")
+            }
             "pong" -> Unit
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> log("未知消息: ${json.optString("type")}")

@@ -80,11 +80,12 @@ object SessionStore {
         )
     }
 
-    /** 更新本地缓存的昵称/头像（服务端改完后同步本地） */
-    fun updateProfile(context: Context, nickname: String?, avatar: String?) {
+    /** 更新本地缓存的昵称/头像/好友码（服务端改完后同步本地） */
+    fun updateProfile(context: Context, nickname: String?, avatar: String?, friendCode: String? = null) {
         val e = prefs(context).edit()
         if (nickname != null) e.putString(K_NICKNAME, nickname)
         if (avatar != null) e.putString(K_AVATAR, avatar)
+        if (friendCode != null) e.putString(K_FRIEND_CODE, friendCode)
         e.apply()
     }
 

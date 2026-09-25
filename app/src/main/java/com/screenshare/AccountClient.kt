@@ -22,14 +22,14 @@ object AccountClient {
         data class Failure(val code: String, val message: String, val http: Int) : ApiResult<Nothing>()
     }
 
-    private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+    internal val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
-    private val client = OkHttpClient.Builder()
+    internal val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private val baseUrl: String = run {
+    internal val baseUrl: String = run {
         // 信令地址形如 wss://host/ws 或 ws://host/ws，账号 REST 同源走 https/http
         val host = BuildConfig.SIGNAL_URL.substringBefore("/ws")
         host.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://")
@@ -68,7 +68,7 @@ object AccountClient {
         val durationMs: Long?
     )
 
-    private suspend fun callRaw(
+    internal suspend fun callRaw(
         method: String,
         path: String,
         body: JSONObject? = null,
@@ -102,7 +102,7 @@ object AccountClient {
         }
     }
 
-    private suspend fun call(
+    internal suspend fun call(
         method: String,
         path: String,
         body: JSONObject? = null,
@@ -162,10 +162,16 @@ object AccountClient {
         }
     }
 
-    suspend fun updateProfile(token: String, nickname: String? = null, avatar: String? = null): ApiResult<Profile> {
+    suspend fun updateProfile(
+        token: String,
+        nickname: String? = null,
+        avatar: String? = null,
+        friendCode: String? = null
+    ): ApiResult<Profile> {
         val body = JSONObject()
         if (nickname != null) body.put("nickname", nickname)
         if (avatar != null) body.put("avatar", avatar)
+        if (friendCode != null) body.put("friendCode", friendCode)
         val r = call("PATCH", "/account/profile", body, token)
         return when (r) {
             is ApiResult.Success -> ApiResult.Success(parseProfile(r.data))

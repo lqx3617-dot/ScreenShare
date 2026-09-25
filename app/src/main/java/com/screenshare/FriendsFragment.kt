@@ -15,7 +15,6 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.screenshare.databinding.DialogLiquidRoomBinding
 import com.screenshare.databinding.FragmentFriendsBinding
 import kotlinx.coroutines.launch
-import java.security.SecureRandom
 
 /**
  * 好友页：真实好友列表 + 待处理申请 + 添加好友（好友码）。
@@ -36,7 +35,12 @@ class FriendsFragment : Fragment() {
     private val friendsAdapter by lazy {
         FriendsAdapter(
             onStartShare = { friend -> startShareWith(friend) },
-            onEditRemark = { friend -> showRemarkDialog(friend) }
+            onEditRemark = { friend -> showRemarkDialog(friend) },
+            onItemClick = { friend ->
+                (requireActivity() as? LiquidHomeActivity)?.navigateToSubPage(
+                    FriendDetailFragment.newInstance(friend)
+                )
+            }
         )
     }
     private val requestsAdapter by lazy {
@@ -44,9 +48,6 @@ class FriendsFragment : Fragment() {
             onAccept = { item -> respondRequest(item.requestId, accept = true) },
             onReject = { item -> respondRequest(item.requestId, accept = false) }
         )
-    }
-    private val sharesAdapter by lazy {
-        RecentSharesAdapter { item -> reshareWith(item) }
     }
 
     override fun onCreateView(
@@ -71,8 +72,6 @@ class FriendsFragment : Fragment() {
         binding.rvFriends.adapter = friendsAdapter
         binding.rvRequests.layoutManager = LinearLayoutManager(requireContext())
         binding.rvRequests.adapter = requestsAdapter
-        binding.rvShares.layoutManager = LinearLayoutManager(requireContext())
-        binding.rvShares.adapter = sharesAdapter
 
         binding.btnAddFriend.setOnClickListener { showAddFriendDialog() }
         binding.layoutEmpty.setOnClickListener { showAddFriendDialog() }
@@ -107,13 +106,12 @@ class FriendsFragment : Fragment() {
         }
     }
 
-    /** 拉取好友列表 + 待处理申请 + 最近共享 */
+    /** 拉取好友列表 + 待处理申请 */
     private fun loadAll() {
         val t = token() ?: return
         lifecycleScope.launch {
             val friends = AccountClient.getFriends(t)
             val reqs = AccountClient.getFriendRequests(t)
-            val shares = AccountClient.getRecentShares(t)
             if (_binding == null) return@launch
             when (friends) {
                 is AccountClient.ApiResult.Success -> {
@@ -133,14 +131,6 @@ class FriendsFragment : Fragment() {
                     binding.layoutRequests.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
                 }
                 is AccountClient.ApiResult.Failure -> if (reqs.http != 401) toast(reqs.message)
-            }
-            when (shares) {
-                is AccountClient.ApiResult.Success -> {
-                    val list = shares.data
-                    sharesAdapter.submitList(list)
-                    binding.layoutShares.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
-                }
-                is AccountClient.ApiResult.Failure -> if (shares.http != 401) toast(shares.message)
             }
         }
     }
@@ -387,36 +377,7 @@ class FriendsFragment : Fragment() {
 
     /** 一键发起共享：先生成本地房间号进会议室建房，房间建好后由 MainActivity 发邀请 */
     private fun startShareWith(friend: AccountClient.FriendItem) {
-        // 离线好友也允许发起：服务端会暂存邀请（5 分钟）并尝试 FCM 推送，
-        // 对方上线时自动补投。结果经 share-invite-result 回来后另行提示。
-        val code = generateCode()
-        // 邀请目标随 Intent 传给 MainActivity，建房成功后再投递，
-        // 服务端据此校验邀请方确实是房间 host（防止把好友导向别人的房间）
-        AppLogger.app("[FRIENDS] 发起共享 -> ${friend.nickname} room=$code")
-        val intent = android.content.Intent(requireContext(), MainActivity::class.java)
-            .putExtra(MeetingActivity.EXTRA_MEETING_ACTION, MeetingActivity.ACTION_CREATE)
-            .putExtra(MeetingActivity.EXTRA_MEETING_CODE, code)
-            .putExtra(MainActivity.EXTRA_INVITE_FRIEND_ID, friend.userId)
-            .putExtra(MainActivity.EXTRA_INVITE_FRIEND_NAME, friend.nickname.ifBlank { friend.userId })
-            .addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        startActivity(intent)
-    }
-
-    /** 最近共享记录：再次向对方发起共享（好友关系可能已解除，需校验） */
-    private fun reshareWith(item: AccountClient.ShareItem) {
-        val friend = friendsAdapter.currentList.firstOrNull { it.userId == item.peerId }
-        if (friend == null) {
-            toast("对方已不在你的好友列表")
-            return
-        }
-        startShareWith(friend)
-    }
-
-    private fun generateCode(): String {
-        val sb = StringBuilder()
-        val random = SecureRandom()
-        repeat(4) { sb.append(random.nextInt(10)) }
-        return sb.toString()
+        FriendShareStarter.start(requireContext(), friend)
     }
 
     // ==================== PresenceClient 实时回调（由 LiquidHomeActivity 转发） ====================

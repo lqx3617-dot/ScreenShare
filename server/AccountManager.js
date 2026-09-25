@@ -200,6 +200,24 @@ class AccountManager {
       }
       this.db.prepare(`UPDATE users SET avatar = ? WHERE id = ?`).run(avatar, userId);
     }
+    if (patch.friendCode !== undefined) {
+      // 好友码可随时修改：校验格式 + 全局唯一。改码后旧码查无此人，
+      // 他人用旧码发起的邀请/申请会直接失败；同时作废自己名下待处理的邀请与申请
+      const code = this._normalizeFriendCode(patch.friendCode);
+      if (code !== user.friendCode) {
+        const taken = this.db
+          .prepare(`SELECT 1 FROM users WHERE friend_code = ? AND id != ?`)
+          .get(code, userId);
+        if (taken) throw new AccountError("friend_code_taken", "该好友码已被占用，请换一个", 409);
+        this.db.prepare(`UPDATE users SET friend_code = ? WHERE id = ?`).run(code, userId);
+        this.db
+          .prepare(`UPDATE couple_invitations SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
+          .run(userId);
+        this.db
+          .prepare(`UPDATE friend_requests SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
+          .run(userId);
+      }
+    }
     return this.getProfile(userId);
   }
 
@@ -236,6 +254,18 @@ class AccountManager {
     if (nickname.length < NICKNAME_MIN || nickname.length > NICKNAME_MAX) {
       throw new AccountError("invalid_nickname", `昵称需为 ${NICKNAME_MIN}-${NICKNAME_MAX} 个字符`, 400);
     }
+  }
+
+  /** 好友码规整与校验：6 位大写字母数字，剔除易混的 I/O/0/1 */
+  _normalizeFriendCode(raw) {
+    const code = String(raw ?? "").trim().toUpperCase();
+    const ok =
+      code.length === FRIEND_CODE_LENGTH &&
+      [...code].every((c) => FRIEND_CODE_ALPHABET.includes(c));
+    if (!ok) {
+      throw new AccountError("invalid_friend_code", "好友码需为 6 位字母或数字（不含 I、O、0、1）", 400);
+    }
+    return code;
   }
 
   _assertPassword(password) {

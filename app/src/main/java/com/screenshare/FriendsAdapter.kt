@@ -11,20 +11,21 @@ import com.screenshare.databinding.ItemFriendRequestBinding
 import com.screenshare.databinding.ItemRecentShareBinding
 
 /** 头像渐变档位（粉/紫/青），按 userId 哈希固定分配，同一好友永远是同一颜色 */
-private val AVATAR_BG = arrayOf(R.drawable.bg_avatar_pink, R.drawable.bg_avatar_violet, R.drawable.bg_avatar_cyan)
-private fun avatarBg(userId: String) = AVATAR_BG[(userId.hashCode() and 0x7fffffff) % AVATAR_BG.size]
+internal val AVATAR_BG = arrayOf(R.drawable.bg_avatar_pink, R.drawable.bg_avatar_violet, R.drawable.bg_avatar_cyan)
+internal fun avatarBg(userId: String) = AVATAR_BG[(userId.hashCode() and 0x7fffffff) % AVATAR_BG.size]
 
 /** 昵称首字（中文取第一个字，英文取首字母大写） */
-private fun initialOf(name: String): String {
+internal fun initialOf(name: String): String {
     val s = name.trim()
     if (s.isEmpty()) return "?"
     return s.first().toString().uppercase()
 }
 
-/** 好友列表适配器：在线状态点 + 一键发起共享 + 长按改备注 */
+/** 好友列表适配器：在线状态点 + 一键发起共享 + 长按改备注 + 点击进详情 */
 class FriendsAdapter(
     private val onStartShare: (AccountClient.FriendItem) -> Unit,
-    private val onEditRemark: (AccountClient.FriendItem) -> Unit = {}
+    private val onEditRemark: (AccountClient.FriendItem) -> Unit = {},
+    private val onItemClick: (AccountClient.FriendItem) -> Unit = {}
 ) : ListAdapter<AccountClient.FriendItem, FriendsAdapter.VH>(DIFF) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -55,6 +56,7 @@ class FriendsAdapter(
             }
         }
         holder.b.btnStartShare.setOnClickListener { onStartShare(item) }
+        holder.itemView.setOnClickListener { onItemClick(item) }
         // 离线也可发起：邀请会存服务端并推送，对方上线后补投。按钮保持可点，仅用透明度区分
         holder.b.btnStartShare.isEnabled = true
         holder.b.btnStartShare.alpha = if (item.online) 1f else 0.6f

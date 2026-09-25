@@ -53,6 +53,77 @@ CREATE TABLE IF NOT EXISTS friend_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_friend_requests_to ON friend_requests(to_user, status);
 CREATE INDEX IF NOT EXISTS idx_friend_requests_pair ON friend_requests(from_user, to_user);
+
+CREATE TABLE IF NOT EXISTS couples (
+  id          TEXT NOT NULL,
+  user_a      TEXT NOT NULL,
+  user_b      TEXT NOT NULL,
+  bound_at    INTEGER NOT NULL,
+  anniversary TEXT,
+  status      TEXT NOT NULL DEFAULT 'active',
+  PRIMARY KEY (id, user_a)
+);
+CREATE INDEX IF NOT EXISTS idx_couples_user ON couples(user_a, status);
+CREATE INDEX IF NOT EXISTS idx_couples_user_b ON couples(user_b, status);
+-- 每人唯一绑定：DB 层兜底（仅对生效关系，解绑后可重新绑定）
+CREATE UNIQUE INDEX IF NOT EXISTS uq_couples_active_a ON couples(user_a) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_couples_active_b ON couples(user_b) WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS couple_invitations (
+  id         TEXT PRIMARY KEY,
+  from_user  TEXT NOT NULL,
+  to_user    TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_couple_inv_to ON couple_invitations(to_user, status);
+CREATE INDEX IF NOT EXISTS idx_couple_inv_pair ON couple_invitations(from_user, to_user, status);
+
+-- 每日打卡：每对情侣每人每天一条；解绑后保留历史，新绑定在新 couple_id 下重新开始
+CREATE TABLE IF NOT EXISTS couple_checkins (
+  id         TEXT PRIMARY KEY,
+  couple_id  TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  date       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_couple_checkin ON couple_checkins(couple_id, user_id, date);
+CREATE INDEX IF NOT EXISTS idx_couple_checkin_user ON couple_checkins(user_id, date);
+
+CREATE TABLE IF NOT EXISTS couple_photos (
+  id          TEXT PRIMARY KEY,
+  couple_id   TEXT NOT NULL,
+  uploader    TEXT NOT NULL,
+  media_type  TEXT NOT NULL,
+  url         TEXT NOT NULL,
+  thumb_url   TEXT,
+  duration_ms INTEGER,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_couple_photos_couple ON couple_photos(couple_id, created_at);
+
+CREATE TABLE IF NOT EXISTS couple_locations (
+  id          TEXT PRIMARY KEY,
+  couple_id   TEXT NOT NULL,
+  reporter    TEXT NOT NULL,
+  lat         REAL NOT NULL,
+  lng         REAL NOT NULL,
+  reported_at INTEGER NOT NULL
+);
+
+-- 共同愿望清单：双方共享，任一方可勾选/删除，完成记录操作人
+CREATE TABLE IF NOT EXISTS couple_wishes (
+  id         TEXT PRIMARY KEY,
+  couple_id  TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  done       INTEGER NOT NULL DEFAULT 0,
+  done_by    TEXT,
+  done_at    INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_couple_wishes ON couple_wishes(couple_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_couple_locations_couple ON couple_locations(couple_id, reporter, reported_at);
 `;
 
 /**
@@ -139,6 +210,27 @@ function migrateFriendsRemark(db) {
   return true;
 }
 
+/**
+ * 历史库迁移：couples 表补 anniversary 列（在一起纪念日，YYYY-MM-DD，可空）。
+ */
+function migrateCouplesAnniversary(db) {
+  const cols = db.prepare("PRAGMA table_info(couples)").all();
+  if (cols.some((c) => c.name === "anniversary")) return false;
+  db.exec(`ALTER TABLE couples ADD COLUMN anniversary TEXT`);
+  return true;
+}
+
+/**
+ * 历史库迁移：couples 表补 last_memory_push 列（「一年前的今天」推送去重，
+ * 存最近一次推送的上海日期 YYYY-MM-DD，同日不重复推）。
+ */
+function migrateCouplesMemoryPush(db) {
+  const cols = db.prepare("PRAGMA table_info(couples)").all();
+  if (cols.some((c) => c.name === "last_memory_push")) return false;
+  db.exec(`ALTER TABLE couples ADD COLUMN last_memory_push TEXT`);
+  return true;
+}
+
 function openDb(filePath = DEFAULT_DB_PATH) {
   if (filePath !== ":memory:") {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -151,6 +243,8 @@ function openDb(filePath = DEFAULT_DB_PATH) {
     migrateToNicknameLogin(db);
     migrateFriendsRemark(db);
     migrateUsersPushToken(db);
+    migrateCouplesAnniversary(db);
+    migrateCouplesMemoryPush(db);
   }
   return db;
 }
@@ -161,5 +255,7 @@ module.exports = {
   migrateToNicknameLogin,
   migrateFriendsRemark,
   migrateUsersPushToken,
+  migrateCouplesAnniversary,
+  migrateCouplesMemoryPush,
   DEFAULT_DB_PATH,
 };

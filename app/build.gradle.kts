@@ -3,7 +3,6 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("com.google.gms.google-services")
 }
 
 // 从 git 忽略的 local.properties 读取私密配置，支持环境变量覆盖；
@@ -28,8 +27,8 @@ android {
         applicationId = "com.screenshare"
         minSdk = 24
         targetSdk = 34
-versionCode = 335
-versionName = "1.330"
+versionCode = 379
+versionName = "1.374"
         // 只保留真机架构（arm64 + armeabi-v7a），砍掉模拟器专用 x86/x86_64，
         // APK 从 ~53MB 缩到 ~25MB，两端同时下载更快
         // 可用 -Pscreenshare.abifilter=arm64-v8a 覆盖为精简版（少 6.8MB，老 32 位机装不了）
@@ -87,6 +86,10 @@ versionName = "1.330"
             "DIAG_TOKEN",
             "\"${secret("screenshare.diag.token")}\""
         )
+        // 极光推送：AppKey 从 local.properties/环境变量读，不进仓库
+        manifestPlaceholders["JPUSH_PKGNAME"] = applicationId ?: "com.screenshare"
+        manifestPlaceholders["JPUSH_APPKEY"] = secret("jpush.appkey")
+        manifestPlaceholders["JPUSH_CHANNEL"] = "developer-default"
     }
 
     buildTypes {
@@ -152,6 +155,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-view:1.3.4")
 
-    // 离线邀请推送
-    implementation("com.google.firebase:firebase-messaging:24.0.0")
+    // 离线邀请推送：极光推送（5.0.0 起自动拉取 JCore，无需单独配置）
+    implementation("cn.jiguang.sdk:jpush:5.6.0")
 }

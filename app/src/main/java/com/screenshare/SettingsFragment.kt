@@ -28,13 +28,28 @@ import java.util.concurrent.TimeUnit
  * 设置页：音频设置 / 检查更新 / 导出日志 / 关于。
  * 音频偏好持久化在 "audio_settings"，会议中 MainActivity 读取同一份 prefs 生效。
  */
-class SettingsFragment : Fragment() {
+    class SettingsFragment : Fragment() {
 
     private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
 
     private val audioPrefs by lazy {
         requireContext().getSharedPreferences("audio_settings", Context.MODE_PRIVATE)
+    }
+
+    private val glidePrefs by lazy {
+        requireContext().getSharedPreferences("glide_settings", Context.MODE_PRIVATE)
+    }
+
+    companion object {
+        const val GLIDE_LEVEL = "sensitivity_level"
+
+        /** 档位转灵敏度系数：越小越灵敏 */
+        fun levelToFactor(level: Int): Float = when (level) {
+            0 -> 1.8f   // 慢：需要更长滑动距离
+            2 -> 0.5f   // 快：轻滑即触发
+            else -> 1f  // 标准
+        }
     }
 
     override fun onCreateView(
@@ -61,12 +76,9 @@ class SettingsFragment : Fragment() {
         binding.tvUpdateSub.text = "当前 v$versionName · 点击检查新版本"
 
         // 账号区：展示当前登录昵称与好友码
-        SessionStore.getProfile(requireContext())?.let { p ->
-            binding.tvAccountEmail.text = p.nickname.ifBlank { p.userId }
-            binding.tvAccountCode.text = "好友码 ${p.friendCode}"
-        } ?: run {
-            binding.tvAccountEmail.text = "未登录"
-            binding.tvAccountCode.text = ""
+        fillAccount()
+        binding.rowAccount.setOnClickListener {
+            (requireActivity() as? LiquidHomeActivity)?.navigateToSubPage(ProfileFragment())
         }
 
         binding.rowLogout.setOnClickListener { logout() }
@@ -79,6 +91,8 @@ class SettingsFragment : Fragment() {
             // 页面切换骨架：进入音频设置子页面（不使用弹窗）
             (requireActivity() as? LiquidHomeActivity)?.navigateToSubPage(AudioSettingsFragment())
         }
+        updateGlideSummary()
+        binding.rowGlide.setOnClickListener { showGlideSensitivityDialog() }
         binding.rowUpdate.setOnClickListener {
             Toast.makeText(requireContext(), "正在检查更新…", Toast.LENGTH_SHORT).show()
             // UpdateChecker 内部用 context as? Activity 切主线程弹窗，须传 Activity
@@ -88,9 +102,47 @@ class SettingsFragment : Fragment() {
         binding.rowAbout.setOnClickListener { copyAboutInfo() }
     }
 
+    /** 账号区摘要：onResume 也调用，从个人资料页返回后立即刷新 */
+    private fun fillAccount() {
+        SessionStore.getProfile(requireContext())?.let { p ->
+            binding.tvAccountEmail.text = p.nickname.ifBlank { p.userId }
+            binding.tvAccountCode.text = "好友码 ${p.friendCode}"
+        } ?: run {
+            binding.tvAccountEmail.text = "未登录"
+            binding.tvAccountCode.text = ""
+        }
+    }
+
     /** 音频摘要行：供子页面返回时刷新 */
     fun refreshAudioSummary() {
         if (_binding != null) updateAudioSummary()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (_binding != null) fillAccount()
+    }
+
+    /** 滑动灵敏度摘要行 */
+    private fun updateGlideSummary() {
+        val names = arrayOf("慢（稳重）", "标准", "快（灵敏）")
+        binding.tvGlideSub.text = "导航条横滑切换 · ${names[glidePrefs.getInt(GLIDE_LEVEL, 1)]}"
+    }
+
+    private fun showGlideSensitivityDialog() {
+        val ctx = requireContext()
+        val items = arrayOf("慢（需要更长的滑动距离）", "标准（默认）", "快（轻轻一划即切换）")
+        val current = glidePrefs.getInt(GLIDE_LEVEL, 1)
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("滑动灵敏度")
+            .setSingleChoiceItems(items, current) { d, which ->
+                glidePrefs.edit().putInt(GLIDE_LEVEL, which).apply()
+                updateGlideSummary()
+                (requireActivity() as? LiquidHomeActivity)?.applyGlideSensitivity()
+                d.dismiss()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     /** 退出登录：通知服务端失效本设备令牌，清本地会话回登录页 */
@@ -99,7 +151,7 @@ class SettingsFragment : Fragment() {
         val token = SessionStore.getToken(ctx).orEmpty()
         lifecycleScope.launch {
             if (token.isNotEmpty()) {
-                // 先清推送令牌再失效会话：顺序反了清令牌会 401
+                // 先清推送标识再失效会话：顺序反了清标识会 401
                 AccountClient.clearPushToken(token)
                 AccountClient.logout(token)
             }
@@ -134,7 +186,19 @@ class SettingsFragment : Fragment() {
             var uploaded = false
             var errMsg: String? = null
             try {
-                val body = f.readText()
+                // 本地日志文件跨启动累积，历史启动内容对当前问题无意义；
+                // 从最后一个「应用启动」分隔线切片，只上传本次运行日志
+                val raw = f.readText()
+                val marker = "==== 应用启动 "
+                val cut = raw.lastIndexOf(marker)
+                val body = if (cut >= 0) raw.substring(cut) else raw
+                // gzip 压缩：纯文本日志重复行多，压缩后通常约 1/8 体积
+                val zipped = java.io.ByteArrayOutputStream().use { bos ->
+                    java.util.zip.GZIPOutputStream(bos).use { gos ->
+                        gos.write(body.toByteArray(Charsets.UTF_8))
+                    }
+                    bos.toByteArray()
+                }
                 // UPDATE_URL 形如 https://host/version.json，提取基址拼上传端点
                 val u = java.net.URI(BuildConfig.UPDATE_URL)
                 val base = buildString {
@@ -150,12 +214,14 @@ class SettingsFragment : Fragment() {
                 val req = Request.Builder()
                     .url(url)
                     .header("X-Diag-Token", BuildConfig.DIAG_TOKEN)
-                    .post(body.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+                    .header("X-App-Version", "${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")
+                    .header("Content-Encoding", "gzip")
+                    .post(zipped.toRequestBody("application/gzip".toMediaType()))
                     .build()
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         uploaded = true
-                        AppLogger.app("用户上传日志到云端 (${f.length()}B)")
+                        AppLogger.app("用户上传日志到云端 (压缩${zipped.size}B/原文${f.length()}B)")
                     } else {
                         errMsg = "服务器响应 ${resp.code}"
                     }

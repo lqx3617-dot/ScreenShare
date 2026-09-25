@@ -100,7 +100,7 @@
                 android:layout_marginBottom="16dp"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_liquid_card"
+                android:background="@drawable/bg_card"
                 android:elevation="8dp">
 
                 <FrameLayout
@@ -297,7 +297,7 @@
                 android:layout_marginBottom="16dp"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_liquid_card"
+                android:background="@drawable/bg_card"
                 android:elevation="8dp">
 
                 <LinearLayout
@@ -418,9 +418,8 @@
 
                     <TextView
                         android:id="@+id/btnCopy"
-                        android:layout_width="0dp"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
                         android:gravity="center_vertical"
                         android:paddingStart="12dp"
                         android:paddingEnd="12dp"
@@ -462,7 +461,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_liquid_card"
+                android:background="@drawable/bg_card"
                 android:elevation="8dp">
 
                 <LinearLayout

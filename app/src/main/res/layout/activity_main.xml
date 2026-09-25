@@ -228,6 +228,28 @@
             android:background="@drawable/bg_room_tile" />
 
         <TextView
+            android:id="@+id/btnWatchTogether"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="64dp"
+            android:layout_marginStart="8dp"
+            android:gravity="center"
+            android:text="一起看"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFFFF"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="3"
+            android:drawableTop="@drawable/ic_play_badge"
+            android:drawablePadding="3dp"
+            android:paddingStart="2dp"
+            android:paddingEnd="2dp"
+            android:foreground="?attr/selectableItemBackground"
+            android:background="@drawable/bg_room_tile" />
+
+        <TextView
             android:id="@+id/btnToolbarMore"
             android:layout_width="0dp"
             android:layout_weight="1"

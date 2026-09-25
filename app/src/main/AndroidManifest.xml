@@ -20,12 +20,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- 情侣空间：位置共享 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
         android:name=".App"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="ScreenShare"
+        android:label="@string/app_name"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.ScreenShare"
         android:supportsRtl="true">
@@ -60,14 +62,37 @@
             android:name=".ScanFriendCodeActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
+        <activity
+            android:name=".CouplePhotosActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+        <activity
+            android:name=".WatchTogetherActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:screenOrientation="landscape" />
 
+        <!-- 极光推送：核心 Service（独立进程保活长连接） -->
         <service
-            android:name=".ScreenShareFcmService"
+            android:name=".JPushCoreService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":pushcore">
+            <intent-filter>
+                <action android:name="cn.jiguang.user.service.action" />
+            </intent-filter>
+        </service>
+        <!-- 极光推送：registrationID / 别名 / 标签 回调 -->
+        <receiver
+            android:name=".JPushMessageReceiverImpl"
+            android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+                <action android:name="cn.jpush.android.intent.RECEIVER_MESSAGE" />
+                <category android:name="com.screenshare" />
             </intent-filter>
-        </service>        <activity
+        </receiver>
+        <activity
             android:name=".LiquidHomeActivity"
             android:exported="true"
             android:launchMode="singleTop"

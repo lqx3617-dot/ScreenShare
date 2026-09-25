@@ -66,7 +66,7 @@
     <color name="divider_neon">#33E85D8D</color>
 
     <!-- ==================== 应用图标 ==================== -->
-    <color name="ic_launcher_background">#FFEF6E93</color>
+    <color name="ic_launcher_background">#FFB7B5F3</color>
 
     <!-- ==================== 旧名别名（保持值不变，逐步迁移，勿删） ==================== -->
     <color name="neon_cyan">@color/brand_rose</color>

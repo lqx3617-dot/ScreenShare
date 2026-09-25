@@ -62,6 +62,13 @@ class App : Application() {
         super.onCreate()
         instance = this
         AppLogger.init(this)
+        // 极光推送：隐私授权后初始化（App 无隐私弹窗，直接启用）
+        try {
+            cn.jpush.android.api.JPushInterface.setDebugMode(BuildConfig.DEBUG)
+            cn.jpush.android.api.JPushInterface.init(this)
+        } catch (t: Throwable) {
+            AppLogger.app("[JPush] 初始化失败：${t.message}")
+        }
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val sw = StringWriter()

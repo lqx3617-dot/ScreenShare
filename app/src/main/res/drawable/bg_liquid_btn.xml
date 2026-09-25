@@ -11,7 +11,7 @@
                     <solid android:color="#66FFFFFF" />
                 </shape>
             </item>
-            <!-- 渐变主体（内缩 1dp） -->
+            <!-- 渐变主体（内缩 1dp）：深紫→亮粉，不透明饱和 -->
             <item
                 android:left="1dp"
                 android:top="1dp"
@@ -21,8 +21,8 @@
                     <corners android:radius="17dp" />
                     <gradient
                         android:angle="135"
-                        android:startColor="#80FF6BB5"
-                        android:endColor="#80A855F7" />
+                        android:startColor="#FF8B5CF6"
+                        android:endColor="#FFEC4899" />
                 </shape>
             </item>
         </layer-list>

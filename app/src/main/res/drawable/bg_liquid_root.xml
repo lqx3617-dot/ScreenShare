@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 液态玻璃根背景：深紫→紫→粉 135deg（对应 HTML 160deg 五色，Android gradient 仅支持三色，取 45 倍数方向近似） -->
+<!-- 液态玻璃根背景：深紫黑→深紫→粉紫 135deg（夜景色：整体压暗，底部保留粉紫点缀） -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <gradient
         android:angle="135"
-        android:startColor="#FF0A0620"
-        android:centerColor="#FF4D1A75"
+        android:startColor="#FF0D0620"
+        android:centerColor="#FF2D1B69"
         android:endColor="#FFC44A90" />
 </shape>
