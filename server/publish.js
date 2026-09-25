@@ -4,6 +4,7 @@
  * 由 download-server 调用，单任务互斥（同一时刻只允许一个发布任务）。
  */
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFile } = require("child_process");
 
@@ -99,17 +100,22 @@ async function signApk(task, key) {
   // 工具挂起（keystore 锁、磁盘满、僵尸进程）时必须超时，否则 currentTask 永不释放、
   // 后续发布全部 409；finally 兜底清理临时文件，避免 verify 失败后残留 21MB×2
   const SIGN_TIMEOUT = 10 * 60 * 1000;
+  // keystore 口令经临时文件传入：--ks-pass pass:xxx 会让口令出现在子进程 argv，
+  // 同机其他用户可从 /proc/<pid>/cmdline 明文读到；--ks-pass file:/dev/stdin 在
+  // 守护进程环境下 /dev/stdin 打不开（ENXIO，apksigner 直接签名失败）。
+  // 改用权限 600 的临时文件：口令既不入 argv 也不留盘，finally 立即删除。
+  const passFile = path.join(os.tmpdir(), `ks-pass-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(passFile, KEYSTORE_PASS, { mode: 0o600 });
   try {
     await run(ZIPALIGN, ["-f", "4", cfg.unsigned, aligned], { timeout: SIGN_TIMEOUT });
-    // keystore 口令经 stdin 传入：--ks-pass pass:xxx 会让口令出现在子进程 argv，
-    // 同机其他用户可从 /proc/<pid>/cmdline 明文读到，导致签名私钥口令泄漏
     await run(APKSIGNER, [
-      "sign", "--ks", KEYSTORE, "--ks-pass", "file:/dev/stdin",
+      "sign", "--ks", KEYSTORE, "--ks-pass", `file:${passFile}`,
       "--ks-key-alias", KEYSTORE_ALIAS, "--out", signed, aligned,
-    ], { timeout: SIGN_TIMEOUT, input: KEYSTORE_PASS });
+    ], { timeout: SIGN_TIMEOUT });
     await run(APKSIGNER, ["verify", "--verbose", signed], { timeout: SIGN_TIMEOUT });
     atomicWrite(cfg.final, fs.readFileSync(signed));
   } finally {
+    try { fs.unlinkSync(passFile); } catch (e) {}
     try { fs.unlinkSync(aligned); } catch (e) {}
     try { fs.unlinkSync(signed); } catch (e) {}
   }

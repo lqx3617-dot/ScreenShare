@@ -9,3 +9,16 @@
 # FCM 凭证：服务账号私钥绝不入库
 server/*firebase-adminsdk*
 server/fcm-service-account.json
+
+# 极光/本机密钥配置
+local.properties
+
+# 签名密钥绝不入库
+signing/
+
+# 构建产物与临时文件
+*.apk
+*.idsig
+.gradle/
+app/build/
+albumviewer/build/

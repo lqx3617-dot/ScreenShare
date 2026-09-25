@@ -7,6 +7,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const zlib = require("zlib");
 
 const PORT = process.env.PORT || 8090;
 const APK = "/workspace/ScreenShare-allarch-signed.apk";
@@ -510,7 +511,25 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
     });
     req.on("end", () => {
       if (tooLarge) return;
-      const body = Buffer.concat(chunks);
+      const raw = Buffer.concat(chunks);
+      if (raw.length === 0) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "日志为空" }));
+        done(400);
+        return;
+      }
+      // v1.372: 客户端 gzip 压缩上传（纯文本日志压缩比约 8:1）
+      let body = raw;
+      if ((req.headers["content-encoding"] || "").toLowerCase().includes("gzip")) {
+        try {
+          body = zlib.gunzipSync(raw);
+        } catch (e) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "日志解压失败" }));
+          done(400);
+          return;
+        }
+      }
       if (body.length === 0) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "日志为空" }));
@@ -520,11 +539,18 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
       try {
         fs.mkdirSync(LOGS_DIR, { recursive: true });
         const ts = new Date().toISOString().replace(/[:.]/g, "-");
-        const rand = crypto.randomBytes(4).toString("hex");
-        const name = `log-${ts}-${rand}.log`;
+        // 文件名带版本与诊断ID，无需打开文件即可定位是哪个版本/设备
+        const verRaw = String(req.headers["x-app-version"] || "x");
+        const ver = verRaw.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+        const head = body.subarray(0, 1024).toString("utf8");
+        const dm = /诊断ID=([^\s]+)/.exec(head);
+        const diag = dm
+          ? crypto.createHash("md5").update(dm[1]).digest("hex").slice(0, 8)
+          : crypto.randomBytes(4).toString("hex");
+        const name = `log-${ts}-v${ver}-${diag}.log`;
         fs.writeFileSync(path.join(LOGS_DIR, name), body);
         // 同设备旧快照已完整包含本次内容，去重删除
-        dedupeDeviceLogs(name, deviceKeyOf(body.subarray(0, 1024).toString("utf8")));
+        dedupeDeviceLogs(name, deviceKeyOf(head));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, file: name, size: body.length }));
         done(200);
