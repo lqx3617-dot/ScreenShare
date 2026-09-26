@@ -101,6 +101,7 @@
                 android:orientation="vertical"
                 android:padding="24dp"
                 android:background="@drawable/bg_liquid_card"
+                android:foreground="@drawable/bg_liquid_dispersion"
                 android:elevation="8dp">
 
                 <FrameLayout
@@ -298,6 +299,7 @@
                 android:orientation="vertical"
                 android:padding="24dp"
                 android:background="@drawable/bg_liquid_card"
+                android:foreground="@drawable/bg_liquid_dispersion"
                 android:elevation="8dp">
 
                 <LinearLayout
@@ -462,6 +464,7 @@
                 android:orientation="vertical"
                 android:padding="24dp"
                 android:background="@drawable/bg_liquid_card"
+                android:foreground="@drawable/bg_liquid_dispersion"
                 android:elevation="8dp">
 
                 <LinearLayout
