@@ -100,7 +100,7 @@
                 android:layout_marginBottom="16dp"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_card"
+                android:background="@drawable/bg_liquid_card"
                 android:elevation="8dp">
 
                 <FrameLayout
@@ -297,7 +297,7 @@
                 android:layout_marginBottom="16dp"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_card"
+                android:background="@drawable/bg_liquid_card"
                 android:elevation="8dp">
 
                 <LinearLayout
@@ -461,7 +461,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:padding="24dp"
-                android:background="@drawable/bg_card"
+                android:background="@drawable/bg_liquid_card"
                 android:elevation="8dp">
 
                 <LinearLayout

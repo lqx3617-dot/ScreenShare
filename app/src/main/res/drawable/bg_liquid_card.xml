@@ -1,40 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 液态玻璃卡片（对应 .glass-card + ::before 描边 + ::after 顶部高光） -->
+<!--
+  液态玻璃卡片（v1.375 重塑）
+  原版：白→淡紫→白 彩色渐变描边 + 20% 半透明白主体。彩色描边在深紫底上显杂，
+  且与主按钮的紫粉渐变抢视觉。改为一套语言：单色细描边 + 分层玻璃主体 + 顶部高光。
+  深色玻璃的"高级感"来自克制的层次，不来自颜色。
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 渐变描边：压暗避免暗背景上的亮边（白→淡紫→白，均降至 35%/15%/30%） -->
+    <!-- 主体：分层玻璃（上亮下沉，模拟光从上方打下来） -->
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="28dp" />
+            <corners android:radius="26dp" />
             <gradient
                 android:angle="135"
-                android:startColor="#59FFFFFF"
-                android:centerColor="#26C896FF"
-                android:endColor="#4DFFFFFF" />
+                android:startColor="#3DFFFFFF"
+                android:centerColor="#1FFFFFFF"
+                android:endColor="#33FFFFFF" />
         </shape>
     </item>
-    <!-- 玻璃主体（内缩 1dp 露出描边）：统一 20% 半透明白 -->
-    <item
-        android:left="1dp"
-        android:top="1dp"
-        android:right="1dp"
-        android:bottom="1dp">
+    <!-- 描边：单色白，越细越精致 -->
+    <item>
         <shape android:shape="rectangle">
-            <corners android:radius="27dp" />
-            <solid android:color="#33FFFFFF" />
+            <corners android:radius="26dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#33FFFFFF" />
         </shape>
     </item>
-    <!-- 顶部高光线（::after：左右各留 10%，横向渐变收尾） -->
+    <!-- 顶部高光线：只留中间一段，暗示玻璃厚度 -->
     <item
-        android:left="28dp"
-        android:right="28dp"
+        android:left="32dp"
+        android:right="32dp"
         android:top="0dp"
-        android:bottom="-1dp"
         android:height="1dp">
         <shape android:shape="rectangle">
             <gradient
                 android:angle="0"
                 android:startColor="#00FFFFFF"
-                android:centerColor="#99FFFFFF"
+                android:centerColor="#80FFFFFF"
                 android:endColor="#00FFFFFF" />
         </shape>
     </item>

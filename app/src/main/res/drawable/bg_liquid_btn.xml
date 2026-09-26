@@ -1,17 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 液态玻璃主按钮：粉紫渐变 + 白描边 + 涟漪（对应 .btn-primary） -->
+<!--
+  液态玻璃主按钮（v1.375 重塑）
+  原版：紫→粉 135° 大跨度渐变 + 白描边 + 涟漪，色相跨越大在深紫底上显"塑料感"。
+  改为：玫瑰珊瑚同色系双色渐变（品牌主色 brand_rose_start→brand_rose_end），
+  与 App 内其它界面（首页主按钮 bg_btn_primary）统一，只保留一处强调色。
+  按压态由 ripple 表达，不再叠按压色块，避免"两层反馈"。
+-->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="#40FFFFFF">
     <item>
         <layer-list>
-            <!-- 白描边层 -->
+            <!-- 白描边层（细，仅勾边） -->
             <item>
                 <shape android:shape="rectangle">
                     <corners android:radius="18dp" />
-                    <solid android:color="#66FFFFFF" />
+                    <solid android:color="#4DFFFFFF" />
                 </shape>
             </item>
-            <!-- 渐变主体（内缩 1dp）：深紫→亮粉，不透明饱和 -->
+            <!-- 渐变主体（内缩 1dp）：品牌玫瑰双色，竖直方向 -->
             <item
                 android:left="1dp"
                 android:top="1dp"
@@ -20,9 +26,9 @@
                 <shape android:shape="rectangle">
                     <corners android:radius="17dp" />
                     <gradient
-                        android:angle="135"
-                        android:startColor="#FF8B5CF6"
-                        android:endColor="#FFEC4899" />
+                        android:angle="90"
+                        android:startColor="@color/brand_rose_start"
+                        android:endColor="@color/brand_rose_end" />
                 </shape>
             </item>
         </layer-list>
