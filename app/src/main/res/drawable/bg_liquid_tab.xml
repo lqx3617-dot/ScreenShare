@@ -1,20 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 底部毛玻璃导航条：深色半透明底 + 内层白色高光（Android 12+ 由 RenderEffect 模糊背景） -->
+<!--
+  底部导航条（v1.375 重塑）
+  原版：80% 纯黑底 + 1dp 白内层高光，在深紫背景上是一块"死黑"，与整体色调脱节。
+  改为：同色系深紫玻璃 + 细白描边 + 顶部高光，让导航条像是从背景里"浮"出来的一层玻璃，
+  而不是贴上去的黑条。Android 12+ 由 LiquidTabBar 用 RenderEffect 叠加真实模糊。
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 玻璃主体：深紫半透（与 bg_liquid_root 同色系，透明度更高） -->
     <item>
         <shape android:shape="rectangle">
-            <corners android:radius="14dp" />
-            <solid android:color="#80000000" />
+            <corners android:radius="22dp" />
+            <gradient
+                android:angle="135"
+                android:startColor="#B3170E33"
+                android:centerColor="#A62D1B69"
+                android:endColor="#B33A1A5E" />
         </shape>
     </item>
-    <item
-        android:left="1dp"
-        android:top="1dp"
-        android:right="1dp"
-        android:bottom="1dp">
+    <!-- 描边：细白，勾勒玻璃边界 -->
+    <item>
         <shape android:shape="rectangle">
-            <corners android:radius="13dp" />
-            <solid android:color="#1FFFFFFF" />
+            <corners android:radius="22dp" />
+            <stroke
+                android:width="1dp"
+                android:color="#33FFFFFF" />
+        </shape>
+    </item>
+    <!-- 顶部高光线：中间亮两头收，模拟玻璃厚度 -->
+    <item
+        android:left="40dp"
+        android:right="40dp"
+        android:top="0dp"
+        android:height="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:startColor="#00FFFFFF"
+                android:centerColor="#99FFFFFF"
+                android:endColor="#00FFFFFF" />
         </shape>
     </item>
 </layer-list>

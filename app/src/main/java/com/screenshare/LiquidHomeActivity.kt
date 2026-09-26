@@ -61,11 +61,12 @@ class LiquidHomeActivity : AppCompatActivity() {
     )
 
     private val blobs = arrayOf(
-        // v1.302: 夜空配色——冷色为主（品红/靛蓝/翡翠/亮品红），暖色比例降低
-        Blob(0xFFEC4899.toInt(), 420, Gravity.TOP or Gravity.START, -90, -100, 0.45f, 60f, 50f, 1.12f, 16000),
-        Blob(0xFF6366F1.toInt(), 360, Gravity.TOP or Gravity.END, -90, 60, 0.38f, -50f, 60f, 1.08f, 20000),
-        Blob(0xFF14B8A6.toInt(), 300, Gravity.BOTTOM or Gravity.START, 20, -40, 0.30f, 40f, -60f, 1.15f, 22000),
-        Blob(0xFFD946EF.toInt(), 240, Gravity.TOP or Gravity.START, 110, 320, 0.25f, 60f, 50f, 0.95f, 18000)
+        // v1.375: 品牌同色系三光斑（玫瑰/淡紫/蜜桃），去掉翡翠绿与靛蓝——
+        // 原四色横跨品红-靛蓝-翡翠，在深紫底上形成彩虹感，与玻璃卡片的单色描边语言冲突。
+        // 透明度整体压低（0.45→0.32），光斑退为氛围底噪，不再与内容抢注意力。
+        Blob(0xFFE85D8D.toInt(), 420, Gravity.TOP or Gravity.START, -90, -100, 0.32f, 60f, 50f, 1.12f, 16000),
+        Blob(0xFF8B5CF6.toInt(), 360, Gravity.TOP or Gravity.END, -90, 60, 0.26f, -50f, 60f, 1.08f, 20000),
+        Blob(0xFFFAB49B.toInt(), 300, Gravity.BOTTOM or Gravity.START, 20, -40, 0.22f, 40f, -60f, 1.15f, 22000)
     )
 
     private var homeFragment: HomeFragment? = null
