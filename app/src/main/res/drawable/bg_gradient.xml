@@ -1,29 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  背景（简洁版 v1.252）
-  原版：奶油粉白渐变 + 左上玫瑰光晕 + 右下蜜桃光晕 + 爱心水印。
-  房间内 90% 面积被深色视频占据，彩色光晕只在边角闪现，反而是噪音；
-  保留温柔的粉白渐变与极淡爱心水印，品牌感仍在，但不与画面争抢。
--->
+<!-- 液态根背景 v3：高饱和夜空（用户反馈"太淡/色彩不够"）
+     底层 135° 深紫黑→饱和靛蓝→饱和玫红紫；上层 315° 亮玫红→深紫（不透明收尾，色块铺满不全透明）
+     angle 必须是 45 的倍数（GradientDrawable 硬性要求），原先 160 在真机 inflate 直接崩 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 基础奶油粉白渐变 -->
     <item>
         <shape android:shape="rectangle">
             <gradient
+                android:type="linear"
                 android:angle="135"
-                android:startColor="#FFFDF3F7"
-                android:centerColor="#FFFFF8F4"
-                android:endColor="#FFFBE7EE" />
+                android:startColor="#0C0524"
+                android:centerColor="#2B1368"
+                android:endColor="#5E1A6B" />
         </shape>
     </item>
-
-    <!-- 底部爱心水印（极淡，若有似无的浪漫点缀） -->
-    <item
-        android:width="300dp"
-        android:height="300dp"
-        android:gravity="bottom|start"
-        android:left="-80dp"
-        android:bottom="-90dp"
-        android:alpha="0.05"
-        android:drawable="@drawable/ic_heart_fill" />
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="315"
+                android:startColor="#9C2A6E"
+                android:centerColor="#5E1A6B"
+                android:endColor="#1A0A3E" />
+        </shape>
+    </item>
 </layer-list>

@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 品牌头部条（简洁版 v1.252）：近透明白 + 极细粉分隔 -->
+<!-- 品牌头部条：半透明白毛玻璃 + 底部粉调分隔 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#D8FFF9FB" />
+            <solid android:color="#F2FFF9FB" />
         </shape>
     </item>
-    <item android:gravity="bottom">
+    <item
+        android:gravity="bottom">
         <shape android:shape="rectangle">
-            <size android:height="0.5dp" />
-            <solid android:color="#1FD98AA6" />
+            <size android:height="1dp" />
+            <solid android:color="@color/glass_border" />
         </shape>
     </item>
 </layer-list>
