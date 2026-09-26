@@ -36,6 +36,8 @@ class CouplePhotosActivity : AppCompatActivity() {
     private val medias = mutableListOf<CoupleClient.CoupleMedia>()
     private lateinit var adapter: MediaAdapter
     private var uploading = false
+    /** 照片全屏预览对话框：Activity 销毁时主动 dismiss，避免泄漏 window */
+    private var previewDialog: Dialog? = null
 
     private val pickPhoto = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -238,6 +240,13 @@ class CouplePhotosActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // 预览对话框由 Activity 窗口管理，销毁时仍 showing 会泄漏 window
+        previewDialog?.dismiss()
+        previewDialog = null
+    }
+
     /** 网格适配器：协程按 URL 解码位图（photo=原图，video=首帧缩略图），item 由 SquareImageView 保证正方形 */
     private inner class MediaAdapter(
         private val data: List<CoupleClient.CoupleMedia>,
@@ -277,9 +286,13 @@ class CouplePhotosActivity : AppCompatActivity() {
                 else CoupleClient.mediaUrl(m.url, token())
             holder.itemView.setOnClickListener {
                 if (m.mediaType == "video") {
-                    startActivity(Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(Uri.parse(fullSrc), "video/mp4")
-                    })
+                    // 应用内播放：fullSrc 带会话令牌，交给外部 App（浏览器/播放器）
+                    // 会把令牌泄漏给第三方应用与其历史记录
+                    startActivity(
+                        Intent(this@CouplePhotosActivity, WatchTogetherActivity::class.java).apply {
+                            data = Uri.parse(fullSrc)
+                        }
+                    )
                 } else {
                     previewPhoto(fullSrc)
                 }
@@ -313,6 +326,7 @@ class CouplePhotosActivity : AppCompatActivity() {
         )
         iv.setOnClickListener { dialog.dismiss() }
         dialog.show()
+        previewDialog = dialog
         lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) { decodeUrl(url, 1600) }
             if (bmp != null && dialog.isShowing) iv.setImageBitmap(bmp)

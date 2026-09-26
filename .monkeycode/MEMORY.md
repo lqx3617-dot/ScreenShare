@@ -991,3 +991,9 @@ Entries discovered by the Agent during task execution should follow this format:
   - 正确的环境变量更新顺序：改脚本 → background_terminal_kill 旧守护终端 → 立即重起守护脚本 → kill 目标端口 node 进程 → 守护 15s 内用新环境拉起
   - 高德 Web 服务 Key 可直接调 restapi.amap.com/v3/geocode/regeo，无需绑定 SHA1/包名；服务端 GeoCoder.js 只从 process.env.AMAP_KEY 读取，未配置时 reverse() 返回 null 由客户端降级经纬度
   - 发布签名 SHA1（keytool -list -v -keystore /workspace/signing/release.keystore -storepass 见签名配置，alias screenshare）：69:EA:C9:B2:0A:AF:06:5D:99:A0:7F:70:84:62:C0:19:E7:9C:2E:3F，包名 com.screenshare
+
+[User Instruction Summary]
+- Date: 2026-09-25
+- Context: 用户要求在功能分支 260925-feat-couple-space-stability 完成后合并到 main
+- Instructions:
+  - 功能分支完成后合并进 main（该次为 fast-forward：main f5e6e25 → c1eb7e9），此后在 main 分支上继续开发，不再停留在功能分支

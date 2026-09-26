@@ -476,7 +476,9 @@ class LiquidHomeActivity : AppCompatActivity() {
         }
         ft.replace(R.id.contentArea, frag)
         ft.commit()
-        binding.tabBar.select(index)
+        // 只更新高亮：select 会回调 onTabSelected→switchTab 形成环，而此时 currentTab
+        // 尚未赋值、守卫不生效，会再跑一次事务（启动时首页视图被销毁重建一次）
+        binding.tabBar.selectSilent(index)
         currentTab = index
     }
 

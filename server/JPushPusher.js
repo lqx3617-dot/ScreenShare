@@ -40,6 +40,8 @@ class JPushPusher {
     try {
       const res = await fetch(PUSH_URL, {
         method: "POST",
+        // 极光接口卡住时及时放弃，否则推送 Promise 永久挂起
+        signal: AbortSignal.timeout(8000),
         headers: {
           Authorization: this.authHeader,
           "Content-Type": "application/json",

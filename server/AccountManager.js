@@ -209,13 +209,24 @@ class AccountManager {
           .prepare(`SELECT 1 FROM users WHERE friend_code = ? AND id != ?`)
           .get(code, userId);
         if (taken) throw new AccountError("friend_code_taken", "该好友码已被占用，请换一个", 409);
-        this.db.prepare(`UPDATE users SET friend_code = ? WHERE id = ?`).run(code, userId);
-        this.db
-          .prepare(`UPDATE couple_invitations SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
-          .run(userId);
-        this.db
-          .prepare(`UPDATE friend_requests SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
-          .run(userId);
+        // 改码 + 作废待处理邀请/申请须同生共死：任一 UPDATE 失败时整体回滚，
+        // 避免出现新码已生效但旧邀请仍滞留 pending 的中间态
+        this.db.exec("BEGIN");
+        try {
+          this.db.prepare(`UPDATE users SET friend_code = ? WHERE id = ?`).run(code, userId);
+          this.db
+            .prepare(`UPDATE couple_invitations SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
+            .run(userId);
+          this.db
+            .prepare(`UPDATE friend_requests SET status = 'cancelled' WHERE to_user = ? AND status = 'pending'`)
+            .run(userId);
+          this.db.exec("COMMIT");
+        } catch (e) {
+          try { this.db.exec("ROLLBACK"); } catch (_) {}
+          throw e instanceof AccountError
+            ? e
+            : new AccountError("friend_code_update_failed", "好友码修改失败，请重试", 500);
+        }
       }
     }
     return this.getProfile(userId);

@@ -22,6 +22,8 @@ import kotlinx.coroutines.launch
 class ProfileFragment : Fragment() {
 
     private var saving = false
+    /** 修改好友码的二次确认对话框：Fragment 销毁时主动 dismiss，避免残留对话框悬空点击 */
+    private var confirmDialog: android.app.AlertDialog? = null
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
@@ -60,9 +62,12 @@ class ProfileFragment : Fragment() {
                 android.app.AlertDialog.Builder(requireContext())
                     .setTitle("修改好友码")
                     .setMessage("好友码将改为 $code，他人用旧码发来的待处理邀请会自动失效。确定修改？")
-                    .setPositiveButton("修改") { _, _ -> doSave(token, nickname, code) }
+                    .setPositiveButton("修改") { _, _ ->
+                        if (!isAdded) return@setPositiveButton
+                        doSave(token, nickname, code)
+                    }
                     .setNegativeButton("取消", null)
-                    .show()
+                    .also { confirmDialog = it.show() }
                 return@setOnClickListener
             }
             doSave(token, nickname, code)
@@ -85,6 +90,12 @@ class ProfileFragment : Fragment() {
             }
             saving = false
         }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        confirmDialog?.dismiss()
+        confirmDialog = null
     }
 
     private fun toast(msg: String) {

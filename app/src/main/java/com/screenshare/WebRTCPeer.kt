@@ -177,7 +177,7 @@ class WebRTCPeer(
         // 协商超时兜底任务。成功/失败回调必须先取消它，否则第 1 次协商的陈旧超时
         // 会把第 2 次正在进行的协商锁提前释放（compareAndSet(true,false)），导致
         // 后续 createOffer 并发进入、SDP 协商互相干扰失败
-        var negotiateTimeout: Runnable? = null,
+        @field:Volatile var negotiateTimeout: Runnable? = null,
         // 该连接是否已请求过关键帧。首次 CONNECTED 后置位；后续 ICE 抖动/COMPLETED 不再触发，
         // 避免 changeCaptureFormat 反复重启采集器打断帧流（短剧等低动态场景尤其致命）。
         var keyFrameRequested: Boolean = false
