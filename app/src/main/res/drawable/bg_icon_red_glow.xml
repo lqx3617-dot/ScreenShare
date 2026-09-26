@@ -1,30 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 珊瑚红圆底：结束会议警示图标容器（浅色柔和） -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="oval">
-            <solid android:color="@color/danger" />
-        </shape>
-    </item>
-    <item
-        android:left="2dp"
-        android:top="2dp"
-        android:right="2dp"
-        android:bottom="2dp">
-        <shape android:shape="oval">
-            <solid android:color="#FFFFF8FA" />
-        </shape>
-    </item>
-    <item
-        android:left="8dp"
-        android:top="8dp"
-        android:right="8dp"
-        android:bottom="8dp">
-        <shape android:shape="oval">
-            <gradient
-                android:angle="0"
-                android:startColor="#FFF0707C"
-                android:endColor="@color/danger" />
-        </shape>
-    </item>
-</layer-list>
+<!-- 结束会议警示图标容器（简洁版 v1.252）：单层柔和红圆底，去掉三层同心圆 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#1AE05566" />
+    <stroke
+        android:width="1dp"
+        android:color="#33E05566" />
+</shape>
