@@ -4,7 +4,7 @@
         <item name="colorPrimary">@color/neon_cyan</item>
         <item name="colorPrimaryVariant">@color/bg_dark</item>
         <item name="colorOnPrimary">@color/bg_dark</item>
-        <item name="colorSecondary">@color/accent</item>
+        <item name="colorSecondary">@color/neon_violet</item>
         <item name="colorSecondaryVariant">@color/bg_dark</item>
         <item name="android:statusBarColor">@color/bg_dark</item>
         <item name="android:navigationBarColor">@color/bg_dark</item>

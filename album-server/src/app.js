@@ -204,26 +204,18 @@ function json(res, code, obj) {
 }
 
 /**
- * 把旧版 meta.json 会话懒迁移入库。
+ * 启动时把旧版 meta.json 会话懒迁移入库：只需执行一次。
  * 早期 /api/albums 每次请求都全盘 readdir + 逐会话查库，聚合页/相册 App 每 5s 轮询时
- * 会做 O(会话数) 次文件系统与 DB 操作，因此改为低频迁移以消除该开销。
- * v1.250: 原实现仅启动时执行一次；运行期若仍有旧版客户端/脚本写入 meta.json，
- * 这些会话不会入库、会从 /api/albums 聚合视图消失。现改为「启动 + 运行期低频兜底」：
- * 迁移结果按 MIGRATE_THROTTLE_MS 节流，避免退回每请求全盘扫描。
+ * 会做 O(会话数) 次文件系统与 DB 操作，改为启动迁移一次后消除该开销。
  */
-const MIGRATE_THROTTLE_MS = 60 * 1000;
-let lastLegacyMigrateMs = 0;
-function migrateLegacySessions(force) {
-  const now = Date.now();
-  if (!force && now - lastLegacyMigrateMs < MIGRATE_THROTTLE_MS) return;
-  lastLegacyMigrateMs = now;
+function migrateLegacySessions() {
   try {
     for (const name of fs.readdirSync(ALBUM_ROOT)) {
       if (/^[0-9a-f]{32}$/.test(name)) loadSession(name);
     }
   } catch (e) {}
 }
-migrateLegacySessions(true);
+migrateLegacySessions();
 
 // ==================== POST /api/upload ====================
 // 按 action 分流：create 严格限流，upload/original/finish 宽松（批量上传不被阻断）
@@ -583,8 +575,7 @@ app.get("/api/devices", readLimiter, (req, res) => {
 
 /** 所有会话列表（含每会话已收照片索引），供聚合页 /all 汇总展示；支持 ?device= 按设备过滤 */
 app.get("/api/albums", readLimiter, (req, res) => {
-  // v1.250: 低频兜底迁移（60s 节流）——运行期新写入的旧版 meta.json 也能入库
-  migrateLegacySessions(false);
+  // 旧版 meta.json 会话已在启动时迁移入库（migrateLegacySessions），此处无需再扫盘
   const deviceFilter = String(req.query.device || "").trim().replace(/\s+/g, "");
   const albums = db
     .listAll()
