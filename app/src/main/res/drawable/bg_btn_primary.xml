@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主按钮（简洁版 v1.252）：单一珊瑚渐变实心 + 按压轻微内收，去掉一切光斑/外发光 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_md" />
+            <gradient
+                android:angle="90"
+                android:startColor="#FFD97AA3"
+                android:endColor="#FFCE4B7E" />
+        </shape>
+    </item>
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_md" />
+            <solid android:color="#33A7969F" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_md" />
+            <gradient
+                android:angle="90"
+                android:startColor="#FFEE7BA2"
+                android:endColor="#FFE45C8C" />
+        </shape>
+    </item>
+</selector>

@@ -22,3 +22,7 @@ signing/
 .gradle/
 app/build/
 albumviewer/build/
+
+# 运行时数据：相册服务上传目录与本机预览目录，绝不入库
+/albums/
+/preview/

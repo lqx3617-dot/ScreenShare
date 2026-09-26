@@ -11,7 +11,6 @@
     <color name="brand_peach_soft">#FFFAB49B</color>    <!-- 蜜桃光晕 -->
     <color name="brand_melon">#FFF29B50</color>         <!-- 蜜瓜 -->
 
-    <!-- ==================== 功能色（语义） ==================== -->
     <color name="success">#FF2F9E77</color>
     <color name="success_light">#FF43B892</color>
     <color name="danger">#FFE05566</color>
@@ -21,6 +20,12 @@
     <color name="warning_deep">#FFEE9840</color>
     <color name="slate">#FF94A3B8</color>               <!-- 中性蓝灰 -->
     <color name="slate_deep">#FF475569</color>
+    <!-- 分支 v1.252 简洁设计所用的 token；neon_cyan 已在本文件别名指向 brand_rose，不重复定义 -->
+    <color name="primary_green">#FF2F9E77</color>
+    <color name="primary_blue">#FFE85D8D</color>
+    <color name="primary_orange">#FFF29B50</color>
+    <color name="primary_red">#FFE05566</color>
+    <color name="accent">#FFE85D8D</color>
 
     <!-- ==================== 表面 / 背景 ==================== -->
     <color name="bg_base">#FFFDF3F7</color>             <!-- 奶油粉白底 -->
