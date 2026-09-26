@@ -51,7 +51,7 @@
         android:textStyle="bold"
         android:textAllCaps="false"
         android:textColor="#FFFFFFFF"
-        android:background="@drawable/bg_btn_neon_violet" />
+        android:background="@drawable/bg_btn_primary" />
 
     <TextView
         android:id="@+id/btnJoinCancel"

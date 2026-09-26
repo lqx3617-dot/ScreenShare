@@ -7,8 +7,6 @@
 
     <!-- 主色（玫瑰珊瑚强调，彩色底按钮用） -->
     <color name="neon_cyan">#FFE85D8D</color>
-    <color name="neon_blue">#FFB04C6E</color>
-    <color name="neon_violet">#FFFA7268</color>
     <color name="primary_green">#FF2F9E77</color>
     <color name="primary_blue">#FFE85D8D</color>
     <color name="primary_orange">#FFF29B50</color>
