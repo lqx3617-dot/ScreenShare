@@ -155,9 +155,6 @@ class MeetingActivity : AppCompatActivity() {
         binding = ActivityMeetingBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.btnCreateRoom.setLabel("创建房间")
-        binding.btnJoinMeeting.setLabel("加入会议")
-
         binding.btnCreateRoom.setOnClickListener {
             val code = generateMeetingCode()
             enterMeeting(ACTION_CREATE, code)
