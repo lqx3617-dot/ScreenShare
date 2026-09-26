@@ -111,6 +111,9 @@ class LiquidHomeActivity : AppCompatActivity() {
         safe("沉浸式状态栏") { setupImmersive() }
         safe("背景光斑") { setupBlobs() }
         safe("底部导航") { setupTabs() }
+        // v1.375: 液态玻璃——给底部导航条应用真实背景模糊（Android 12+），
+        // 低版本自动降级为 bg_liquid_tab 的半透明叠层，观感一致
+        safe("液态玻璃") { setupLiquidGlass() }
         // 静默自动检查更新（12h 节流，与 MainActivity 行为一致）
         safe("检查更新") { UpdateChecker.check(this) }
         // 账号在线状态长连接：auth 认领 + presence 广播 + 好友/共享邀请
@@ -275,6 +278,16 @@ class LiquidHomeActivity : AppCompatActivity() {
             presenceClient?.rejectShareInvite(inviteId)
         }
         dialog.show()
+    }
+
+    /**
+     * v1.375 液态玻璃：给玻璃浮层应用真实背景模糊。
+     * 底部导航条最贴近内容，模糊收益最大；toast 悬浮时也需要。
+     * Android 12+ 走系统 createBackdropBlurEffect（反射），低版本静默降级
+     * 到 bg_liquid_tab 的半透明叠层，观感一致、无崩溃风险。
+     */
+    private fun setupLiquidGlass() {
+        LiquidGlass.apply(binding.tabBar, radiusX = 20f, radiusY = 20f)
     }
 
     /** 沉浸式状态栏：透明背景 + 深色底配浅色图标，背景铺满系统栏区 */

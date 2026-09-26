@@ -28,8 +28,8 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
-import android.graphics.RenderEffect
-import android.graphics.Shader
+
+
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -309,10 +309,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         eglBaseContext = AppEglBase.context()
 
         // 液态玻璃：为玻璃卡片/按钮应用背景模糊（backdrop blur）
-        applyLiquidGlass(
-            binding.llStatus,
-            binding.btnStop
-        )
+        LiquidGlass.apply(binding.llStatus, binding.btnStop)
 
         checkPermissions()
 
@@ -4674,35 +4671,6 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         renderer.pivotY = focusY
         renderer.scaleX = scale
         renderer.scaleY = scale
-    }
-
-    /**
-     * iOS 液态玻璃：对半透明玻璃视图应用背景模糊（backdrop blur）。
-     * 系统级 createBackdropBlurEffect 为非公开 API，用反射调用（Android 13+ 可用）；
-     * 不可用时降级为半透明玻璃观感，不影响布局与功能。
-     */
-    private fun applyLiquidGlass(vararg views: View) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-        var effect: RenderEffect? = null
-        try {
-            val m = RenderEffect::class.java.getMethod(
-                "createBackdropBlurEffect",
-                Float::class.javaPrimitiveType,
-                Float::class.javaPrimitiveType,
-                Shader.TileMode::class.java
-            )
-            effect = m.invoke(null, 28f, 28f, Shader.TileMode.CLAMP) as RenderEffect
-        } catch (t: Throwable) {
-            Log.w(TAG, "backdrop blur 不可用，降级为半透明玻璃: ${t.message}")
-        }
-        if (effect == null) return
-        for (v in views) {
-            try {
-                v.setRenderEffect(effect)
-            } catch (t: Throwable) {
-                Log.w(TAG, "液态玻璃模糊失败: ${t.message}")
-            }
-        }
     }
 
     private fun updateUI(status: String) {
