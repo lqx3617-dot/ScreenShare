@@ -1,39 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 毛玻璃卡片：柔和暖粉投影 + 半透明白玻璃 + 顶部高光 + 粉调描边（立体浮起） -->
+<!--
+  毛玻璃卡片（简洁版 v1.252）
+  原版三件套（顶部高光 + 暖粉投影 + 粉描边）视觉过重，房间内多个面板叠起来显乱。
+  简化为一层近透明白 + 极浅粉描边，保留"浮层"语义即可。
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 柔和投影 -->
-    <item
-        android:left="2dp"
-        android:top="6dp"
-        android:right="2dp"
-        android:bottom="0dp">
-        <shape android:shape="rectangle">
-            <corners android:radius="22dp" />
-            <solid android:color="#2EDF9BB0" />
-        </shape>
-    </item>
-    <!-- 顶部高光 -->
-    <item
-        android:left="8dp"
-        android:right="8dp"
-        android:top="0dp">
-        <shape android:shape="rectangle">
-            <corners android:radius="22dp" />
-            <gradient
-                android:angle="270"
-                android:startColor="#40FFFFFF"
-                android:centerColor="#12FFFFFF"
-                android:endColor="#00FFFFFF" />
-        </shape>
-    </item>
-    <!-- 玻璃主体 -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="22dp" />
-            <gradient
-                android:angle="90"
-                android:startColor="#FBFFFFFF"
-                android:endColor="#F4FFF6F8" />
+            <solid android:color="#E8FFFFFF" />
             <stroke
                 android:width="1dp"
                 android:color="#29D98AA6" />

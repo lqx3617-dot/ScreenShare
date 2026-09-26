@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 温柔浪漫背景：奶油粉白渐变 + 玫瑰/蜜桃光晕 + 底部若隐若现的爱心水印 -->
+<!--
+  背景（简洁版 v1.252）
+  原版：奶油粉白渐变 + 左上玫瑰光晕 + 右下蜜桃光晕 + 爱心水印。
+  房间内 90% 面积被深色视频占据，彩色光晕只在边角闪现，反而是噪音；
+  保留温柔的粉白渐变与极淡爱心水印，品牌感仍在，但不与画面争抢。
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- 基础奶油粉白渐变 -->
     <item>
@@ -12,40 +17,6 @@
         </shape>
     </item>
 
-    <!-- 左上玫瑰光晕 -->
-    <item
-        android:width="420dp"
-        android:height="420dp"
-        android:gravity="top|start"
-        android:left="-160dp"
-        android:top="-160dp">
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="210dp"
-                android:startColor="#26E85D8D"
-                android:centerColor="#19E85D8D"
-                android:endColor="#00E85D8D" />
-        </shape>
-    </item>
-
-    <!-- 右下蜜桃光晕 -->
-    <item
-        android:width="380dp"
-        android:height="380dp"
-        android:gravity="bottom|end"
-        android:right="-140dp"
-        android:bottom="-140dp">
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="190dp"
-                android:startColor="#2AFAB49B"
-                android:centerColor="#19FAB49B"
-                android:endColor="#00FAB49B" />
-        </shape>
-    </item>
-
     <!-- 底部爱心水印（极淡，若有似无的浪漫点缀） -->
     <item
         android:width="300dp"
@@ -53,6 +24,6 @@
         android:gravity="bottom|start"
         android:left="-80dp"
         android:bottom="-90dp"
-        android:alpha="0.08"
+        android:alpha="0.05"
         android:drawable="@drawable/ic_heart_fill" />
 </layer-list>
