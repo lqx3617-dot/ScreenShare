@@ -2,8 +2,8 @@
 <!--
   液态玻璃色散高光（v1.375）
   模拟 iOS 26 Liquid Glass 与 AndroidLiquidGlassView 的折射色散：
-  玻璃边缘因厚度产生极淡的色散（暖玫瑰 ↔ 冷淡紫），只出现在卡片顶边，
-  幅度极小（8% 透明度），是"高级感"的来源而非"彩色感"。
+  玻璃边缘因厚度产生极淡的色散（两端 8% 透明度的冷暖色偏移），
+  中段是明显的白色高光，只出现在卡片顶边；
   叠在 bg_liquid_card 之上使用，不替换它。
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
@@ -25,7 +25,7 @@
     <item
         android:left="48dp"
         android:right="48dp"
-        android:gravity="bottom"
+        android:bottom="0dp"
         android:height="1dp">
         <shape android:shape="rectangle">
             <gradient

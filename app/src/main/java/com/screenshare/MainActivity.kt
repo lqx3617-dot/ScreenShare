@@ -28,8 +28,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
-
-
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
