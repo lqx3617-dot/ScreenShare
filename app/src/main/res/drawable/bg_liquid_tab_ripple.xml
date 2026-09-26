@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  tab 点击涟漪（v1.375 修复白边）
+  原前景用系统 ?selectableItemBackground：白色涟漪按 view 矩形边界裁剪，
+  而 tab 背景是 16dp 圆角玻璃，点击时直角白边露在圆角外，观感像"白边"。
+  改为圆角遮罩 + 低透明白涟漪，涟漪收敛在玻璃圆角内，保留触感反馈。
+-->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#24FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <solid android:color="#FFFFFFFF" />
+        </shape>
+    </item>
+</ripple>

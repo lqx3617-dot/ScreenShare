@@ -44,7 +44,7 @@
             android:padding="0dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground"
+            android:foreground="@drawable/bg_liquid_tab_ripple"
             android:focusable="true">
 
             <ImageView
@@ -72,7 +72,7 @@
             android:padding="0dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground"
+            android:foreground="@drawable/bg_liquid_tab_ripple"
             android:focusable="true">
 
             <ImageView
@@ -100,7 +100,7 @@
             android:padding="0dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground"
+            android:foreground="@drawable/bg_liquid_tab_ripple"
             android:focusable="true">
 
             <ImageView
@@ -128,7 +128,7 @@
             android:padding="0dp"
             android:background="@drawable/bg_liquid_tab_item"
             android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground"
+            android:foreground="@drawable/bg_liquid_tab_ripple"
             android:focusable="true">
 
             <ImageView
