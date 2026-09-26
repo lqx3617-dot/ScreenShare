@@ -2,6 +2,7 @@ package com.screenshare
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -11,12 +12,16 @@ import androidx.security.crypto.MasterKey
  */
 object SessionStore {
 
+    private const val TAG = "SessionStore"
     private const val FILE_NAME = "account"
     private const val K_TOKEN = "token"
     private const val K_USER_ID = "userId"
     private const val K_NICKNAME = "nickname"
     private const val K_AVATAR = "avatar"
     private const val K_FRIEND_CODE = "friendCode"
+
+    /** MasterKey.Builder 未指定 alias 时的默认别名 */
+    private const val DEFAULT_MASTER_KEY_ALIAS = "_androidx_security_master_key_"
 
     @Volatile
     private var cached: SharedPreferences? = null
@@ -25,19 +30,47 @@ object SessionStore {
         cached?.let { return it }
         synchronized(this) {
             cached?.let { return it }
-            val masterKey = MasterKey.Builder(context.applicationContext)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build()
-            val created = EncryptedSharedPreferences.create(
-                context.applicationContext,
-                FILE_NAME,
-                masterKey,
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            val appCtx = context.applicationContext
+            // EncryptedSharedPreferences.create 会读取 account.xml 里的加密 keyset，
+            // 当 Keystore 主密钥被轮换/失效（备份还原、系统锁屏变更等）时 keyset 解不开，
+            // 抛 AEADBadTagException 且每次读取都复现——调用方（如启动时的 isLoggedIn）
+            // 会被拖崩，应用直接进不去。这里降级为删除损坏存储并重建 keyset：
+            // 代价是本地会话丢失需重新登录，但远好于整应用无法打开。
+            val created = try {
+                openEncrypted(appCtx)
+            } catch (t: Throwable) {
+                Log.w(TAG, "加密存储不可解密，重置本地会话存储: ${t.message}")
+                runCatching { appCtx.deleteSharedPreferences(FILE_NAME) }
+                try {
+                    openEncrypted(appCtx)
+                } catch (t2: Throwable) {
+                    // 删除存储文件仍失败：主密钥本身已损坏，连 Keystore 条目一并重置
+                    // （该别名仅本应用使用，删除无副作用）
+                    Log.w(TAG, "重置存储后仍失败，重置主密钥: ${t2.message}")
+                    runCatching {
+                        java.security.KeyStore.getInstance("AndroidKeyStore")
+                            .apply { load(null) }
+                            .deleteEntry(DEFAULT_MASTER_KEY_ALIAS)
+                    }
+                    openEncrypted(appCtx)
+                }
+            }
             cached = created
             return created
         }
+    }
+
+    private fun openEncrypted(context: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            FILE_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
     }
 
     data class Profile(
