@@ -307,7 +307,19 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         eglBaseContext = AppEglBase.context()
 
         // 液态玻璃：为玻璃卡片/按钮应用背景模糊（backdrop blur）
-        LiquidGlass.apply(binding.llStatus, binding.btnStop)
+        // 参数读「液态玻璃」设置页（v1.383 起支持自定义）
+        val (lgRadius, lgRefraction, lgChromatic) = LiquidGlass.params(this)
+        try {
+            LiquidGlass.apply(
+                binding.llStatus, binding.btnStop,
+                radiusX = lgRadius, radiusY = lgRadius,
+                refraction = lgRefraction, chromatic = lgChromatic
+            )
+        } catch (t: Throwable) {
+            // 覆盖安装后 AOT/vdex 缓存可能残留旧方法签名（NoSuchMethodError），
+            // 玻璃是装饰性效果，降级为不施加，不能影响共享会议等核心功能
+            AppLogger.app("[MainActivity] 液态玻璃装配失败: ${t.javaClass.simpleName} ${t.message}")
+        }
 
         checkPermissions()
 
@@ -1969,6 +1981,13 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 )
             }
             videoRenderer?.apply {
+                // v1.400: 尺寸/模式未变时跳过——此前每次回调都无条件 setLayoutParams，
+                // 触发 requestLayout -> OnLayoutChangeListener -> applyModeScale 死循环
+                // （真机日志 77 秒内被调 7499 次，视频/容器尺寸全程未变）。仅在实际变化时
+                // 写入并打日志，既断开循环又避免 SurfaceViewRenderer 反复重布局导致画面拉伸。
+                if (width == lp.width && height == lp.height && scaleX == 1f) {
+                    return@apply
+                }
                 layoutParams = lp
                 scaleX = 1f
                 scaleY = 1f
@@ -1976,6 +1995,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     if (fill) RendererCommon.ScalingType.SCALE_ASPECT_FILL
                     else RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
+                AppLogger.app("[UI] 画面适配 v=${vw}x${vh} 容器=${cw}x${ch} 模式=${if (fill) "FILL" else "FIT"} 视图=${lp.width}x${lp.height}")
             }
             currentVideoScale = 1f
         }
@@ -1998,6 +2018,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 )
             }
             fullscreenRenderer?.apply {
+                if (width == lp2.width && height == lp2.height && scaleX == 1f) {
+                    return@apply
+                }
                 layoutParams = lp2
                 scaleX = 1f
                 scaleY = 1f
@@ -2005,6 +2028,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     if (fill2) RendererCommon.ScalingType.SCALE_ASPECT_FILL
                     else RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
+                AppLogger.app("[UI] 全屏画面适配 v=${vw}x${vh} 容器=${fw2}x${fh2} 模式=${if (fill2) "FILL" else "FIT"} 视图=${lp2.width}x${lp2.height}")
             }
         }
     }
@@ -3044,6 +3068,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     }
 
     override fun onConnected() {        runOnUiThread {
+            // v1.401: Activity 已销毁时不再启动任何循环/UI（连接回调可能晚于 onDestroy 到达，
+            // 否则 startViewerStatsLoop 的 HandlerThread 永不退出，且继续操作已销毁的 binding）
+            if (isFinishing || isDestroyed) return@runOnUiThread
             // v1.261: 从重连态恢复——无感继续会议，提示"连接已恢复"
             p2pConnected = true
             // 共享/观看期间保持屏幕常亮（视频通话沿用同一标志），避免看到一半黑屏
@@ -3223,6 +3250,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.flRemoteVideo.visibility = View.VISIBLE
         // 观看方默认等比完整显示（方向可能不匹配，铺满会裁切画面，v1.111 定案）
         isFitMode = true
+        // v1.398: 清空上一场会话的画面尺寸，避免首帧到达前用旧比例给新 renderer 设尺寸
+        // 造成开局瞬间尺寸异常（表现为「画面自己变大」的一种）。首帧到达后会立即重算。
+        lastFrameW = 0
+        lastFrameH = 0
         applyAspectMode()
 
         // 移除旧的 renderer 和 sink（重连/切换预览时复用同一容器）
@@ -3262,7 +3293,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 currentVideoScale = renderer.scaleX
             }
         })
-        scaleDetector.isQuickScaleEnabled = true
+        // v1.398: 关闭快捷缩放（单指双击拖动）。它与「点按画面唤出工具条」手势冲突：
+        // 观看端会议刚开始时误触单指双击拖动会「画面自己变大」（内容放大、界面不变），
+        // 而单击又恰好复位，表现为「有时候自己放大、点一下就恢复」。只保留明确的双指捏合。
+        scaleDetector.isQuickScaleEnabled = false
         videoScaleDetector = scaleDetector
 
         renderer.setOnTouchListener { v, event ->
@@ -3297,10 +3331,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             val fw = frame.rotatedWidth
             val fh = frame.rotatedHeight
             if (fw != lastFrameW || fh != lastFrameH) {
+                AppLogger.app("[UI] 远端画面尺寸变化 ${lastFrameW}x${lastFrameH} -> ${fw}x${fh}")
                 lastFrameW = fw
                 lastFrameH = fh
                 runOnUiThread {
                     applyModeScale()
+                    // 分辨率切换瞬间容器可能尚未完成布局：布局后再补算一次，
+                    // 避免偶发停留在错误尺寸（表现为「画面自己放大」，点一下才恢复）
+                    binding.flRemoteVideo.post { applyModeScale() }
                     // v1.298: host 旋转不再强制改变 viewer 方向，全屏跟随用户手机物理姿态
                 }
             }
@@ -3754,7 +3792,10 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 fullscreenScale = renderer.scaleX
             }
         })
-        scaleDetector.isQuickScaleEnabled = true
+        // v1.398: 关闭快捷缩放（单指双击拖动）。它与「点按画面唤出工具条」手势冲突：
+        // 观看端会议刚开始时误触单指双击拖动会「画面自己变大」（内容放大、界面不变），
+        // 而单击又恰好复位，表现为「有时候自己放大、点一下就恢复」。只保留明确的双指捏合。
+        scaleDetector.isQuickScaleEnabled = false
 
         renderer.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_DOWN) onVideoTapDown()
@@ -3780,6 +3821,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                 lastFrameH = fh
                 runOnUiThread {
                     applyModeScale()
+                    binding.flFullscreen.post { applyModeScale() }
                     // v1.298: host 旋转不再强制改变 viewer 方向，全屏跟随用户手机物理姿态
                 }
             }
@@ -3912,8 +3954,14 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         binding.btnCtrlBack.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
         binding.btnCtrlHome.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
         binding.btnCtrlRecents.apply { layoutParams = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)); textSize = 12f }
+        // v1.401: 退出全屏后 btnAspectToggle 位于 llRemoteRight（LinearLayout），
+        // 必须用 LinearLayout.LayoutParams，否则 FrameLayout.Params 到 measure 时
+        // 被 LinearLayout 强转成自己的类型抛 ClassCastException（与 v1.298 moveView 崩溃同源）
         binding.btnAspectToggle.apply {
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48))
+            val lp = linear(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48))
+            lp.gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            lp.setMargins(0, 10, 10, 0)
+            layoutParams = lp
             textSize = 12f
         }
     }
@@ -4299,6 +4347,9 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         }
                     }
                 } catch (_: Throwable) {}
+                // v1.401: Activity 销毁后停止自调度，避免 HandlerThread 泄漏
+                // （stopViewerStatsLoop 依赖 onDisconnected 回调，回调晚于销毁时循环会空转）
+                if (isFinishing || isDestroyed) return
                 handler.postDelayed(this, 2000)
             }
         }
@@ -4665,6 +4716,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // ======================== 工具方法 ========================
 
     private fun applyVideoScale(renderer: View, scale: Float, focusX: Float, focusY: Float) {
+        // 缩放落盘：曾出现「观看端画面自己放大」，需在日志中看到缩放触发点与缩放值
+        AppLogger.app("[UI] 画面缩放 ${"%.2f".format(scale)} focus=(${focusX.toInt()},${focusY.toInt()})")
         renderer.pivotX = focusX
         renderer.pivotY = focusY
         renderer.scaleX = scale

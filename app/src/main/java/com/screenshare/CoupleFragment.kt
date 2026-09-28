@@ -248,8 +248,18 @@ class CoupleFragment : Fragment() {
             return
         }
         val parts = ann.split("-")
+        // v1.401: 服务端字段格式回归（脏数据/非日期串）时 toInt 抛 NumberFormatException，
+        // lifecycleScope.launch 无兜底会整崩。解析失败时回退为"未设置"引导
         if (parts.size != 3) return
-        val y = parts[0].toInt(); val m = parts[1].toInt(); val d = parts[2].toInt()
+        val y: Int; val m: Int; val d: Int
+        try {
+            y = parts[0].toInt(); m = parts[1].toInt(); d = parts[2].toInt()
+        } catch (_: NumberFormatException) {
+            tvAnn.text = "点击设置你们的纪念日"
+            tvDays.visibility = View.GONE
+            tvLabel.visibility = View.GONE
+            return
+        }
         tvAnn.text = "$y 年 $m 月 $d 日 · 点击修改"
         tvDays.visibility = View.VISIBLE
         tvLabel.visibility = View.VISIBLE

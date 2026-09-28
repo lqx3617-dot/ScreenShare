@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  液态玻璃参数对话框：模糊半径 / 折射强度 / 色散强度。
+  与音频设置对话框同款深色底 + 玫瑰色数值，拖动即时生效，无需确认。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    android:padding="22dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="液态玻璃"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 模糊半径：背景模糊强度，Android 12+ 生效 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="2dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="模糊半径"
+            android:textSize="14sp"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/tvRadius"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="20"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="@color/brand_rose" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/sbRadius"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="80"
+        android:progress="20" />
+
+    <!-- 折射强度：透镜位移像素，仅 Android 13+ 生效 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="2dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="折射强度"
+            android:textSize="14sp"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/tvRefraction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="3.0"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="@color/brand_rose" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/sbRefraction"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="30"
+        android:progress="3" />
+
+    <!-- 色散强度：R/B 通道位移差，仅 Android 13+ 生效 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="2dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="色散强度"
+            android:textSize="14sp"
+            android:textColor="@color/text_primary" />
+
+        <TextView
+            android:id="@+id/tvChromatic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0.20"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:textColor="@color/brand_rose" />
+    </LinearLayout>
+
+    <SeekBar
+        android:id="@+id/sbChromatic"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="20" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="折射与色散仅 Android 13 及以上生效；Android 12 仅模糊，更低版本自动降级为半透明。参数即时生效。"
+        android:textSize="11sp"
+        android:textColor="#FF8A7E88"
+        android:lineSpacingExtra="3dp" />
+
+</LinearLayout>

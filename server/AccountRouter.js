@@ -381,7 +381,16 @@ class AccountRouter {
   }
 
   handle(req, res) {
-    const path = new URL(req.url, "http://localhost").pathname;
+    // v1.401: new URL 对畸形请求行（如 "GET // HTTP/1.1"）会同步抛 ERR_INVALID_URL，
+    // 且此处不在 _run 的 Promise 链内，异常直接冒泡到 HTTP 服务回调导致进程崩溃。
+    // 包 try/catch 后走 _fail 统一返回 400
+    let path;
+    try {
+      path = new URL(req.url, "http://localhost").pathname;
+    } catch (_e) {
+      this._fail(res, new AccountError("bad_request", "请求行格式非法", 400));
+      return true;
+    }
     if (!path.startsWith("/account") && !path.startsWith("/friends") && !path.startsWith("/shares") && !path.startsWith("/couple")) return false;
     this._run(req, res, path).catch((e) => this._fail(res, e));
     return true;

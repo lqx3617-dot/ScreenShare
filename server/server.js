@@ -51,6 +51,17 @@ const { JPushPusher } = require("./JPushPusher");
 const { PresenceManager } = require("./PresenceManager");
 const { AccountRouter } = require("./AccountRouter");
 
+// v1.401: 全局未捕获异常兜底。任何路由/定时器/回调中漏掉的同步异常原本会直接
+// 杀死信令进程（实测 "GET // HTTP/1.1" 触发 ERR_INVALID_URL 使进程退出码 7，
+// 全部房间掉线）。此处记录日志后保留进程运行，把崩溃降级为单次请求失败。
+// 异步 rejection 单独监听 unhandledRejection（Node 默认只告警不退出，显式兜底更明确）
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err && err.stack ? err.stack : err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason && reason.stack ? reason.stack : reason);
+});
+
 const PORT = process.env.PORT || 8080;
 // 诊断模式：DIAG=1 时打印 SDP/候选统计（默认关闭，转发零解析零日志最快）
 const DIAG = process.env.DIAG === "1";

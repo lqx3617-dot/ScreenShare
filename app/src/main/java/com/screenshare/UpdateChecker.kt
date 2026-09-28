@@ -46,6 +46,19 @@ object UpdateChecker {
     private const val AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
     private const val CANCEL_ACTION = "com.screenshare.CANCEL_UPDATE"
     private const val NOTIFICATION_ID = 3001
+    // v1.401: 下载失败回调。UpdateBlockActivity 注册后可在失败时恢复"立即更新"按钮，
+    // 否则门禁页用户下载失败后既不能重试也不能返回，只能退出应用（严重级缺陷）
+    @Volatile private var downloadFailListener: ((String) -> Unit)? = null
+
+    /** 注册下载失败回调（主线程回调）；传 null 清除 */
+    fun setDownloadFailListener(l: ((String) -> Unit)?) {
+        downloadFailListener = l
+    }
+
+    /** 下载失败时通知监听者（在主线程 Toast 之后调用，回调本身已在主线程） */
+    private fun notifyDownloadFailed(reason: String) {
+        try { downloadFailListener?.invoke(reason) } catch (_: Throwable) {}
+    }
 
     fun check(context: Context) = check(context, manual = false)
 
@@ -68,6 +81,7 @@ object UpdateChecker {
         // 没有意义，跳过并记录（fail-open 与"拉取失败放行"策略一致，避免变砖）
         if (!url.startsWith("https://")) {
             Log.w(TAG, "UPDATE_URL 非 https，跳过版本门禁: $url")
+            AppLogger.app("[Update] UPDATE_URL 非 https，跳过: $url")
             return
         }
         // 自动检查节流：仅影响"新版本提示"；版本门禁每次启动必查
@@ -76,26 +90,41 @@ object UpdateChecker {
             System.currentTimeMillis() - prefs.getLong(KEY_AUTO_TS, 0L) < AUTO_CHECK_INTERVAL_MS
         Thread {
             try {
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
-                conn.requestMethod = "GET"
-                val code = conn.responseCode
-                if (code != 200) {
+                var json: String? = null
+                var lastCode = 0
+                for (attempt in 1..2) {
+                    val conn = URL(url).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
+                    conn.requestMethod = "GET"
+                    lastCode = conn.responseCode
+                    if (lastCode == 200) {
+                        json = conn.inputStream.bufferedReader().readText()
+                        conn.disconnect()
+                        break
+                    }
                     conn.disconnect()
+                    // 反代层临时错误（如 521 源站不可达）：切基站/弱网时常见，通常数十秒内
+                    // 自愈。延迟 3s 重试一次，避免把网络抖动误报为"服务器异常"
+                    val transient = lastCode in 500..524
+                    AppLogger.app("[Update] version.json 响应异常 code=$lastCode manual=$manual retry=${attempt < 2 && transient}")
+                    if (attempt == 1 && transient) {
+                        Thread.sleep(3000)
+                        continue
+                    }
                     if (manual) {
                         (context as? android.app.Activity)?.runOnUiThread {
-                            Toast.makeText(context, "更新服务器响应异常($code)", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "更新服务器响应异常($lastCode)", Toast.LENGTH_LONG).show()
                         }
                     }
                     return@Thread
                 }
-                val json = conn.inputStream.bufferedReader().readText()
-                conn.disconnect()
                 // 请求成功（无论结果如何）记录自动检查时间，刷新节流窗口
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putLong(KEY_AUTO_TS, System.currentTimeMillis()).apply()
-                val info = JSONObject(json)
+                val info = JSONObject(json!!)
+                AppLogger.app("[Update] local=${BuildConfig.VERSION_CODE} server=${info.optInt("versionCode", -1)} " +
+                    "min=${info.optInt("minVersionCode", 0)} throttled=$throttled manual=$manual")
                 // 版本门禁优先于普通更新提示：命中后直接拦截，不再走提示逻辑
                 val minVersionCode = info.optInt("minVersionCode", 0)
                 if (minVersionCode > 0 && BuildConfig.VERSION_CODE < minVersionCode) {
@@ -117,9 +146,15 @@ object UpdateChecker {
                 }
                 // 节流窗口内不再弹更新提示
                 if (throttled) return@Thread
-                val serverCode = info.getInt("versionCode")
+                // v1.401: 缺键时 getInt 抛 JSONException 被外层统一提示"网络波动"，
+                // 掩盖服务端配置错误。改 optInt 明确区分
+                val serverCode = info.optInt("versionCode", BuildConfig.VERSION_CODE)
                 if (serverCode > BuildConfig.VERSION_CODE) {
                     (context as? android.app.Activity)?.runOnUiThread {
+                        // v1.401: 网络请求 8s 超时期间用户可能已退出 Activity，
+                        // AlertDialog.show() 作用于已销毁 Activity 抛 BadTokenException
+                        // （220/233/244 行已有校验，此处补齐）
+                        if ((context as? android.app.Activity)?.isDestroyed != false) return@runOnUiThread
                         promptUpdate(context, info)
                     }
                 } else if (manual) {
@@ -129,9 +164,10 @@ object UpdateChecker {
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "版本检查失败: ${e.message}")
+                AppLogger.app("[Update] 版本检查失败: ${e.message}")
                 if (manual) {
                     (context as? android.app.Activity)?.runOnUiThread {
-                        Toast.makeText(context, "版本检查失败: ${e.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "网络波动，请稍后重试", Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -266,6 +302,9 @@ object UpdateChecker {
             val ok = downloadToFile(apkUrl, target, cancelled) { total, totalBytes ->
                 val now = System.currentTimeMillis()
                 var speedText = ""
+                // v1.401: Builder 非线程安全，且 4 个分段线程并发回调。
+                // 原先仅速度计算加锁，setProgress/notify 在锁外并发改同一个 Builder，
+                // 轻则进度文本错乱，重则 build() 抛异常。整体加锁
                 synchronized(progressLock) {
                     val delta = now - lastReport.get()
                     if (delta >= 500) {
@@ -273,10 +312,10 @@ object UpdateChecker {
                         lastBytes = total
                         lastReport.set(now)
                     }
+                    builder.setProgress(100, (total * 100 / totalBytes).toInt(), false)
+                        .setContentText("${formatSize(total)}/${formatSize(totalBytes)} $speedText")
+                    nm.notify(NOTIFICATION_ID, builder.build())
                 }
-                builder.setProgress(100, (total * 100 / totalBytes).toInt(), false)
-                    .setContentText("${formatSize(total)}/${formatSize(totalBytes)} $speedText")
-                nm.notify(NOTIFICATION_ID, builder.build())
             }
 
             nm.cancel(NOTIFICATION_ID)
@@ -290,13 +329,16 @@ object UpdateChecker {
                 target.delete()
                 activity?.runOnUiThread {
                     Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                    notifyDownloadFailed("下载失败")
                 }
                 return@Thread
             }
             if (expectedMd5.isNotEmpty() && md5(target) != expectedMd5) {
                 target.delete()
+                AppLogger.app("[Update] 下载校验失败 md5 不匹配")
                 activity?.runOnUiThread {
                     Toast.makeText(activity, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
+                    notifyDownloadFailed("md5 不匹配")
                 }
                 return@Thread
             }
@@ -349,6 +391,7 @@ object UpdateChecker {
                 activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
                     Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                    notifyDownloadFailed("下载失败")
                 }
                 target.delete()
                 return@Thread
@@ -361,6 +404,7 @@ object UpdateChecker {
                 activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
                     Toast.makeText(activity, "下载失败，请重试", Toast.LENGTH_LONG).show()
+                    notifyDownloadFailed("文件不存在")
                 }
                 return@Thread
             }
@@ -368,6 +412,7 @@ object UpdateChecker {
                 activity.runOnUiThread {
                     if (dialog.isShowing) dialog.dismiss()
                     Toast.makeText(activity, "下载校验失败，请重试", Toast.LENGTH_LONG).show()
+                    notifyDownloadFailed("md5 不匹配")
                 }
                 target.delete()
                 return@Thread
@@ -386,10 +431,13 @@ object UpdateChecker {
      * @return true=全部成功；false=存在失败段或下载准备失败
      */
     private fun downloadToFile(apkUrl: String, target: File, cancelled: AtomicBoolean, onProgress: (Long, Long) -> Unit): Boolean {
+        // v1.401: probe 连接在 connect 与 disconnect 之间抛异常（如 getHeaderField 解析失败）
+        // 时不会断开，泄漏 HttpURLConnection。提升为局部变量在 finally 统一回收
+        var probe: HttpURLConnection? = null
         return try {
             // 先探测服务器是否支持 Range（206）；若返回 200 全量则降级单线程下载，
             // 避免各分段从各自 start 覆盖写全量导致安装包损坏
-            val probe = URL(apkUrl).openConnection() as HttpURLConnection
+            probe = URL(apkUrl).openConnection() as HttpURLConnection
             probe.connectTimeout = 30000
             probe.readTimeout = 30000
             probe.requestMethod = "GET"
@@ -403,6 +451,7 @@ object UpdateChecker {
                 ?.let { it.substringAfter('/').trim().toLongOrNull() }
                 ?: probe.contentLengthLong
             probe.disconnect()
+            probe = null
 
             if (totalBytes <= 0) return false
             if (probeCode != 206) return downloadWhole(apkUrl, target, cancelled, onProgress)
@@ -436,11 +485,15 @@ object UpdateChecker {
             if (failedSegments.isEmpty()) return true
             // 部分/全部分段失败：删除残file，降级单线程整文件下载（服务器可能忽略 Range）
             Log.w(TAG, "分段下载失败 ${failedSegments.size}/${THREAD_COUNT}，降级单线程")
+            AppLogger.app("[Update] 分段下载失败 ${failedSegments.size}/$THREAD_COUNT，降级单线程")
             target.delete()
             return downloadWhole(apkUrl, target, cancelled, onProgress)
         } catch (e: Exception) {
             Log.e(TAG, "下载准备失败: ${e.message}")
+            AppLogger.app("[Update] 下载准备失败: ${e.message}")
             false
+        } finally {
+            try { probe?.disconnect() } catch (_: Throwable) {}
         }
     }
 
@@ -451,9 +504,10 @@ object UpdateChecker {
             c.connectTimeout = 30000
             c.readTimeout = 60000
             c.connect()
-            if (c.responseCode != 200) return false
+            // v1.401: 提前 return 前断开连接，否则非 200/无 Content-Length 时泄漏 HttpURLConnection
+            if (c.responseCode != 200) { c.disconnect(); return false }
             val total = c.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
-            if (total <= 0) return false
+            if (total <= 0) { c.disconnect(); return false }
             target.delete()
             var out: java.io.FileOutputStream? = null
             var input: java.io.InputStream? = null
@@ -615,7 +669,10 @@ object UpdateChecker {
         Thread {
             if (!verifyApkSignature(context, apk)) {
                 Log.e(TAG, "APK 签名校验失败，拒绝安装")
+                AppLogger.app("[Update] APK 签名校验失败，拒绝安装")
                 (context as? android.app.Activity)?.runOnUiThread {
+                    // v1.401: 签名校验在子线程，期间 Activity 可能已销毁（同 promptUpdate 守卫）
+                    if ((context as android.app.Activity).isDestroyed) return@runOnUiThread
                     AlertDialog.Builder(context)
                         .setTitle("安装已阻止")
                         .setMessage("下载的更新包签名与本应用不一致，已拒绝安装。请从官方渠道获取更新。")
@@ -624,7 +681,10 @@ object UpdateChecker {
                 }
                 return@Thread
             }
-            (context as? android.app.Activity)?.runOnUiThread { installApkVerified(context, apk) }
+            (context as? android.app.Activity)?.runOnUiThread {
+                if ((context as android.app.Activity).isDestroyed) return@runOnUiThread
+                installApkVerified(context, apk)
+            }
         }.apply { isDaemon = true }.start()
     }
 
@@ -633,6 +693,7 @@ object UpdateChecker {
         // Android 8+ 需要"安装未知应用"权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
             (context as? android.app.Activity)?.runOnUiThread {
+                if ((context as android.app.Activity).isDestroyed) return@runOnUiThread
                 AlertDialog.Builder(context)
                     .setTitle("需要安装权限")
                     .setMessage("请允许「安装未知应用」权限，才能安装更新")
@@ -658,6 +719,7 @@ object UpdateChecker {
             Toast.makeText(context, "未找到安装程序", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Log.e(TAG, "安装失败: ${e.message}")
+            AppLogger.app("[Update] 安装失败: ${e.message}")
             (context as? android.app.Activity)?.runOnUiThread {
                 Toast.makeText(context, "安装失败: ${e.message}", Toast.LENGTH_LONG).show()
             }

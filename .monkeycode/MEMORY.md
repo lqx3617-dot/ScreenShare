@@ -997,3 +997,70 @@ Entries discovered by the Agent during task execution should follow this format:
 - Context: 用户要求在功能分支 260925-feat-couple-space-stability 完成后合并到 main
 - Instructions:
   - 功能分支完成后合并进 main（该次为 fast-forward：main f5e6e25 → c1eb7e9），此后在 main 分支上继续开发，不再停留在功能分支
+
+## v1.394 更新链路诊断落盘（2026-09-27）
+[Project Knowledge Summary]
+- Date: 2026-09-27
+- Context: 用户反馈「检查更新服务器有问题」，排查服务器/客户端配置链路均正常，根因是 UpdateChecker 只用 Log.d（不落盘）导致上传日志无记录无法定位
+- Category: Troubleshooting & Debugging | Build Methods
+- Instructions:
+  - 排查结论：服务器侧 version.json/APK 下载/Range 206 全部正常（curl 验证 200/206、分块下载合并 md5 与本地一致）；客户端 UPDATE_URL 经 gradle.properties → build.gradle.kts findProperty → BuildConfig 注入链路正常；用户反馈时设备仍运行旧版（日志头 v1.384/389，上传时 v1.392/397）。真问题不可知，因 UpdateChecker 全程 Log.d 只进 logcat 不落盘，云端日志零记录
+  - v1.394(399) 修复：UpdateChecker 9 个打点改 AppLogger.app()——URL 非 https 跳过、version.json 响应码、本地/服务端版本号对比（local/server/min/throttled/manual）、版本检查异常、分段下载失败降级、下载准备失败、md5 校验失败、APK 签名校验拒绝、安装失败。同包 com.screenshare 无需 import
+  - 产物：allarch md5=6aa5c6f5d08182f38f4102e34b90a9e4（28992364B）、arm64 md5=0cc7ed097bb3d3bf641cf7cdeb98f2d3；CHANGELOG.md 已补 v1.394 条目（主 App 段此前停在 v1.374）
+  - release-config.json changelog 已更新，8090 经 /tmp/opencode/restart-8090.py 重启后 version.json 下发新 changelog；version.json 的 versionCode/md5 基于 APK mtime 自动重算无需重启（cp 覆盖后立即生效）
+  - 下一步：用户更新到 399 后复现「检查更新」问题，从上传日志的 [Update] 行即可定位卡在哪一步
+
+## v1.395 521 网关重试 + Gradle daemon registry 损坏修复（2026-09-27）
+[Project Knowledge Summary]
+- Date: 2026-09-27
+- Context: v1.394 日志上传后定位到「检查更新服务器有问题」的根因是反代层偶发 521；随后发版构建时 Gradle daemon registry.bin 损坏导致构建连续失败
+- Category: Troubleshooting & Debugging | Build Methods
+- Instructions:
+  - 「检查更新」真根因：真机日志 `[Update] version.json 响应异常 code=521 manual=false`，同一时刻 8095 信令长连接与 JPush 推送也全部 521（约 30~40 秒后第 4 次重连自愈）。**服务端日志记录该次请求实为 200**——521 是反代/手机网络层返回的（Cloudflare 类「源站不可达」），请求根本没到源站，属切基站/弱网抖动。v1.394 的 manual 检查在 40 秒后正常：local=399 server=399
+  - v1.395(400) 修复：version.json 请求对 500~524 响应码延迟 3 秒重试一次（日志打 retry 标记），避免把网络抖动误报为「更新服务器响应异常」；catch 块 Toast 从英文异常信息改为「网络波动，请稍后重试」。注意：3 秒对 30~40 秒的 521 窗口仍可能二次失败，但覆盖了常见的短抖动
+  - **Gradle 构建失败排查（重要）**：`./gradlew assembleRelease 2>&1 | tail -15` 的退出码是 tail 的（恒为 0），不能用来判断构建成败，必须看日志里有无 BUILD SUCCESSFUL 或检查 APK 时间戳
+  - **Gradle daemon registry.bin 损坏**：症状 `Could not read cache value from '/root/.gradle/daemon/8.4/registry.bin'`，`--no-daemon`/`--stop`/删除 daemon 目录/换 GRADLE_USER_HOME 都无效（新建的 registry.bin 仍是损坏态，陷入死循环）。序列化格式已验证：`DaemonRegistryContent$Serializer.read` 首字节 readBoolean，1 字节 0x00=合法空 registry（用 RegDump.java + gradle-launcher/messaging jar 可独立反序列化验证）；损坏文件是首字节 0x01 + 后续数据被截断（readBoolean=true 后 readInt/readString 抛 EOFException）
+  - **打破死循环的方法**：先跑一次轻量任务 `./gradlew help`（或 --version）成功执行后，daemon 会把 registry.bin 重写成合法的完整内容（含 UUID/JVM 参数/daemon 路径约 600 字节），之后 assembleRelease 即可恢复。损坏根因是 daemon 进程在写 registry 时被强杀（cgroup timeout/并发构建）导致写入截断
+  - 采样技巧：构建期间用 50ms 间隔循环 `od -An -tx1 registry.bin` 对比变化并 cp 快照，可抓到失败瞬间的真实文件内容（静态查看失败后的文件可能已被修复成合法态，误导排查）
+  - 产物：allarch md5=e8f6f2597ccd9d8b0499c7b99407f56b（28992364B）、arm64 md5=8ad3839506580608da3108e31304ce61；arm64 由 universal 用 `zip -d 'lib/armeabi-v7a/*'` 拆出后重新 zipalign+签名；分块下载合并 md5 与本地一致验证完整；build-tools 在 /opt/android-sdk/build-tools/34.0.0（非 /root/Android/Sdk）
+  - 强制更新门禁已验证可用（2026-09-27）：release-config.json 的 `minVersionCode` 改 400 后重启 8090，旧设备（<400）杀进程重开即进拦截页触发更新，整条链路 version.json 下发 → 启动检查 → 门禁判定 → 拦截页 → 下载安装 全部走通。门禁判定在节流之前（UpdateChecker.kt:116-121 早于 throttled 判断），每次启动都生效。当前**门禁保持开启**（minVersionCode=400），用户要求保留以强制其他旧设备升级；关闭改回 0 重启 8090 即可。forced 软强制（弹窗去「暂不」按钮）受 12 小时节流影响，硬拦截 minVersionCode 不受限
+  - v1.396(401) 平板玻璃调整无效修复：Android 12 走 chainColorBoost（模糊+饱和度 1.2），Android 13+ 走 applyLens（lens+blur 折射链）**此前未叠饱和度**；而药丸在底部导航条、contentArea 在其上方不重叠，capture 截到的基本是 bg_gradient 深紫缓变底色 + 稀疏光斑，折射位移与模糊半径在低频内容上天然不可见 →「平板调整没用、手机有用」（手机的饱和度提升让深紫渐变更鲜艳）。修复：applyEffect 的 TIRAMISU 分支也 chainColorBoost 后再交 applyLens。诊断增强：capture 日志加亮度标准差 std（采样 step 7，std<5 判定纯色/缓变内容）、apply 日志补 rf/ch 参数
+  - 产物：allarch md5=27da41b585c233c1186957835f2d08c6、arm64 md5=251a6bf9bff783e68ec2158f383dc10d
+  - v1.397(402) 修复更新后启动即崩（2026-09-27，用户反馈「共享会议用不了了」）：crash 日志 `NoSuchMethodError: LiquidGlass.apply([Landroid/view/View;FFFF)V` @ MainActivity.onCreate:312。根因=**覆盖安装 AOT/vdex 缓存陈旧**——v1.393 给 apply 加 backdrops/baseDrawable 参数（5 参数→7 参数 vararg），Android 15 保留旧编译缓存，运行时找不到旧签名方法，每次启动必崩（18:29~18:55 共 7 条）。修复=MainActivity 与 LiquidTabBar 的玻璃装配 try-catch 容错降级（玻璃是装饰功能，失败仅丢效果不崩 App）。产物：allarch md5=2f3fe1c363d8cf793a151ae56f576ca1、arm64 md5=d1da04e7e3d2bd7162d0fe8767e95a16
+  - **v1.398(403) 修复观看端共享画面偶尔自己变大**（2026-09-27）：观看端 `setupVideoPreview`/`prepareFullscreenRenderer` 里 `ScaleGestureDetector.isQuickScaleEnabled = true` 开启单指双击拖动缩放，与「点按画面唤出工具条」（onVideoTapUp）手势冲突——会议刚开始时误触即放大，单击又复位，表现为「有时自己放大、点一下恢复、仅画面内容变大界面不变」。修复=两处改 `isQuickScaleEnabled = false`（只留双指捏合）；同时 `setupVideoPreview` 开头重置 `lastFrameW/H=0`（避免首帧前用上一场比例设新 renderer 尺寸）；`applyVideoScale` 补落盘日志。产物：allarch md5=9c2f4c8b7b89c6f7eab52f00bf579739、arm64 md5=ad3458a500e091dcdca211086850ddcb
+  - **画面缩放排障经验**：观看端画面「自己变大」类问题先看是不是缩放手势误触——只有 `applyVideoScale` 会把 renderer 的 scaleX/scaleY 设 >1，而单击复位逻辑（ACTION_UP<300ms 且 scaleFactor==1）存在，正好解释「点一下就恢复」。`applyModeScale` 只改 layoutParams（FIT/FILL），不会产生这种「内容变大点按恢复」的表现。`lastFrameW/H` 是跨会话复用的成员，新会话务必清零
+  - **v1.399(404) 画面放大继续排查**（2026-09-27，用户补充触发条件=共享时对方切换应用）：403 日志里观看端无「画面缩放」记录、收帧比例（1280x886/1920x1328/854x590，均 1.445）与共享端 OPD2511 展开态 3000x2078 一致，排除手势误触与采集比例错误。方向=分辨率切换瞬间的渲染时序：`remoteVideoSink` 先 `renderer.onFrame(新尺寸帧)`（用旧视图尺寸画）再 `runOnUiThread{applyModeScale}`（后改视图尺寸），中间一帧可能拉伸。本轮加诊断（[UI] 远端画面尺寸变化 / 画面适配 v=… 容器=… 模式=… 视图=…）+ 分辨率变化后 `post{applyModeScale()}` 布局后补算自纠正。产物：allarch md5=7156c08cb95ebcc184c86aeabb324d9c、arm64 md5=1b4e42f72cb7377eecd873cc6f698615
+  - **v1.400(405) 找到「画面自己放大」真因=布局死循环**（2026-09-27）：404 诊断日志（观看端 776KB）显示 77 秒内 `applyModeScale` 被调 7499 次（~100/秒），而 v=1280x886 容器=1080x2293 视图=1080x747 **全程未变**。根因链：`applyModeScale` 每次无条件 `videoRenderer.layoutParams=lp` → `requestLayout()` → `flRemoteVideo.addOnLayoutChangeListener`（条件仅 lastFrameW>0，有帧即满足）→ 又调 `applyModeScale` → 死循环。SurfaceViewRenderer 被高频重布局，渲染表面反复拉伸，观感=「画面自己放大」；视频尺寸从未变化，故此前所有按尺寸/比例的排查都无功而返。修复=主预览与全屏两处 `applyModeScale` 在「视图宽高==目标且 scaleX==1f」时 `return@apply` 跳过，仅真正变化时才 setLayoutParams+打日志。产物：allarch md5=9bf4ae41f563ac5a53517c94f3e6070c、arm64 md5=16df28e0fde52b36d8cb146a20c09e62
+  - **v1.400(405) 验证通过**（2026-09-27 真机）：观看端日志 `画面适配` 从 7499 次/77 秒降至 **3 次**，且每次都精确对应一次 `远端画面尺寸变化`（0x0→1280x886、→1920x1328、→1280x886）；日志体积 776KB→9.6KB；帧率 27fps、冻结 0~2 次恢复正常（此前冻结 11.2s 不恢复）。跳过逻辑工作正常，唯一良性现象=全屏 renderer 首次适配连打两行（post 补算时 renderer 尺寸仍为 0，与目标不等故再设一次，之后不再重复）
+  - **教训（布局监听死循环）**：`addOnLayoutChangeListener` 内调用的方法若会 `setLayoutParams`/`requestLayout`/改 visibility，必须先判断「是否真的需要变化」——值相同时 setLayoutParams 仍会触发 requestLayout 并回调监听，形成无限循环。表现是日志被同一行刷屏（此例 77 秒 7499 行），且 SurfaceView 类渲染控件被反复重布局会产生画面拉伸/抖动的观感。凡出现「某函数被异常高频调用但入参/出参全程不变」，优先怀疑布局回调循环
+  - **教训（发版铁律补充）**：改变任何被 AOT 编译热点调用的方法签名（尤其 Activity.onCreate 里直接调用的公开方法）时，覆盖安装用户会因 vdex 缓存陈旧遭遇 NoSuchMethodError。预防：① 尽量加新重载而非改签名；② 无法避免时，调用点必须 try-catch 兜底。crash 上报存 /workspace/server/crashes/crash-*.log，服务端日志标 [crash] 时间戳+长度，排查「用不了」先查这里
+
+## v1.401 全项目代码审查修复（2026-09-27）
+[Project Knowledge Summary]
+- Date: 2026-09-27
+- Context: 用户要求做一次全项目代码审查。5 个模块并行 agent 审查（只读），发现 9 处崩溃级 + 8 处严重问题，本轮全部修复并发布 v1.401(406)
+- Category: Troubleshooting & Debugging | Workflow & Collaboration
+- Instructions:
+  - **代码审查 agent 必须只读**：prompt 明确要求"不要修改任何文件"，输出按严重度分组+文件:行号+修复方向，避免审查 agent 直接改代码失控
+  - **本轮修复的崩溃级问题清单**（均已在 406 修复）：①MainActivity.restoreFullscreenButtons 给 btnAspectToggle 设 FrameLayout.LayoutParams 而父容器 llRemoteRight 是 LinearLayout（activity_main.xml:389）→ measure 时 ClassCastException；②onConnected 缺 isFinishing/isDestroyed 守卫 + viewerStatsLoop 的 postDelayed 无条件自调度（Activity 销毁后 HandlerThread 泄漏）；③WebRTCPeer.applyNetworkAdaptation 在 adaptive-worker 后台线程直接 pc.setBitrate/sender.parameters/capturer.changeCaptureFormat（libwebrtc 非线程安全，与主线程 startScreenCapture/applyCaptureFps/requestKeyFrame 竞争同一 native 对象）；④stopCameraVideo 未像 stopMicAudio 检查 anyRemoveFailed 就 dispose track；⑤AccountRouter.handle:384 的 new URL(req.url) 在 Promise 链外，畸形请求行 `GET // HTTP/1.1` 同步抛 ERR_INVALID_URL 整崩信令进程（实测复现退出码 7）；⑥RoomManager 重连宽限 setTimeout 回调内同步 SQLite 写无 try/catch；⑦UpdateChecker 子线程 8s 超时后 runOnUiThread 弹 AlertDialog 未校验 isDestroyed（BadTokenException）；⑧CoupleFragment 服务端 anniversary 字段 toInt() 无防护
+  - **线程安全修复模式**：libwebrtc 的 pc/sender/capturer 全部 `mainHandler.post { if (disposed) return@post ... }`，与既有 requestKeyFrame(:1671)/applyEncoderLoadProfile 对齐；跨线程共享的采集状态字段（captureFps/lastCaptureProfile/lastCaptureFps/lastCaptureSwitchMs）补 @Volatile。注意：runOnUiThread 的 lambda 不能带参数（Runnable 无参），用 smart-cast 或外层变量判断 isDestroyed
+  - **服务端兜底**：server.js 加 process.on("uncaughtException") 记录但不退出（把整崩降级为单次请求失败）；AccountRouter 的 new URL 包 try/catch 返回 400。验证方法：printf 畸形请求行通过原始 socket 发到 8095，确认返回 400 且 ss 查端口进程 PID 不变
+  - **服务端端口与重启**：信令服务器实际监听 8095（env PORT 覆盖了代码默认 8080，server.js:54）。重启信令服务器只需 kill PID，/tmp/opencode/supervise-server.sh 每 15 秒巡检自动拉起（环境变量由脚本注入，无需手拼）。下载服务器 8090 用 /tmp/opencode/restart-8090.py 重启
+  - 产物：allarch md5=a0c30a573dd4a12a3ee3334757ac76ae、arm64 md5=06de7e24e2648b86510de8300c9969b3；version.json 已自动刷新（406/1.401）；minVersionCode 保持 400
+  - **arm64 拆包提速**：universal 包解包后 `zip -q -0 -r -X`（存储不压缩）再 zipalign+签名，比默认压缩快 10 倍以上（28MB 包默认 zip 压缩会超 120s 超时）。**注：v1.402 修正此法——-0 全存储致 arm64 包膨胀到 32MB（与下载页标注"约 15MB"不符），改用默认 deflate 压缩得 14MB，耗时用充足 timeout 的后台终端承接即可。详见 v1.402 条目**
+  - **强制更新门禁的产品级缺陷**：UpdateBlockActivity 下载失败后按钮永久禁用 + 禁止返回 = 用户只能退出应用。修复=UpdateChecker 加 setDownloadFailListener 回调，失败时恢复按钮为「重试更新」
+  - **教训（代码审查的系统性短板）**：本轮发现的两大系统性问题——①跨生命周期弹窗校验不统一（同文件内 220/233/244 行有 isDestroyed 校验、138/639/656 行没有，复制粘贴遗漏）；②服务端返回字段缺乏防御性解析（多处直接 toInt()/getInt() 吃服务端数据，任一字段格式回归即线上崩溃）。新写网络解析代码时统一 optInt/optString + try/catch 兜底
+
+## v1.402 诊断日志版本标识修复 + v1.401 真机验证（2026-09-28）
+[Project Knowledge Summary]
+- Date: 2026-09-28
+- Context: 分析 v1.401(406) 真机上传的两份日志（手机 host + 平板 viewer，同一次房间会话），验证审查修复无回归；发现启动分隔线写 v1.384(389) 而实际运行 406 的版本标识错乱，修复后发布 v1.402(407)
+- Category: Troubleshooting & Debugging | Build Methods | Operations & Deployment
+- Instructions:
+  - **v1.401 真机验证通过**：两份日志均无 ERROR/异常/崩溃，会话由用户主动结束（`已结束会议`）。布局死循环修复持续生效——观看端 `画面适配` 全程仅 15 次，每次都精确对应一次 `远端画面尺寸变化`（v1.400 修复前是 77 秒 7499 次）。弱网自适应完整往返：host 档位 0→6→0（9000k→800k→9000k），动态分辨率 922x1920→306x640→回升，编码帧率受限/放开正确联动
+  - **观看端长时卡顿的正确归因（重要，避免误改）**：会话后期观看端累计冻结 97 次/93.6s、缓冲从 613ms 缓慢排到 151ms 后不再下降。**这不是棘轮卡死，也不应压低缓冲**——WebRTCPeer.kt:105 的 field trial `WebRTC-ForcePlayoutDelay/max_playout_delay_ms:180` 已强制播放延迟上限 180ms，缓冲稳定在 151ms 恰低于该上限；而 jbMinMs 已从 165ms 降到 88ms（棘轮其实在回落）。真因是观看端网络持续抖动（RTT 在 6ms↔3620ms 之间每 2-4 秒一次尖峰），151ms 是抖动下的动态平衡。再压低缓冲会让 RTT 尖峰时丢帧花屏，体验更差。关键帧排空机制（v1.296，jbMs>400 && rtt in 1..200 && fps>=5）正确触发 2 次。**结论：host 侧完全正常，应用层降级保护已尽力，此类卡顿属网络条件问题**
+  - **Android 跨版本 static 状态陷阱（本次根因）**：应用更新安装新 APK 后进程可能未被杀死，Android 会以新 ClassLoader 重建 Activity（新代码的 BuildConfig.VERSION_CODE 已是新值），但 Application 单例与 static 状态（如 AppLogger.logFile）跨版本保留。此时 `if (logFile != null) return` 式的幂等判断会跳过新版本的初始化，导致日志分隔线、会话标记等残留旧版本。**预防：进程级幂等不能只用单例非空判断，要用版本比较（markerVersion == BuildConfig.VERSION_CODE）**
+  - **日志文件截断必须按行对齐**：`String.takeLast(n)` 是字符级截断，可能从行中间切断。被切断的"应用启动"分隔线会让导出切片的 `lastIndexOf("==== 应用启动 ")` 匹配失败、回退到更旧的分隔线。修复=截断后丢弃首个不完整行（indexOf('\n') 后截取）
+  - **诊断日志上传链路**：客户端 SettingsFragment 切片（lastIndexOf 分隔线）+ gzip + HTTP 头 X-App-Version → 服务端 download-server.js:484 的 /api/upload-log，文件名 `log-{ts}-v{HTTP头版本}-{诊断ID md5 前 8 位}.log`。**文件名版本来自 HTTP 头（上传时真实版本），文件内容首行分隔线来自切片（可能残留旧版本）**——两者矛盾即本文所述 bug 的特征。排查日志时以 [Update] local= 行为准，不要信分隔线
+  - **arm64 拆包压缩方式修正**：此前记录"用 `zip -q -0 -r -X` 存储不压缩提速"，但 -0 全存储会让 arm64 包膨胀到 32MB（下载页标注"快速版约 15MB"）。正确做法=解包后删 lib/armeabi-v7a、lib/x86、lib/x86_64，用**默认 deflate 压缩**重打（14MB），耗时用充足 timeout 的后台终端承接即可（约 2-3 分钟，未超时）。zipalign+apksigner 流程不变
+  - 产物：allarch md5=50e0b1e566b181950d30ea3d85198ff6（28992364B）、arm64 md5=48f2ad3ea67077939d66a6b3b3bbc231（14090931B）；version.json 已刷新（407/1.402，min=400，forced=false）；8090 经 restart-8090.py 重启后下发新 changelog；两个 APK 下载 206 可达

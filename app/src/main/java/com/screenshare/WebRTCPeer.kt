@@ -1158,8 +1158,12 @@ class WebRTCPeer(
 
     /** 停止视频通话摄像头：从所有连接移除轨道并释放采集资源 */
     fun stopCameraVideo() {
+        // v1.401: 与 stopMicAudio(:1058) 同步补门控——任一连接 removeTrack 失败就不能
+        // dispose 轨道，track 仍挂在 PC 上，dispose 悬空 native 引用会崩溃（M12 同源）
+        var anyRemoveFailed = false
         cameraSender?.let { s ->
             try { peerConnection?.removeTrack(s) } catch (t: Throwable) {
+                anyRemoveFailed = true
                 Log.w(TAG, "移除摄像头轨道失败: ${t.message}")
             }
         }
@@ -1167,6 +1171,7 @@ class WebRTCPeer(
         viewerConnections.forEach { (vid, conn) ->
             cameraViewerSenders.remove(vid)?.let { s ->
                 try { conn.pc.removeTrack(s) } catch (t: Throwable) {
+                    anyRemoveFailed = true
                     Log.w(TAG, "viewer#$vid 移除摄像头轨道失败: ${t.message}")
                 }
             }
@@ -1181,7 +1186,11 @@ class WebRTCPeer(
             Log.w(TAG, "摄像头 capturer dispose 失败: ${t.message}")
         }
         cameraCapturer = null
-        try { cameraVideoTrack?.dispose() } catch (t: Throwable) {}
+        if (!anyRemoveFailed) {
+            try { cameraVideoTrack?.dispose() } catch (t: Throwable) {}
+        } else {
+            Log.w(TAG, "存在移轨失败的连接，跳过摄像头 track dispose 避免悬空 native 引用")
+        }
         cameraVideoTrack = null
         try { cameraVideoSource?.dispose() } catch (t: Throwable) {}
         cameraVideoSource = null
@@ -2011,8 +2020,8 @@ class WebRTCPeer(
     @Volatile private var recoverTimer = 0
     // v1.251: 拥塞记忆——记录「最近一次拥塞降档发生时的质量档位」，恢复时不允许越过其下一档，
     // 防止「回升到 9M → 再次拥塞 → 崩到 800k」的周期震荡；长时间无拥塞后逐级松弛。
-    private var minAdaptLevel = 0
-    private var lastCongestionMs = 0L
+    @Volatile private var minAdaptLevel = 0
+    @Volatile private var lastCongestionMs = 0L
     // v1.253: 60s 过长——档位被恢复上限锁住时画质长时间停在最差档。20s 无拥塞即逐级放宽，
     // 既保留"不立刻冲回高码率"的抑制，又让链路转好时能较快恢复清晰度。
     private val congestionForgetMs = 20_000L
@@ -2033,23 +2042,28 @@ class WebRTCPeer(
     @Volatile private var lastOutLostCum = 0L
     @Volatile private var lastAdaptBitrateCap = 0
     // v1.241: 实际发送码率 EMA 平滑值（带宽匹配档位用；EMA 无界递增风险：码率上限 12M，Double 无溢出）
-    private var bwSmooth = 0.0
+    @Volatile private var bwSmooth = 0.0
     // v1.248: 最近一次下发给编码器的目标码率（setBitrate 的 desired 值）。用于区分
     // 「链路受限」与「内容静止/编码输出少」——仅当实测码率远低于该目标且伴随拥塞迹象时
     // 才按实测带宽降档，避免自我降档死循环（低档→低目标→实测更低→继续降档）。
-    private var lastEncoderTargetBps = 0
+    // v1.401: setBitrate 已 post 主线程，此字段在主线程写、worker 线程读，须 @Volatile
+    @Volatile private var lastEncoderTargetBps = 0
     // V3.1: 动态采集分辨率
-    private var captureFps = 30
-    private var lastCaptureProfile = 0
+    // v1.401: 见下方 lastCaptureFps 的 @Volatile 说明（adaptive-worker 写 / 主线程 requestKeyFrame 读）
+    @Volatile private var captureFps = 30
+    @Volatile private var lastCaptureProfile = 0
     // V1.187: 弱网自适应降帧率后的实际采集帧率（用于判断档位变化是否需要再次调整）
-    private var lastCaptureFps = 30
+    // v1.401: 这四个采集状态字段由 adaptive-worker 与主线程（applyEncoderLoadProfile/applyCaptureFps）
+    // 同时读写，必须 @Volatile 保证可见性（无锁 read-modify-write 仅做"最后一次生效"的档位决策，
+    // 竞态最坏结果是档位判断基于稍旧值，下一个采样周期即纠正）
+    @Volatile private var lastCaptureFps = 30
     // V3.2: 采集防抖——切换分辨率后 4s 冷却，防止临界抖动导致 1080/720/480 来回跳
-    private var lastCaptureSwitchMs = 0L
+    @Volatile private var lastCaptureSwitchMs = 0L
     // v1.257: 崩塌→恢复边缘检测。老设备 WiFi 周期性故障的恢复是瞬时的
     // （实测 rtt 2436ms→23ms 仅一个采样周期），好窗口仅 ~17s。
     @Volatile private var lastAdaptRttMs = 0
     // v1.295: 静态保持连续采样计数（配合 staticHoldBps 去抖动，见 applyNetworkAdaptation）
-    private var staticHoldSamples = 0
+    @Volatile private var staticHoldSamples = 0
     // v1.257: 恢复边缘待发的关键帧。崩塌期观看端抖动缓冲累积 200~290ms 陈旧帧、
     // 缓冲最小目标被棘轮抬高（实测恢复后 60s 仍残留 231ms），需要 I 帧让接收端
     // 丢弃全部待解码帧重新同步。与采集格式切换解耦：即使格式未变也补一个关键帧。
@@ -2151,7 +2165,8 @@ class WebRTCPeer(
      * @param qualityLimit 编码器报告的质量限制原因（cpu/bandwidth/none）
      */
     fun adaptToEncoderLoad(encodedFps: Int, qualityLimit: String) {
-        val pc = peerConnection ?: return
+        // v1.401: pc 仅作非空守卫（native 操作已在 applyEncoderLoadProfile 内主线程执行）
+        peerConnection ?: return
         if (disposed) return
         val target = captureFps
         if (target <= 0) return
@@ -2585,33 +2600,45 @@ class WebRTCPeer(
         // v1.249: 低端机顶档截到 maxBitrateCap，避免硬编在高码率下热降频
         val cap = minOf(adaptBitrateCaps[curAdaptLevel], maxBitrateCap)
         // 摄像头通话轨随档位同步自适应（码率/帧率上限），弱网时降低人脸画面数据量
-        applyCameraAdaptation()
+        // v1.401: 与下方 setBitrate 同理，sender.parameters 是 native 对象，
+        // post 主线程执行（toggleCameraQuality 的主线程调用路径保持不变）
+        mainHandler.post {
+            if (disposed) return@post
+            applyCameraAdaptation()
+        }
         // 仅档位变化时调码率/策略，避免周期重置影响拥塞控制收敛
         if (lastAdaptBitrateCap != cap) {
             lastAdaptBitrateCap = cap
-            try {
-                // v1.243: 下限随档位下调（min(500k, cap)），深档（800k 底档）时 min 不再硬卡 1M，
-                // 避免 min>max 的不一致区间干扰拥塞控制收敛
-                // v1.253: 下限进一步降到 150k。日志显示深档时 BWE 被 min=500k 托住，而链路
-                // 瞬时可能只有 300~450k，队列无法排空（rtt 稳定停在 1.5~1.8s、丢包却为 0）。
-                // v1.254: 再降到 60k。v1.253 实测链路容量约 147kbps（rtt 以 ~2.5kbps 的净堆积
-                // 速率缓慢爬升，正好是 150k 下限与 147k 链路的差值），min=150k 仍把 BWE 托在
-                // 链路之上 → 队列只增不减、rtt 长期 1~2s。下限必须低于链路最差状态才能排空积压。
-                pc.setBitrate(minOf(60_000, cap), (cap * 0.7).toInt(), cap)
-                // v1.248: 记录当前下发的目标码率，作为带宽匹配的参照基准（见 bwLevel）
-                lastEncoderTargetBps = (cap * 0.7).toInt()
-            } catch (t: Throwable) {
-                Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
-            }
-            // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
-            val degradation = if (curAdaptLevel > 0) {
-                RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
-            } else {
-                RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
-            }
-            try {
-                val params = sender.parameters
-                params.degradationPreference = degradation
+            // v1.401: pc/sender 是 native 对象，libwebrtc 非线程安全。
+            // 本方法运行在 adaptive-worker 线程，而 startScreenCapture/applyCaptureFps/
+            // requestKeyFrame/applyEncoderLoadProfile 均在主线程操作同一 pc/sender/capturer。
+            // 与 requestKeyFrame(:1671) 对齐，setBitrate 与 sender.parameters 统一 post 主线程执行。
+            val curLevel = curAdaptLevel
+            mainHandler.post {
+                if (disposed) return@post
+                try {
+                    // v1.243: 下限随档位下调（min(500k, cap)），深档（800k 底档）时 min 不再硬卡 1M，
+                    // 避免 min>max 的不一致区间干扰拥塞控制收敛
+                    // v1.253: 下限进一步降到 150k。日志显示深档时 BWE 被 min=500k 托住，而链路
+                    // 瞬时可能只有 300~450k，队列无法排空（rtt 稳定停在 1.5~1.8s、丢包却为 0）。
+                    // v1.254: 再降到 60k。v1.253 实测链路容量约 147kbps（rtt 以 ~2.5kbps 的净堆积
+                    // 速率缓慢爬升，正好是 150k 下限与 147k 链路的差值），min=150k 仍把 BWE 托在
+                    // 链路之上 → 队列只增不减、rtt 长期 1~2s。下限必须低于链路最差状态才能排空积压。
+                    pc.setBitrate(minOf(60_000, cap), (cap * 0.7).toInt(), cap)
+                    // v1.248: 记录当前下发的目标码率，作为带宽匹配的参照基准（见 bwLevel）
+                    lastEncoderTargetBps = (cap * 0.7).toInt()
+                } catch (t: Throwable) {
+                    Log.w(TAG, "$tag 自适应调码率失败: ${t.message}")
+                }
+                // 弱网降分辨率保帧率（腾讯会议流畅优先），网络好恢复高清晰度
+                val degradation = if (curLevel > 0) {
+                    RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+                } else {
+                    RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+                }
+                try {
+                    val params = sender.parameters
+                    params.degradationPreference = degradation
                 // v1.251: 同步收紧编码器码率上限。此前只调 pc.setBitrate（BWE 目标），编码器
                 // maxBitrateBps 仍停在初始 9M，弱网降档后编码器继续按高码率出帧 → 发送队列积压
                 // → 实测码率长期高于档位上限、RTT 被撑到 1.5~3s、丢包 60%+。现让编码器本身遵守 cap。
@@ -2626,6 +2653,7 @@ class WebRTCPeer(
                 Log.d(TAG, "$tag 弱网自适应: 丢包${"%.1f".format(sendLossPct)}% rtt=${rttMs}ms 实发${actualBitrateBps / 1000}k 档位${curAdaptLevel} 码率上限$capTxt 策略=$degradation")
             } catch (t: Throwable) {
                 Log.w(TAG, "$tag 自适应切分辨率策略失败: ${t.message}")
+            }
             }
         }
         // V3.1: 采集侧降分辨率——弱网档位>=2 降720p、>=3 降480p，减轻采集+编码双端负载；
@@ -2665,30 +2693,37 @@ class WebRTCPeer(
             // rtt 仍 10ms，rtt 判据要晚 1~2 个采样周期才触发，届时切换块已被 cap 未变
             // 跳过）。
             if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
+                // v1.401: changeCaptureFormat 与 sender.parameters 同样是 native 对象操作，
+                // 与主线程的 startScreenCapture/applyCaptureFps/requestKeyFrame 竞争同一采集器。
+                // 状态字段（lastCaptureProfile 等）在 worker 线程更新用于档位决策，
+                // native 调用统一 post 主线程。
                 lastCaptureProfile = targetProfile
                 lastCaptureFps = targetFps
                 captureFps = targetFps
                 lastCaptureSwitchMs = now
-                try {
-                    // v1.254: 仅帧率变化时只改编码器上限、不重启采集器；只有分辨率档位
-                    // 变化才走 changeCaptureFormat。后者每次都会重建采集管线并触发关键帧，
-                    // 是弱网档位在 4↔5↔6 间抖动时画面一卡一卡的直接来源。
-                    if (profileChanged) {
-                        val capturer = videoCapturer
-                        if (capturer != null) {
-                            val (capW, capH) = captureSizeForLevel(targetProfile)
-                            capturer.changeCaptureFormat(capW, capH, targetFps)
-                            // v1.257: changeCaptureFormat 已产生关键帧，无需恢复补帧
-                            pendingRecoveryKeyFrame = false
-                            AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
+                mainHandler.post {
+                    if (disposed) return@post
+                    try {
+                        // v1.254: 仅帧率变化时只改编码器上限、不重启采集器；只有分辨率档位
+                        // 变化才走 changeCaptureFormat。后者每次都会重建采集管线并触发关键帧，
+                        // 是弱网档位在 4↔5↔6 间抖动时画面一卡一卡的直接来源。
+                        if (profileChanged) {
+                            val capturer = videoCapturer
+                            if (capturer != null) {
+                                val (capW, capH) = captureSizeForLevel(targetProfile)
+                                capturer.changeCaptureFormat(capW, capH, targetFps)
+                                // v1.257: changeCaptureFormat 已产生关键帧，无需恢复补帧
+                                pendingRecoveryKeyFrame = false
+                                AppLogger.capture("动态分辨率: ${capW}x${capH}@${targetFps} ($tag 档位$curAdaptLevel)")
+                            }
                         }
+                        // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
+                        val params = sender.parameters
+                        params.encodings?.firstOrNull()?.maxFramerate = targetFps
+                        sender.parameters = params
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "采集降分辨率失败: ${t.message}")
                     }
-                    // 同步编码器帧率上限，避免编码端仍按 30fps 目标发包
-                    val params = sender.parameters
-                    params.encodings?.firstOrNull()?.maxFramerate = targetFps
-                    sender.parameters = params
-                } catch (t: Throwable) {
-                    Log.w(TAG, "采集降分辨率失败: ${t.message}")
                 }
             }
         }

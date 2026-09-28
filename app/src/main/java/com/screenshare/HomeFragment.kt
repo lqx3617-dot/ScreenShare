@@ -41,6 +41,9 @@ class HomeFragment : Fragment() {
     private val binding get() = _binding!!
     private val handler = Handler(Looper.getMainLooper())
     private val codeEdits = ArrayList<EditText>()
+    // v1.401: 持有当前弹窗引用，onDestroyView 统一 dismiss 防窗口泄漏
+    private var roomDialog: Dialog? = null
+    private var confirmDialog: Dialog? = null
 
     /** 专属房间在线状态：true=在线，false=不在线，null=未知 */
     @Volatile private var favOnline: Boolean? = null
@@ -294,6 +297,7 @@ class HomeFragment : Fragment() {
             }
         }
         dv.btnCancel.setOnClickListener { dialog.dismiss() }
+        roomDialog = dialog
         dialog.show()
     }
 
@@ -322,6 +326,7 @@ class HomeFragment : Fragment() {
             onPositive()
         }
         dv.btnNegative.setOnClickListener { dialog.dismiss() }
+        confirmDialog = dialog
         dialog.show()
     }
 
@@ -546,6 +551,12 @@ class HomeFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // v1.401: showRoomDialog/showConfirmDialog 创建的弹窗未 dismiss 会泄漏窗口
+        // （切 Tab/退后台时 Fragment 视图销毁但 Dialog 仍 showing）
+        try { roomDialog?.dismiss() } catch (_: Throwable) {}
+        roomDialog = null
+        try { confirmDialog?.dismiss() } catch (_: Throwable) {}
+        confirmDialog = null
         handler.removeCallbacksAndMessages(null)
         stopFavPolling()
         pulseAnimator?.cancel()

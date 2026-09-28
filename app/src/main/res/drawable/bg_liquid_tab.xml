@@ -1,23 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  底部导航条（v1.375 重塑）
-  原版：80% 纯黑底 + 1dp 白内层高光，在深紫背景上是一块"死黑"，与整体色调脱节。
-  改为：同色系深紫玻璃 + 细白描边 + 顶部高光，让导航条像是从背景里"浮"出来的一层玻璃，
-  而不是贴上去的黑条。Android 12+ 由 LiquidTabBar 用 RenderEffect 叠加真实模糊。
+  底部导航条（v1.384 框架化）
+  v1.375：深紫半透玻璃主体，整条施加背景模糊。
+  v1.384：导航条退化为「框架」——主体全透，只保留细白描边与顶部高光，
+  真实模糊与透镜折射移到选中 tab 上（LiquidTabBar.onGlassTarget），
+  像一块玻璃在框架里滑动。Android 12 以下选中项自动降级为半透明叠层。
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 玻璃主体：深紫半透（与 bg_liquid_root 同色系，透明度更高） -->
+    <!-- 框架主体：全透，背景内容直接透过 -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="22dp" />
-            <gradient
-                android:angle="135"
-                android:startColor="#B3170E33"
-                android:centerColor="#A62D1B69"
-                android:endColor="#B33A1A5E" />
+            <solid android:color="@android:color/transparent" />
         </shape>
     </item>
-    <!-- 描边：细白，勾勒玻璃边界 -->
+    <!-- 描边：细白，勾勒框架边界 -->
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="22dp" />

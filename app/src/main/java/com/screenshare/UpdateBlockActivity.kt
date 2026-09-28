@@ -29,11 +29,24 @@ class UpdateBlockActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnUpdate).setOnClickListener {
             it.isEnabled = false
+            (it as Button).text = "下载中..."
             UpdateChecker.downloadUpdate(this, info)
+        }
+        // v1.401: 下载失败（弱网/MD5 不匹配/服务器异常）时恢复按钮，用户可重试。
+        // 原先失败后按钮永久禁用，门禁页禁止返回 → 用户只能退出应用
+        UpdateChecker.setDownloadFailListener { _ ->
+            val btn = findViewById<Button>(R.id.btnUpdate)
+            btn.isEnabled = true
+            btn.text = "重试更新"
         }
         findViewById<Button>(R.id.btnExit).setOnClickListener {
             finishAffinity()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        UpdateChecker.setDownloadFailListener(null)
     }
 
     // 拦截页禁止返回：返回退出应用，而不是回到被拦截的旧版本界面

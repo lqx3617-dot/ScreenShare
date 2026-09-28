@@ -41,6 +41,8 @@ class LiquidHomeActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "LiquidHome"
+        /** 内容追踪节流：约每 33ms（≈2 帧）重截一次药丸玻璃 */
+        private const val FRAME_THROTTLE_MS = 33L
     }
 
     /** 特性级容错：任一视觉特性失败不影响界面打开，并落盘日志便于定位 */
@@ -281,13 +283,42 @@ class LiquidHomeActivity : AppCompatActivity() {
     }
 
     /**
-     * v1.375 液态玻璃：给玻璃浮层应用真实背景模糊。
-     * 底部导航条最贴近内容，模糊收益最大；toast 悬浮时也需要。
-     * Android 12+ 走系统 createBackdropBlurEffect（反射），低版本静默降级
-     * 到 bg_liquid_tab 的半透明叠层，观感一致、无崩溃风险。
+     * v1.387 导航条重构：玻璃施加在 LiquidTabBar 内部的「药丸」视图上，
+     * 由 TabBar 随选中项滑动。宿主只需装配一次，参数变更时重调即可。
+     *
+     * v1.389：真背景模糊需要把玻璃背后的画面截进 bitmap，背景层（光斑层 +
+     * 内容区）在这里传入。光斑层在底、内容区在顶，截取时按此顺序叠加。
      */
     private fun setupLiquidGlass() {
-        LiquidGlass.apply(binding.tabBar, radiusX = 20f, radiusY = 20f)
+        // base 为根布局的深紫渐变：Fragment 根布局与光斑层都是透明的，不铺底色
+        // 截出来的位图近乎全透明，模糊一张透明图就看不到任何效果
+        binding.tabBar.setBackdrops(binding.flBlobs, binding.contentArea, base = binding.root.background)
+        binding.tabBar.applyLiquidGlass()
+        installContentTracker()
+    }
+
+    /**
+     * 内容区画面变化（列表滚动、切 tab、 Fragment 淡入淡出）时重截药丸玻璃。
+     * 用 OnPreDrawListener 感知整棵视图树的每一帧绘制；滚动是连续多帧，
+     * 加帧节流（约 2 帧一次）兼顾流畅度与性能。
+     */
+    private fun installContentTracker() {
+        val tree = binding.contentArea.viewTreeObserver
+        var lastFrame = 0L
+        tree.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastFrame < FRAME_THROTTLE_MS) return true
+                lastFrame = now
+                binding.tabBar.refreshGlass()
+                return true
+            }
+        })
+    }
+
+    /** 设置页拖动滑块时调用：按最新参数重建药丸玻璃 */
+    fun applyLiquidGlass() {
+        binding.tabBar.applyLiquidGlass()
     }
 
     /** 沉浸式状态栏：透明背景 + 深色底配浅色图标，背景铺满系统栏区 */

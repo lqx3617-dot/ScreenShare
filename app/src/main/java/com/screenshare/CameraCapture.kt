@@ -122,7 +122,12 @@ object CameraCapture {
                 }
             }, handler)
             if (!openLatch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                // v1.401: 超时时 onOpened 可能已在异步回调中赋值 device，
+                // 仅 countDown 不 close 会导致 CameraDevice 泄漏（占用相机硬件，
+                // 后续打开同Id相机直接失败）。关闭可能已打开的设备并清空引用
                 Log.w(TAG, "打开镜头 $cameraId 超时")
+                try { device?.close() } catch (_: Throwable) {}
+                device = null
                 onFail("${label}打开超时")
                 return null
             }

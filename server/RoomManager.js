@@ -257,11 +257,17 @@ class RoomManager {
       room.viewers.delete(viewerId);
       const entry = { userId: userId || null, at: Date.now(), timer: null };
       entry.timer = setTimeout(() => {
-        const r = this.rooms.get(code);
-        // 房间已销毁或已恢复/已清理：静默退出（host 断开时定时器已被清）
-        if (!r || !r.reconnecting.has(viewerId)) return;
-        r.reconnecting.delete(viewerId);
-        this.onReconnectExpired(code, viewerId, entry.userId);
+        // v1.401: 宽限期回调内同步执行 SQLite 写（onReconnectExpired → shareHistory.onViewerLeft），
+        // DB 抖动会抛异常且不在任何 Promise 链内，直接冒泡杀死进程。包 try/catch 降级为日志
+        try {
+          const r = this.rooms.get(code);
+          // 房间已销毁或已恢复/已清理：静默退出（host 断开时定时器已被清）
+          if (!r || !r.reconnecting.has(viewerId)) return;
+          r.reconnecting.delete(viewerId);
+          this.onReconnectExpired(code, viewerId, entry.userId);
+        } catch (e) {
+          console.error("[reconnect-timeout]", code, viewerId, e && e.stack ? e.stack : e);
+        }
       }, this.reconnectTimeout);
       room.reconnecting.set(viewerId, entry);
       return { removedHost: false, roomClosed: false, peerLeftWs: null, pendingRemoved: null, reconnecting: true, viewerId, userId: entry.userId };

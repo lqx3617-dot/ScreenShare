@@ -33,6 +33,9 @@ object AppLogger {
     private const val LOG_NAME = "screenshare.log"
 
     @Volatile private var logFile: File? = null
+    // 已写入「应用启动」分隔线的版本。进程未重启但应用更新（Activity 以新 ClassLoader
+    // 重建）时，靠版本差异识别需要重写分隔线
+    private var markerVersion = 0
     private val lock = Any()
     private val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
@@ -45,19 +48,25 @@ object AppLogger {
     }
 
     /**
-     * 初始化日志文件并写入设备信息头部（机型验证：型号/系统/分辨率/内存/诊断ID）。幂等。
+     * 初始化日志文件并写入设备信息头部（机型验证：型号/系统/分辨率/内存/诊断ID）。
+     * 同版本内幂等；跨版本（应用更新后进程未重启）时重写分隔线，保证导出切片的版本标识正确
      */
     fun init(context: Context) {
         synchronized(lock) {
-            if (logFile != null) return
+            val curVer = BuildConfig.VERSION_CODE
+            // 同版本已初始化才跳过。应用更新后若进程未被杀死（Android 以新 ClassLoader
+            // 重建 Activity），logFile 仍非 null 但 BuildConfig 已是新版本：此时仍要重写
+            // 分隔线，否则导出切片会拿到旧版本分隔线，误判本次运行的版本
+            if (logFile != null && markerVersion == curVer) return
             try {
                 val dir = File(context.filesDir, LOG_DIR).apply { mkdirs() }
-                val f = File(dir, LOG_NAME)
+                val f = logFile ?: File(dir, LOG_NAME)
                 if (f.exists() && f.length() > MAX_FILE_BYTES) {
                     // 启动即超限：截断保留后半段，防止旧日志无限累积
-                    f.writeText(f.readText().takeLast((MAX_FILE_BYTES / 2).toInt()))
+                    truncateTail(f)
                 }
                 logFile = f
+                markerVersion = curVer
                 writeLine(
                     "==== 应用启动 v${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) " +
                         "设备=${Build.MANUFACTURER} ${Build.MODEL} Android${Build.VERSION.RELEASE}(${Build.VERSION.SDK_INT}) " +
@@ -116,11 +125,22 @@ object AppLogger {
         synchronized(lock) {
             try {
                 if (f.length() > MAX_FILE_BYTES) {
-                    f.writeText(f.readText().takeLast((MAX_FILE_BYTES / 2).toInt()))
+                    truncateTail(f)
                 }
                 f.appendText("${timeFmt.format(Date())} $line\n")
             } catch (_: Throwable) {
             }
         }
+    }
+
+    /**
+     * 截断到文件后半段。takeLast 是字符级截断，可能从行中间切断，被切断的「应用启动」
+     * 分隔线会让导出切片的 lastIndexOf("==== 应用启动 ") 匹配失败、回退到更旧的分隔线，
+     * 上传日志的版本标识随之错乱。截断后丢弃首个不完整行，按行边界对齐
+     */
+    private fun truncateTail(f: File) {
+        val tail = f.readText().takeLast((MAX_FILE_BYTES / 2).toInt())
+        val nl = tail.indexOf('\n')
+        f.writeText(if (nl in 0..(tail.length - 2)) tail.substring(nl + 1) else tail)
     }
 }

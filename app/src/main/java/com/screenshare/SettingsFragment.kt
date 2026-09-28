@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.SeekBar
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
@@ -39,6 +40,10 @@ import java.util.concurrent.TimeUnit
 
     private val glidePrefs by lazy {
         requireContext().getSharedPreferences("glide_settings", Context.MODE_PRIVATE)
+    }
+
+    private val liquidPrefs by lazy {
+        requireContext().getSharedPreferences("liquid_settings", Context.MODE_PRIVATE)
     }
 
     companion object {
@@ -93,6 +98,9 @@ import java.util.concurrent.TimeUnit
         }
         updateGlideSummary()
         binding.rowGlide.setOnClickListener { showGlideSensitivityDialog() }
+
+        updateLiquidSummary()
+        binding.rowLiquid.setOnClickListener { showLiquidGlassDialog() }
         binding.rowUpdate.setOnClickListener {
             Toast.makeText(requireContext(), "正在检查更新…", Toast.LENGTH_SHORT).show()
             // UpdateChecker 内部用 context as? Activity 切主线程弹窗，须传 Activity
@@ -143,6 +151,80 @@ import java.util.concurrent.TimeUnit
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    /** 液态玻璃摘要行：显示三参数当前值，Android 12 标注折射不生效 */
+    private fun updateLiquidSummary() {
+        val (radius, refraction, chromatic) = LiquidGlass.params(requireContext())
+        val adv = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            " · 折射 ${"%.1f".format(refraction)} · 色散 ${"%.2f".format(chromatic)}"
+        } else {
+            " · 折射需 Android 13+"
+        }
+        binding.tvLiquidSub.text = "模糊 ${radius.toInt()}px$adv"
+    }
+
+    private fun showLiquidGlassDialog() {
+        val ctx = requireContext()
+        val view = layoutInflater.inflate(R.layout.dialog_liquid_glass, null)
+        val sbRadius = view.findViewById<SeekBar>(R.id.sbRadius)
+        val tvRadius = view.findViewById<android.widget.TextView>(R.id.tvRadius)
+        val sbRefraction = view.findViewById<SeekBar>(R.id.sbRefraction)
+        val tvRefraction = view.findViewById<android.widget.TextView>(R.id.tvRefraction)
+        val sbChromatic = view.findViewById<SeekBar>(R.id.sbChromatic)
+        val tvChromatic = view.findViewById<android.widget.TextView>(R.id.tvChromatic)
+
+        val (radius, refraction, chromatic) = LiquidGlass.params(ctx)
+        sbRadius.progress = radius.toInt()
+        tvRadius.text = radius.toInt().toString()
+        sbRefraction.progress = refraction.toInt()
+        tvRefraction.text = "%.1f".format(refraction)
+        sbChromatic.progress = (chromatic * 100).toInt()
+        tvChromatic.text = "%.2f".format(chromatic)
+
+        // 拖动即写盘并热更新，松手前也持续生效，方便实时预览
+        sbRadius.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                tvRadius.text = p.toString()
+                if (fromUser) applyLiquidParams(p.toFloat(), null, null)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        sbRefraction.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                tvRefraction.text = "%.1f".format(p.toFloat())
+                if (fromUser) applyLiquidParams(null, p.toFloat(), null)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        sbChromatic.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                tvChromatic.text = "%.2f".format(p / 100f)
+                if (fromUser) applyLiquidParams(null, null, p / 100f)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setView(view)
+            .setPositiveButton("完成", null)
+            .show()
+    }
+
+    /** 写入单个参数（其余保持不变）并热更新到导航条 */
+    private fun applyLiquidParams(radius: Float?, refraction: Float?, chromatic: Float?) {
+        val e = liquidPrefs.edit()
+        radius?.let { e.putFloat(LiquidGlass.KEY_RADIUS, it) }
+        refraction?.let { e.putFloat(LiquidGlass.KEY_REFRACTION, it) }
+        chromatic?.let { e.putFloat(LiquidGlass.KEY_CHROMATIC, it) }
+        // commit() 同步落盘：apply() 是异步的，紧随其后的热更新会读到旧值，
+        // 表现为「拖滑块没用」
+        e.commit()
+        updateLiquidSummary()
+        (requireActivity() as? LiquidHomeActivity)?.applyLiquidGlass()
     }
 
     /** 退出登录：通知服务端失效本设备令牌，清本地会话回登录页 */
