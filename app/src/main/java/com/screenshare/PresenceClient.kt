@@ -82,7 +82,8 @@ class PresenceClient(
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
             if (closedByUs) return
-            webSocket?.send("""{"type":"ping"}""")
+            val ok = webSocket?.send("""{"type":"ping"}""") == true
+            log("心跳发送 ping=${if (ok) "ok" else "fail"}")
             handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
         }
     }
@@ -152,6 +153,8 @@ class PresenceClient(
             "auth-ok" -> {
                 authed = true
                 listener.onAuthed(json.optString("userId"))
+                // 重连成功：补发 WS 断开期间未投递的聊天消息（留在本地库保持"发送中"）
+                ChatSync.flushPendingSends()
             }
             "auth-error" -> {
                 authed = false
@@ -203,6 +206,25 @@ class PresenceClient(
                 listener.onCoupleCheckin(from?.optString("nickname") ?: "TA")
             }
             "pong" -> Unit
+
+            // ---- 好友聊天：消息直接交给 ChatSync 处理，不经 Listener（聊天是全局功能） ----
+            "chat-message" -> {
+                log("收到消息 id=${json.optString("id").take(8)} from=${json.optString("from").take(8)} mine=${json.optBoolean("mine", false)}")
+                ChatSync.onServerMessage(
+                    seq = json.optLong("seq"),
+                    id = json.optString("id"),
+                    from = json.optString("from"),
+                    to = json.optString("to"),
+                    text = json.optString("text"),
+                    ts = json.optLong("ts"),
+                    mine = json.optBoolean("mine", false)
+                )
+            }
+            "chat-ack" -> { log("收到回执 id=${json.optString("id").take(8)} seq=${json.optLong("seq")}") ; ChatSync.onAck(json.optString("id"), json.optLong("seq")) }
+            "chat-rejected" -> { log("消息被拒 id=${json.optString("id").take(8)} reason=${json.optString("reason")}") ; ChatSync.onRejected(json.optString("id"), json.optString("reason")) }
+            "chat-read" -> { log("已读回执 from=${json.optString("from").take(8)}") ; ChatSync.onRead(json.optString("from"), json.optString("to")) }
+            "chat-unread" -> { log("未读推送 peer=${json.optString("peerId").take(8)} count=${json.optInt("count")}") ; ChatSync.onUnreadPush(json.optString("peerId"), json.optInt("count")) }
+
             "error" -> listener.onError(json.optString("message", "服务器错误"))
             else -> log("未知消息: ${json.optString("type")}")
         }
@@ -232,6 +254,20 @@ class PresenceClient(
             put("type", "share-invite-reject")
             put("inviteId", inviteId)
         }.toString(), "share-invite-reject")
+    }
+
+    /**
+     * 发送一条聊天消息。返回是否已投递到已认证的 WS；未就绪时调用方应保留消息待重连补发
+     * （ChatSync.send 已实现该逻辑）。
+     */
+    fun sendChat(toUserId: String, clientMsgId: String, text: String, ts: Long): Boolean {
+        return send(JSONObject().apply {
+            put("type", "chat-send")
+            put("id", clientMsgId)
+            put("to", toUserId)
+            put("text", text)
+            put("ts", ts)
+        }.toString(), "chat -> ${toUserId.take(8)}")
     }
 
     /**

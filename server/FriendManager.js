@@ -121,6 +121,11 @@ class FriendManager {
     return req;
   }
 
+  /** 好友关系校验（供 ChatManager 等外部模块调用，语义比 _areFriends 更明确） */
+  areFriends(a, b) {
+    return this._areFriends(a, b);
+  }
+
   _areFriends(a, b) {
     return !!this.db.prepare(`SELECT 1 FROM friends WHERE user_id = ? AND friend_id = ?`).get(a, b);
   }

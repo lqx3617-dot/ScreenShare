@@ -114,15 +114,15 @@ class HomeFragment : Fragment() {
         startActivity(intent)
     }
 
-    /** 生成 4 位数字会议号（SecureRandom，与 MeetingActivity 一致） */
+    /** 生成 6 位数字会议号（SecureRandom，与 MeetingActivity 一致） */
     private fun generateMeetingCode(): String {
         val sb = StringBuilder()
         val random = SecureRandom()
-        repeat(4) { sb.append(random.nextInt(10)) }
+        repeat(6) { sb.append(random.nextInt(10)) }
         return sb.toString()
     }
 
-    // ==================== 4 位输入框 ====================
+    // ==================== 6 位输入框 ====================
 
     /** 输满自动跳下一格，Backspace 空格回退；最后一格输满自动加入 */
     private fun setupCodeInputs() {
@@ -130,6 +130,7 @@ class HomeFragment : Fragment() {
         codeEdits.clear()
         codeEdits.apply {
             add(binding.etCode0); add(binding.etCode1); add(binding.etCode2); add(binding.etCode3)
+            add(binding.etCode4); add(binding.etCode5)
         }
         for (i in codeEdits.indices) {
             val et = codeEdits[i]
@@ -143,7 +144,7 @@ class HomeFragment : Fragment() {
                         codeEdits[i + 1].requestFocus()
                     }
                     et.isActivated = text.isNotEmpty()
-                    // 输完最后一位自动提交（会议号固定 4 位）
+                    // 输完最后一位自动提交（会议号固定 6 位）
                     if (text.length == 1 && i == codeEdits.size - 1) {
                         tryJoin()
                     }
@@ -167,8 +168,8 @@ class HomeFragment : Fragment() {
     /** 校验输入并加入会议 */
     private fun tryJoin() {
         val code = codeEdits.joinToString("") { it.text.toString() }
-        if (!Regex("^[0-9]{4}$").matches(code)) {
-            toast("会议号为 4 位数字")
+        if (!Regex("^[0-9]{6}$").matches(code)) {
+            toast("会议号为 6 位数字")
             return
         }
         enterMeeting(MeetingActivity.ACTION_JOIN, code)
@@ -281,8 +282,8 @@ class HomeFragment : Fragment() {
 
         dv.btnEnter.setOnClickListener {
             val code = dv.etRoomCode.text.toString().trim()
-            if (!Regex("^[0-9]{4}$").matches(code)) {
-                toast("房间号需为 4 位数字")
+            if (!Regex("^[0-9]{6}$").matches(code)) {
+                toast("房间号需为 6 位数字")
                 return@setOnClickListener
             }
             MeetingActivity.setFavoriteRoom(ctx, chosenRole, code)
@@ -421,13 +422,13 @@ class HomeFragment : Fragment() {
     private fun setupClicks() {
         binding.tvCheckUpdate.setOnClickListener { UpdateChecker.check(requireContext(), manual = true) }
 
-        // 创建房间：随机 4 位会议号，直接进入会议室（共享方）
+        // 创建房间：随机 6 位会议号，直接进入会议室（共享方）
         binding.btnCreate.setOnClickListener {
             val code = generateMeetingCode()
             enterMeeting(MeetingActivity.ACTION_CREATE, code)
         }
 
-        // 加入会议：校验 4 位输入
+        // 加入会议：校验 6 位输入
         binding.btnJoin.setOnClickListener { tryJoin() }
 
         // 专属房间卡：已设置进入，未设置弹窗设置

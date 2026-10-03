@@ -169,7 +169,7 @@
                         android:background="@drawable/bg_divider_line" />
                 </LinearLayout>
 
-                <!-- 4 位数字输入 -->
+                <!-- 6 位数字输入 -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -237,6 +237,46 @@
 
                     <EditText
                         android:id="@+id/etCode3"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="5dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
+                        android:imeOptions="actionNext"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+
+                    <EditText
+                        android:id="@+id/etCode4"
+                        android:layout_width="0dp"
+                        android:layout_height="58dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="5dp"
+                        android:layout_marginEnd="5dp"
+                        android:background="@drawable/bg_code_box"
+                        android:inputType="number"
+                        android:maxLength="1"
+                        android:gravity="center"
+                        android:textSize="22sp"
+                        android:textStyle="bold"
+                        android:textColor="#FFFFFFFF"
+                        android:textCursorDrawable="@drawable/cursor_liquid"
+                        android:imeOptions="actionNext"
+                        android:importantForAutofill="no"
+                        android:hint="0"
+                        android:textColorHint="#99FFFFFF" />
+
+                    <EditText
+                        android:id="@+id/etCode5"
                         android:layout_width="0dp"
                         android:layout_height="58dp"
                         android:layout_weight="1"

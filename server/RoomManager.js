@@ -37,13 +37,19 @@ class RoomManager {
     this.reconnectTimeout = reconnectTimeout;
   }
 
-  /** 校验会议号格式（4 位数字） */
+  /** 校验会议号格式：4 位（现有快速会议）或 6 位（情侣共享房间自定义号） */
   isValidCode(code) {
-    return /^[0-9]{4}$/.test(code);
+    return /^[0-9]{4,6}$/.test(code);
+  }
+
+  /** 房间是否为情侣专属（建房时带 couple 标记，邀请/加入须校验情侣关系） */
+  isCoupleRoom(code) {
+    const room = this.rooms.get(code);
+    return !!room && !!room.coupleOnly;
   }
 
   /** host 创建房间。返回空串表示成功，否则返回错误文案 */
-  create(code, hostWs, hostUserId) {
+  create(code, hostWs, hostUserId, coupleOnly = false) {
     const existing = this.rooms.get(code);
     if (existing) {
       // host 连接已关闭（close 事件与房间清理的时序竞态、或网络黑洞后被 terminate）
@@ -51,7 +57,7 @@ class RoomManager {
       if (existing.host.readyState === 1) return "会议号已被占用，请重试";
       this.rooms.delete(code);
     }
-    this.rooms.set(code, { host: hostWs, hostUserId, viewers: new Map(), pending: new Map(), reconnecting: new Map() });
+    this.rooms.set(code, { host: hostWs, hostUserId, viewers: new Map(), pending: new Map(), reconnecting: new Map(), coupleOnly });
     return "";
   }
 
@@ -160,6 +166,12 @@ class RoomManager {
   getHost(code) {
     const room = this.rooms.get(code);
     return room ? room.host : null;
+  }
+
+  /** 房间 host 的账号 userId（情侣房间加入校验用） */
+  getHostUserId(code) {
+    const room = this.rooms.get(code);
+    return room ? room.hostUserId : null;
   }
 
   /**

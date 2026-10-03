@@ -43,13 +43,14 @@ const AuthManager = require("./AuthManager");
 const { openDb } = require("./db");
 
 const { RateLimiter } = require("./RateLimiter");
-const { AccountManager } = require("./AccountManager");
+const { AccountManager, AccountError } = require("./AccountManager");
 const { FriendManager } = require("./FriendManager");
 const { CoupleManager } = require("./CoupleManager");
 const { ShareHistory } = require("./ShareHistory");
 const { JPushPusher } = require("./JPushPusher");
 const { PresenceManager } = require("./PresenceManager");
 const { AccountRouter } = require("./AccountRouter");
+const { ChatManager } = require("./ChatManager");
 
 // v1.401: 全局未捕获异常兜底。任何路由/定时器/回调中漏掉的同步异常原本会直接
 // 杀死信令进程（实测 "GET // HTTP/1.1" 触发 ERR_INVALID_URL 使进程退出码 7，
@@ -183,6 +184,16 @@ const friendManager = new FriendManager(accountDb);
 const presenceManager = new PresenceManager();
 const coupleManager = new CoupleManager(accountDb, presenceManager);
 const shareHistory = new ShareHistory(accountDb);
+// 好友聊天：收发/历史/未读/已读，投递复用本文件的 sendToUser + notifyUser
+const chatManager = new ChatManager({
+  db: accountDb,
+  friends: friendManager,
+  presence: presenceManager,
+  rateLimiter,
+  sendToUser: (userId, obj) => sendToUser(userId, obj),
+  notifyUser: (userId, obj) => notifyUser(userId, obj),
+  briefUser: (userId) => accountManager.getProfile(userId) || { userId },
+});
 // 极光推送：AppKey + Master Secret 从环境变量读取，绝不入库
 const jpushPusher = new JPushPusher(process.env.JPUSH_APPKEY, process.env.JPUSH_MASTER_SECRET);
 console.log(`[jpush] 推送 ${jpushPusher.enabled ? "已启用" : "未启用（缺 AppKey/Master Secret）"}`);
@@ -193,6 +204,7 @@ const accountRouter = new AccountRouter({
   rateLimiter,
   presence: presenceManager,
   shareHistory,
+  chatManager,
   notifyUser: (userId, obj) => notifyUser(userId, obj),
 });
 setInterval(() => { rateLimiter.sweep(); accountManager.sweepLoginLimiter(); accountManager.sweepExpiredSessions(); }, 60 * 1000).unref();
@@ -261,7 +273,8 @@ const server = http.createServer((req, res) => {
     try {
       const u = new URL(req.url, "http://localhost");
       const code = (u.searchParams.get("code") || "").trim().toUpperCase();
-      const ok = /^[0-9]{4}$/.test(code);
+      // v1.414: 房间状态查询兼容 4-6 位（新版生成 6 位情侣/好友房，历史 4 位快速会议仍可能存在）
+      const ok = /^[0-9]{4,6}$/.test(code);
       const room = ok ? rooms.getRoom(code) : null;
       const online = !!(room && room.host);
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -298,7 +311,7 @@ setInterval(() => {
   const now = Date.now();
   allClients.forEach((ws) => {
     if (now - (ws.lastSeen || now) > HEARTBEAT_TIMEOUT) {
-      console.log(`[heartbeat] ws ${ws._socketId || ""} idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
+      console.log(`[heartbeat] ws ${ws._socketId || ""} user=${String(ws.userId || "").slice(0, 8)} idle > ${HEARTBEAT_TIMEOUT}ms, terminate`);
       try { ws.terminate(); } catch (e) {}
     }
   });
@@ -345,6 +358,7 @@ const NOTIFY_TEXT = {
   "couple-dissolved": () => ["解绑提醒", "你们的情侣关系已解除"],
   "couple-checkin": (o) => ["情侣打卡", `${o.from?.nickname || "TA"} 完成了今日打卡，快去打卡吧`],
   "couple-memory": (o) => ["一年前的今天", `一年前的今天，你们保存了 ${o.count} 个相册瞬间，打开情侣空间回顾一下吧`],
+  "chat": (o) => ["新消息", `${o.from?.nickname || "好友"}：${String(o.text || "").slice(0, 40)}`],
 };
 function notifyUser(userId, obj) {
   sendToUser(userId, obj);
@@ -480,10 +494,11 @@ wss.on("connection", (ws, request) => {
         }
         const code = normalizeCode(msg.code);
         if (!rooms.isValidCode(code)) {
-          send(ws, { type: "error", message: "会议号需为 4 位数字" });
+          send(ws, { type: "error", message: "会议号需为 4-6 位数字" });
           return;
         }
-        const err = rooms.create(code, ws, userId);
+        // 情侣共享房间：客户端带 couple 标记，房间记录后据此在邀请/加入环节校验情侣关系
+        const err = rooms.create(code, ws, userId, !!msg.couple);
         if (err) {
           send(ws, { type: "error", message: err });
           return;
@@ -510,6 +525,12 @@ wss.on("connection", (ws, request) => {
           return;
         }
         const code = normalizeCode(msg.code);
+        // 情侣房间校验：仅情侣关系的用户可加入，实时查库，解绑后立刻拒绝
+        if (rooms.isCoupleRoom(code) && !coupleManager.areCouple(userId, rooms.getHostUserId(code))) {
+          console.log(`[room ${code}] join rejected: not couple`);
+          send(ws, { type: "error", message: "仅情侣可加入共享房间" });
+          return;
+        }
         // REQUIRE_TOKEN=1 时强制校验房间 token（防止撞房/未授权观看）；默认关闭保持旧客户端兼容
         if (REQUIRE_TOKEN && !AuthManager.verify(code, msg.token)) {
           send(ws, { type: "error", message: "加入口令无效" });
@@ -643,13 +664,35 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "auth-error", reason: "unauthenticated" });
           break;
         }
+        ws.userId = userId;
         const cameOnline = presenceManager.attach(userId, ws);
         send(ws, { type: "auth-ok", userId });
         if (cameOnline) {
           broadcastPresence(userId, true);
           flushPendingInvites(userId);
+          // 上线补推各会话未读数，驱动好友列表角标（离线期间收到的消息按此提醒）
+          chatManager.pushUnread(userId);
         }
         console.log(`[account] ws authed user=${userId.slice(0, 8)}… ${cameOnline ? "(online)" : "(extra device)"}`);
+        break;
+      }
+
+      // 好友聊天发消息：from 取连接的认证身份，客户端无法伪造发送者；
+      // 成功的 ack/投递与失败的 chat-rejected 均由 ChatManager 内部完成
+      case "chat-send": {
+        if (!userId) {
+          send(ws, { type: "error", message: "请先登录" });
+          break;
+        }
+        try {
+          // v1.414: 日志只记 id/from/to 与长度，不记正文（私聊内容属隐私，日志可被导出）
+          console.log(`[chat-send] from=${userId.slice(0, 8)} to=${String(msg.to || "").slice(0, 8)} id=${String(msg.id || "").slice(0, 8)} len=${String(msg.text || "").length}`);
+          chatManager.send({ id: msg.id, from: userId, to: msg.to, text: msg.text, ts: msg.ts });
+        } catch (e) {
+          send(ws, { type: "chat-rejected", id: String(msg.id || ""), reason: e?.message || "发送失败" });
+          // 非 AccountError（DB 异常等）才记日志，业务校验失败不污染日志
+          if (!(e instanceof AccountError)) console.error("[chat] send 未处理异常:", e);
+        }
         break;
       }
 
@@ -667,7 +710,7 @@ wss.on("connection", (ws, request) => {
         const inviteCode = normalizeCode(msg.code);
         if (!rooms.isValidCode(inviteCode)) {
           console.log(`[invite] 拒绝：房间号非法 from=${userId.slice(0, 8)}… code=${msg.code}`)
-          send(ws, { type: "error", message: "房间号需为 4 位数字" });
+          send(ws, { type: "error", message: "房间号需为 4-6 位数字" });
           break;
         }
         // 房间归属校验：邀请方必须是该房间的 host 账号，且房间处于活跃状态，
@@ -677,7 +720,14 @@ wss.on("connection", (ws, request) => {
           send(ws, { type: "error", message: "请先进入共享房间后再邀请好友" });
           break;
         }
-        if (!friendManager.list(userId).some((f) => f.userId === toUserId)) {
+        if (rooms.isCoupleRoom(inviteCode)) {
+          // 情侣房间：校验双方是情侣（情侣未必是好友关系，不能沿用好友校验）
+          if (!coupleManager.areCouple(userId, toUserId)) {
+            console.log(`[invite] 拒绝：非情侣 from=${userId.slice(0, 8)}… to=${toUserId.slice(0, 8)}…`)
+            send(ws, { type: "error", message: "仅情侣可加入共享房间" });
+            break;
+          }
+        } else if (!friendManager.list(userId).some((f) => f.userId === toUserId)) {
           console.log(`[invite] 拒绝：非好友 from=${userId.slice(0, 8)}… to=${toUserId.slice(0, 8)}…`)
           send(ws, { type: "error", message: "只能邀请好友" });
           break;
@@ -766,6 +816,8 @@ wss.on("connection", (ws, request) => {
       }
 
       case "ping": {
+        const idle = Date.now() - (ws.lastSeen || Date.now());
+        if (userId) console.log(`[chat-ping] user=${userId.slice(0, 8)} idle=${idle}ms`);
         send(ws, { type: "pong" });
         break;
       }

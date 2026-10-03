@@ -596,7 +596,8 @@ h1{font-size:20px;margin:0 0 4px}.sub{color:#64748b;font-size:13px;margin:0 0 24
     // 房间口令（服务器 REQUIRE_TOKEN=1 时必需）：随链接透传给 App，观看方无需手动输入
     const tokenRaw = String(qs ? qs.get("token") || "" : "");
     const token = /^[A-Za-z0-9]{4,16}$/.test(tokenRaw) ? tokenRaw : "";
-    const valid = /^[0-9]{4}$/.test(code);
+    // v1.414: 分享页房间号兼容 4-6 位
+    const valid = /^[0-9]{4,6}$/.test(code);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(renderSharePage(valid ? code : null, token));
     done(200);

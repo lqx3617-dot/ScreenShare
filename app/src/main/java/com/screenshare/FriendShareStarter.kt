@@ -26,7 +26,7 @@ object FriendShareStarter {
     private fun generateCode(): String {
         val sb = StringBuilder()
         val random = SecureRandom()
-        repeat(4) { sb.append(random.nextInt(10)) }
+        repeat(6) { sb.append(random.nextInt(10)) }
         return sb.toString()
     }
 }

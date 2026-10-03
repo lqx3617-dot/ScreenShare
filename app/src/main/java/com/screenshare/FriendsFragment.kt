@@ -37,6 +37,10 @@ class FriendsFragment : Fragment() {
             onStartShare = { friend -> startShareWith(friend) },
             onEditRemark = { friend -> showRemarkDialog(friend) },
             onItemClick = { friend ->
+                // 点击好友进入聊天页（共享降为页内按钮）
+                ChatActivity.start(requireContext(), friend.userId, friend.remark.ifBlank { friend.nickname }, friend.online)
+            },
+            onLongClick = { friend ->
                 (requireActivity() as? LiquidHomeActivity)?.navigateToSubPage(
                     FriendDetailFragment.newInstance(friend)
                 )
@@ -48,6 +52,19 @@ class FriendsFragment : Fragment() {
             onAccept = { item -> respondRequest(item.requestId, accept = true) },
             onReject = { item -> respondRequest(item.requestId, accept = false) }
         )
+    }
+
+    /** 聊天未读变化：按 userId 合并角标到列表（主线程回调） */
+    private val chatListener = object : ChatSync.Listener {
+        override fun onMessagesChanged(messages: List<ChatMessage>) {
+            // 好友列表不展示消息内容
+        }
+
+        override fun onUnreadChanged(unread: Map<String, Int>) {
+            friendsAdapter.submitList(friendsAdapter.currentList.map {
+                it.copy(unread = unread[it.userId] ?: 0)
+            })
+        }
     }
 
     override fun onCreateView(
@@ -76,7 +93,8 @@ class FriendsFragment : Fragment() {
         binding.btnAddFriend.setOnClickListener { showAddFriendDialog() }
         binding.layoutEmpty.setOnClickListener { showAddFriendDialog() }
 
-        // 数据加载统一由 onResume 触发，避免 onViewCreated + onResume 双发请求
+        // 聊天未读角标：ChatSync 推送未读汇总，合并到列表项驱动角标刷新
+        ChatSync.register(chatListener)
     }
 
     override fun onResume() {
@@ -115,7 +133,10 @@ class FriendsFragment : Fragment() {
             if (_binding == null) return@launch
             when (friends) {
                 is AccountClient.ApiResult.Success -> {
-                    val list = friends.data
+                    // v1.414: /friends 不返回 unread，直接 submitList 会把聊天推送的
+                    // 未读角标清掉；用 ChatSync 当前未读快照合并后再提交
+                    val unread = ChatSync.unreadSnapshot()
+                    val list = friends.data.map { it.copy(unread = unread[it.userId] ?: 0) }
                     friendsAdapter.submitList(list)
                     binding.layoutEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
                 }
@@ -424,6 +445,7 @@ class FriendsFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         dismissDialog()
+        ChatSync.unregister(chatListener)
         _binding = null
     }
 }

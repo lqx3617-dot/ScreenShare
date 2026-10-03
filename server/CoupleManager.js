@@ -483,6 +483,12 @@ class CoupleManager {
     return { coupleId: row.id, partnerId: row.user_b, boundAt: row.bound_at, anniversary: row.anniversary };
   }
 
+  /** 双方是否为有效情侣关系（双向匹配，实时查库，解绑后自动返回 false） */
+  areCouple(a, b) {
+    if (!a || !b || a === b) return false;
+    return this._activeCoupleOf(a)?.partnerId === b || this._activeCoupleOf(b)?.partnerId === a;
+  }
+
   _requireBound(userId) {
     const c = this._activeCoupleOf(userId);
     if (!c) throw new AccountError("not_bound", "请先绑定伴侣", 403);

@@ -174,6 +174,14 @@ class CoupleFragment : Fragment() {
         }
 
         v.findViewById<TextView>(R.id.tvPhotoCount).text = "${s.photoCount} 项"
+
+        // 情侣共享房间：以伴侣为邀请对象建房，服务端校验情侣关系
+        val savedCode = CoupleShareStarter.savedCode(requireContext())
+        v.findViewById<TextView>(R.id.tvShareRoomHint).text =
+            if (savedCode.isEmpty()) "设置房间号，把屏幕共享给 TA" else "房间号：$savedCode"
+        v.findViewById<View>(R.id.cardShareRoom).setOnClickListener {
+            CoupleShareStarter.start(requireContext(), p?.userId ?: "", p?.nickname ?: "TA")
+        }
         renderAnniversary(s.anniversary)
         renderWeather(s.weather)
         renderCheckin(s.checkin)

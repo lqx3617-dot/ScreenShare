@@ -29,8 +29,8 @@ import java.util.concurrent.TimeUnit
  * 用户在此输入会议号 / 创建房间后跳转到 MainActivity（会议室），本页随即退出。
  *
  * 操作流程：
- * - 创建房间：生成 4 位会议号 → 跳转 MainActivity(action=create)
- * - 加入会议：输入 4 位会议号 → 校验 → 跳转 MainActivity(action=join)
+ * - 创建房间：生成 6 位会议号 → 跳转 MainActivity(action=create)
+ * - 加入会议：输入 6 位会议号 → 校验 → 跳转 MainActivity(action=join)
  * - 分享链接：冷启动 screenshare://join?code=XXXX → 直接跳转加入流程
  * - 最近会议：历史（创建/加入）会议快速复用，点击直接进入对应会议
  */
@@ -61,7 +61,7 @@ class MeetingActivity : AppCompatActivity() {
                 val p = context.getSharedPreferences(PREFS_FAVORITE, Context.MODE_PRIVATE)
                 val code = p.getString(KEY_FAV_CODE, null) ?: return null
                 val role = p.getString(KEY_FAV_ROLE, null) ?: ACTION_CREATE
-                if (!Regex("^[0-9]{4}$").matches(code)) null else code to role
+                if (!Regex("^[0-9]{6}$").matches(code)) null else code to role
             } catch (_: Throwable) {
                 null
             }
@@ -84,7 +84,7 @@ class MeetingActivity : AppCompatActivity() {
 
         /** 记录一次会议（创建/加入）到最近历史：同会议号去重置顶，最多保留 MAX_HISTORY 条 */
         fun recordMeetingHistory(context: Context, action: String, code: String) {
-            if (!Regex("^[0-9]{4}$").matches(code)) return
+            if (!Regex("^[0-9]{6}$").matches(code)) return
             try {
                 val list = loadMeetingHistory(context).filter { it.code != code }.toMutableList()
                 list.add(0, MeetingEntry(code, action, System.currentTimeMillis()))
@@ -108,7 +108,7 @@ class MeetingActivity : AppCompatActivity() {
                 (0 until arr.length()).mapNotNull { i ->
                     val o = arr.optJSONObject(i) ?: return@mapNotNull null
                     val code = o.optString("code")
-                    if (!Regex("^[0-9]{4}$").matches(code)) return@mapNotNull null
+                    if (!Regex("^[0-9]{6}$").matches(code)) return@mapNotNull null
                     MeetingEntry(code, o.optString("action"), o.optLong("ts"))
                 }.sortedByDescending { it.ts }
             } catch (_: Throwable) {
@@ -185,12 +185,12 @@ class MeetingActivity : AppCompatActivity() {
                 true
             } else false
         }
-        // 输入满 4 位自动加入（会议号固定 4 位，输入完成即提交，省去点按钮）
+        // 输入满 6 位自动加入（会议号固定 6 位，输入完成即提交，省去点按钮）
         input.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
             override fun afterTextChanged(s: android.text.Editable?) {
-                if (s?.length == 4) tryJoin()
+                if (s?.length == 6) tryJoin()
             }
         })
         binding.btnJoinMeeting.setOnClickListener { tryJoin() }
@@ -409,9 +409,9 @@ class MeetingActivity : AppCompatActivity() {
             enterMeeting(fav.second, fav.first, favWait = wait)
             return
         }
-        // 未设置：预填一个随机 4 位房间号，双方约定即可
+        // 未设置：预填一个随机 6 位房间号，双方约定即可
         val input = android.widget.EditText(this).apply {
-            hint = "输入 4 位数字房间号（如 1314）"
+            hint = "输入 6 位数字房间号（如 131420）"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             maxLines = 1
             setText(generateMeetingCode())
@@ -426,8 +426,8 @@ class MeetingActivity : AppCompatActivity() {
             .setSingleChoiceItems(roles, 0) { _, which -> chosenRole = if (which == 0) ACTION_CREATE else ACTION_JOIN }
             .setPositiveButton("进入") { _, _ ->
                 val code = input.text.toString().trim()
-                if (!Regex("^[0-9]{4}$").matches(code)) {
-                    Toast.makeText(this, "房间号需为 4 位数字", Toast.LENGTH_SHORT).show()
+                if (!Regex("^[0-9]{6}$").matches(code)) {
+                    Toast.makeText(this, "房间号需为 6 位数字", Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
                 setFavoriteRoom(this, chosenRole, code)
@@ -543,7 +543,7 @@ class MeetingActivity : AppCompatActivity() {
         val code = p.getString("code", null) ?: return
         if (System.currentTimeMillis() - p.getLong("ts", 0) > 24 * 3600 * 1000L) return
         if (action != ACTION_CREATE && action != ACTION_JOIN) return
-        if (!Regex("^[0-9]{4}$").matches(code)) return
+        if (!Regex("^[0-9]{6}$").matches(code)) return
         val roleText = if (action == ACTION_CREATE) "共享方" else "观看方"
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("自动连接上次会议")
@@ -572,7 +572,7 @@ class MeetingActivity : AppCompatActivity() {
         // 房间口令（服务器 REQUIRE_TOKEN=1 时必需）：分享链接自动携带，兼容 intent:// 解析合并 query 的情况
         val token = uri.getQueryParameter("token")?.trim()
             ?: Regex("token=([A-Za-z0-9]{4,16})").find(uri.toString())?.groupValues?.get(1) ?: ""
-        if (!code.isNullOrEmpty() && Regex("^[0-9]{4}$").matches(code)) {
+        if (!code.isNullOrEmpty() && Regex("^[0-9]{6}$").matches(code)) {
             enterMeeting(ACTION_JOIN, code, token)
         }
     }
@@ -580,18 +580,18 @@ class MeetingActivity : AppCompatActivity() {
     /** 校验并执行加入会议 */
     private fun tryJoin() {
         val code = binding.etMeetingCode.text.toString().trim()
-        if (!Regex("^[0-9]{4}$").matches(code)) {
-            Toast.makeText(this, "会议号为 4 位数字", Toast.LENGTH_SHORT).show()
+        if (!Regex("^[0-9]{6}$").matches(code)) {
+            Toast.makeText(this, "会议号为 6 位数字", Toast.LENGTH_SHORT).show()
             return
         }
         enterMeeting(ACTION_JOIN, code)
     }
 
-    /** 生成 4 位数字会议号 */
+    /** 生成 6 位数字会议号 */
     private fun generateMeetingCode(): String {
         val sb = StringBuilder()
         val random = java.security.SecureRandom()
-        repeat(4) { sb.append(random.nextInt(10)) }
+        repeat(6) { sb.append(random.nextInt(10)) }
         return sb.toString()
     }
 

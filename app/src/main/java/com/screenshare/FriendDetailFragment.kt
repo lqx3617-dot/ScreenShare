@@ -40,7 +40,8 @@ class FriendDetailFragment : Fragment() {
             nickname = args.getString(ARG_NICKNAME).orEmpty(),
             avatar = args.getString(ARG_AVATAR).orEmpty(),
             online = args.getBoolean(ARG_ONLINE),
-            remark = args.getString(ARG_REMARK).orEmpty()
+            remark = args.getString(ARG_REMARK).orEmpty(),
+            unread = 0
         )
     }
 

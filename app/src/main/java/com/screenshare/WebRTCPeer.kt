@@ -255,7 +255,12 @@ class WebRTCPeer(
     // <12fps 而 720p 仍能 15fps，每次回升到 1080p 立刻再降，每次翻转都重建采集管线）。
     // 仅在已有帧率上限学习（encFpsCeiling>0）后才学习，避免开机波动误判（实测启动期
     // 720p@28 目标下编码 8fps，属正常爬坡而非 720p 档位不可用）
-    private var encProfileCeiling = 0   // 采集档位下限（profile 越大分辨率越低），0=不限制
+    // v1.414: 补 @Volatile——主线程（applyEncoderLoadProfile 由 mainHandler.post 调用）
+    // 与 adaptive-worker 线程（applyNetworkAdaptation）并发读写，无可见性保证会读到旧值
+    // 架空回退期；与 encFpsCeiling/lastCaptureProfile 等既有并发字段保持一致
+    @Volatile private var encProfileCeiling = 0   // 采集档位下限（profile 越大分辨率越低），0=不限制
+    @Volatile private var lastEncoderDowngradeMs = 0L   // 编码负载降分辨率时刻：此后 30s 内两条自适应通路的分辨率升级一律拒绝（编码器已明示扛不住）
+    private val encoderUpgradeBackoffMs = 30_000L
 
     // 系统音频 DataChannel（观看方接收）
     private var systemAudioListener: ((ByteArray) -> Unit)? = null
@@ -1777,13 +1782,17 @@ class WebRTCPeer(
      */
     fun updateCaptureOrientation(width: Int, height: Int) {
         if (disposed) return
-        // 虚拟显示比例跟随屏幕比例，避免旋转后内容被裁切
-        val maxDim = 2400
-        val scale = minOf(1f, maxDim.toFloat() / maxOf(width, height))
-        val capW = (width * scale).toInt()
-        val capH = (height * scale).toInt()
+        // v1.414: 旋转只换方向不换档位。原先用屏幕物理尺寸（上限 2400）直接设定，
+        // 编码回退期内旋转会瞬间回到高分辨率击穿下限，且 lastCaptureProfile 与实际
+        // 采集尺寸脱节，后续档位决策基准错误。改为按当前档位（不低于已学上限）尺寸
+        // 换轴，分辨率与编码负载状态保持一致。
+        val profile = maxOf(lastCaptureProfile, encProfileCeiling)
+        val (baseW, baseH) = captureSizeForLevel(profile)
+        val portrait = width < height
+        val basePortrait = baseH > baseW
+        val (capW, capH) = if (portrait == basePortrait) baseW to baseH else baseH to baseW
         videoCapturer?.changeCaptureFormat(capW, capH, captureFps)
-        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@$captureFps")
+        Log.d(TAG, "旋转后更新采集分辨率: ${capW}x${capH}@$captureFps (档位$profile)")
     }
 
     /**
@@ -2295,12 +2304,17 @@ class WebRTCPeer(
         // v1.335: 档位上限放开更保守——须帧率上限已完全放开（当前档位已证明无编码瓶颈），
         // 否则热降频期间每 30s 试探高分辨率都是白白翻转（每次都触发关键帧+采集管线重建）。
         // 帧率上限卡在中间值时本块永不触发，热降频设备会话内稳定停留在低分辨率档
-        if (encProfileCeiling > 0 && encFpsCeiling >= highMotionFpsCap &&
+        // v1.414: 去掉"帧率上限须全开"前置——该条件使抖音等高动态场景（帧率上限学到
+        // 15 卡在中间）下 ceiling 永不放开，编码降档学到的新下限会永久锁死低分辨率。
+        // 改由 encodedFps 达标（编码器有余量）+ 既有冷却/指数退避把关翻转频率：
+        // 抖音场景 encodedFps 在 15 线挣扎达不到 target*0.9，锁定保持；切回静态桌面
+        // 后编码轻松达标，冷却到期逐档放开恢复高分辨率。
+        if (encProfileCeiling > 0 &&
             encodedFps > 0 && encodedFps >= target * 0.9 &&
             System.currentTimeMillis() - encFpsLearnMs >= releaseCooldown) {
             encProfileCeiling--
             encFpsLearnMs = System.currentTimeMillis()
-            AppLogger.capture("采集档位上限放开: ->$encProfileCeiling (帧率上限已全开+无瓶颈证据${releaseCooldown / 1000}s)")
+            AppLogger.capture("采集档位上限放开: ->$encProfileCeiling (编码达标+无瓶颈证据${releaseCooldown / 1000}s)")
         }
     }
 
@@ -2377,15 +2391,38 @@ class WebRTCPeer(
         val profileChanged = effective != lastCaptureProfile
         if (profileChanged || targetFps != captureFps) {
             val now = System.currentTimeMillis()
-            val isDowngrade = effective > lastCaptureProfile || targetFps < captureFps
+            // v1.414: 拆分分辨率/帧率方向——回退期门禁只管"分辨率升级"，帧率升降不涉及
+            // 画面缩放，不应被编码回退期卡住，也不能把"帧率降+分辨率升"误判为降质
+            val resDowngrade = effective > lastCaptureProfile
+            val resUpgrade = effective < lastCaptureProfile
+            val isDowngrade = resDowngrade || targetFps < captureFps
             val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
             val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
+            // v1.413: 编码负载恢复升分辨率同样须等 30s 回退期，挡住"编码降→6s 恢复→
+            // 再超载"的内环（与网络自适应升级共用同一个 backoff）
+            // v1.414: 仅分辨率升级受限；帧率提升/分辨率不变放行
+            val encoderBackoffOk = !resUpgrade || now - lastEncoderDowngradeMs >= encoderUpgradeBackoffMs
             // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
-            if ((isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
+            if ((isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk && encoderBackoffOk)) {
                 lastCaptureProfile = effective
                 lastCaptureFps = targetFps
                 captureFps = targetFps
                 lastCaptureSwitchMs = now
+                // v1.413: 记录编码负载降分辨率时刻，网络自适应升级需等 30s 回退期
+                // （抖音等高动态内容会触发"编码降档→网络升档→再超载"的死循环，
+                // 观众端表现即分辨率反复横跳、画面忽大忽小）
+                // v1.414: 仅在分辨率真的降档时登记回退期（帧率降但分辨率升不算）
+                if (resDowngrade && profileChanged) {
+                    lastEncoderDowngradeMs = now
+                    // v1.414: 持久棘轮——编码器在这个分辨率上实测需要降档（超载证据），
+                    // 记为档位下限。30s 回退期只是降频器，到点后网络通路仍会顶回 1920；
+                    // ceiling 让"已证明超载的档位"在本次会话内不再被选中，真正打断
+                    // 1280↔1920 死循环。切回静态桌面后编码轻松达标，由上方放开块逐档恢复。
+                    if (effective > encProfileCeiling) {
+                        AppLogger.capture("采集档位上限学习: 编码降档 档位->$effective (回升受限直到编码轻松)")
+                        encProfileCeiling = effective
+                    }
+                }
                 try {
                     // v1.254: 仅帧率变化不重启采集器（同 applyNetworkAdaptation）
                     if (profileChanged) {
@@ -2683,16 +2720,26 @@ class WebRTCPeer(
         val profileChanged = targetProfile != lastCaptureProfile
         if (profileChanged || targetFps != captureFps) {
             val now = System.currentTimeMillis()
-            val isDowngrade = targetProfile > lastCaptureProfile || targetFps < captureFps
+            // v1.414: 拆分分辨率/帧率方向（同 applyEncoderLoadProfile），避免"帧率降+
+            // 分辨率升"被误判为降质而绕过回退期，或把帧率降登记为编码降档
+            val resDowngrade = targetProfile > lastCaptureProfile
+            val resUpgrade = targetProfile < lastCaptureProfile
+            val isDowngrade = resDowngrade || targetFps < captureFps
             val cooldownOk = now - lastCaptureSwitchMs >= captureSwitchCooldownMs
             val downgradeOk = now - lastCaptureSwitchMs >= captureDowngradeCooldownMs
+            // v1.413: 升级分辨率须过编码回退期（30s）——编码负载刚降过分辨率（编码器
+            // 实测扛不住高分辨率），网络通路不应 10 秒后又顶回去，否则 1920↔1280
+            // 死循环，观众端分辨率反复横跳即"画面缩放"。崩塌降质不受此约束。
+            // v1.414: 仅分辨率升级受限；帧率提升/分辨率不变放行；collapse 由外层
+            // 短路覆盖（崩塌必为降质）
+            val encoderBackoffOk = !resUpgrade || now - lastEncoderDowngradeMs >= encoderUpgradeBackoffMs
             // v1.253: 降质也受冷却约束（原先立即执行），避免档位抖动时反复重建采集格式
             // v1.255: 崩塌时绕过冷却立即降采集格式。冷却本意是抑制 4↔5↔6
             // 单档抖动，但崩塌时每多等 1.5s 就多灌 ~5MB 进死链路，代价完全不对称。
             // v1.256: 崩塌判据补上高丢包——老设备崩塌常以丢包先行（实测 77% 丢包时
             // rtt 仍 10ms，rtt 判据要晚 1~2 个采样周期才触发，届时切换块已被 cap 未变
             // 跳过）。
-            if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk)) {
+            if (collapse || (isDowngrade && downgradeOk) || (!isDowngrade && cooldownOk && encoderBackoffOk)) {
                 // v1.401: changeCaptureFormat 与 sender.parameters 同样是 native 对象操作，
                 // 与主线程的 startScreenCapture/applyCaptureFps/requestKeyFrame 竞争同一采集器。
                 // 状态字段（lastCaptureProfile 等）在 worker 线程更新用于档位决策，
@@ -2814,6 +2861,8 @@ class WebRTCPeer(
         encFpsReleaseFailures = 0
         encFpsLastReleaseRolledBack = false
         encProfileCeiling = 0
+        // v1.414: 漏重置会让同实例 disconnect 后复用残留旧回退期
+        lastEncoderDowngradeMs = 0L
         viewerStallActive = false
         lastCaptureFps = 30
         manualFpsOverride = 0

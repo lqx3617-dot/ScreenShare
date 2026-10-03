@@ -18,7 +18,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="输入会议创建方提供的 4 位会议号"
+        android:text="输入会议创建方提供的 6 位会议号"
         android:textSize="13sp"
         android:textColor="@color/text_secondary"
         android:layout_marginTop="4dp" />
@@ -34,9 +34,9 @@
         android:textStyle="bold"
         android:textColor="@color/neon_cyan"
         android:textColorHint="#3364748B"
-        android:hint="0000"
+        android:hint="000000"
         android:inputType="number"
-        android:maxLength="4"
+        android:maxLength="6"
         android:letterSpacing="0.3"
         android:imeOptions="actionDone"
         android:importantForAutofill="no" />

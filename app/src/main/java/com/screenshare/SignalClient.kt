@@ -80,6 +80,8 @@ class SignalClient(
     private var attempt = 0
     /** 加入房间口令（服务器 REQUIRE_TOKEN=1 时必需；来自分享链接或上次记忆） */
     private var joinToken = ""
+    /** 情侣共享房间标记（建房时带 couple:true） */
+    private var coupleOnly = false
     // 信令待发队列：WS 未就绪（断开/重连中）时缓存 relay 消息，连接恢复后统一补发，
     // 避免网络波动瞬间 SDP/ICE 发送静默丢失导致连接卡死
     private val pendingRelays = java.util.concurrent.ConcurrentLinkedQueue<String>()
@@ -110,12 +112,14 @@ class SignalClient(
         }
     }
 
-    /** 创建房间（共享方）或加入房间（观看方）。code 为 4 位口令，joinToken 为房间口令（可空）。 */
-    fun connect(code: String, asHost: Boolean, joinToken: String = "") {
+    /** 创建房间（共享方）或加入房间（观看方）。code 为 4-6 位口令，joinToken 为房间口令（可空）。
+     *  coupleOnly=true 时建房标记为情侣房间，服务端在邀请/加入环节校验情侣关系。 */
+    fun connect(code: String, asHost: Boolean, joinToken: String = "", coupleOnly: Boolean = false) {
         closedByUs = false
         this.code = code
         this.asHost = asHost
         this.joinToken = joinToken
+        this.coupleOnly = coupleOnly
         attempt = 0
         myViewerId = 0
         pendingRelays.clear()
@@ -142,6 +146,8 @@ class SignalClient(
                 val msg = JSONObject().apply {
                     put("type", if (asHost) "create" else "join")
                     put("code", code)
+                    // 情侣共享房间：服务端据此在邀请/加入环节校验情侣关系
+                    if (asHost && coupleOnly) put("couple", true)
                     // 加入房间口令：服务器 REQUIRE_TOKEN=1 时校验，缺失/错误会被拒绝
                     if (!asHost && joinToken.isNotEmpty()) put("token", joinToken)
                 }

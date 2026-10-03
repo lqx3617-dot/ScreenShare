@@ -65,7 +65,7 @@ function readJson(req, limit = MAX_BODY) {
 }
 
 class AccountRouter {
-  constructor({ accountManager, friendManager, coupleManager, rateLimiter, presence, shareHistory, notifyUser }) {
+  constructor({ accountManager, friendManager, coupleManager, rateLimiter, presence, shareHistory, notifyUser, chatManager }) {
     this.accounts = accountManager;
     this.friends = friendManager;
     this.couples = coupleManager;
@@ -73,6 +73,7 @@ class AccountRouter {
     this.presence = presence;
     this.shareHistory = shareHistory;
     this.notifyUser = notifyUser;
+    this.chat = chatManager;
     this.routes = [
       {
         method: "POST",
@@ -377,6 +378,32 @@ class AccountRouter {
           return { __file: path.join(__dirname, "data", "couple_photos", file), __mime: mime };
         },
       },
+      // 好友聊天：历史分页（双向游标）/ 标记已读 / 未读汇总
+      {
+        method: "GET",
+        pattern: /^\/chat\/history$/,
+        auth: true,
+        handler: (req, _body, ctx) => {
+          const q = new URL(req.url, "http://localhost").searchParams;
+          return this.chat.history(ctx.userId, String(q.get("peer") || ""), {
+            afterSeq: q.get("afterSeq"),
+            beforeSeq: q.get("beforeSeq"),
+            limit: q.get("limit"),
+          });
+        },
+      },
+      {
+        method: "POST",
+        pattern: /^\/chat\/read$/,
+        auth: true,
+        handler: (req, body, ctx) => this.chat.markRead(ctx.userId, String(body.peer || "")),
+      },
+      {
+        method: "GET",
+        pattern: /^\/chat\/unread$/,
+        auth: true,
+        handler: (req, _body, ctx) => this.chat.unread(ctx.userId),
+      },
     ];
   }
 
@@ -391,7 +418,7 @@ class AccountRouter {
       this._fail(res, new AccountError("bad_request", "请求行格式非法", 400));
       return true;
     }
-    if (!path.startsWith("/account") && !path.startsWith("/friends") && !path.startsWith("/shares") && !path.startsWith("/couple")) return false;
+    if (!path.startsWith("/account") && !path.startsWith("/friends") && !path.startsWith("/shares") && !path.startsWith("/couple") && !path.startsWith("/chat")) return false;
     this._run(req, res, path).catch((e) => this._fail(res, e));
     return true;
   }

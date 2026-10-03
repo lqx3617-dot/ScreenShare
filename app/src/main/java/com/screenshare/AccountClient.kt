@@ -50,8 +50,16 @@ object AccountClient {
         val avatar: String,
         val online: Boolean,
         /** 我给对方设的备注名，空串表示未设 */
-        val remark: String = ""
-    )
+        val remark: String = "",
+        /** 未读聊天消息数（好友列表角标，由 ChatSync 推送） */
+        val unread: Int = 0
+    ) {
+        // 显式保留 5 参数构造方法：Kotlin 默认参数只生成合成构造方法，
+        // 跨 dex / 旧字节码调用点找不到签名会 NoSuchMethodError（v1.403 真机已出现）
+        constructor(
+            userId: String, nickname: String, avatar: String, online: Boolean, remark: String
+        ) : this(userId, nickname, avatar, online, remark, 0)
+    }
 
     data class FriendRequestItem(val requestId: String, val from: Profile, val createdAt: Long)
 

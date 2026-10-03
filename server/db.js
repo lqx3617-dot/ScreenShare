@@ -124,6 +124,21 @@ CREATE TABLE IF NOT EXISTS couple_wishes (
 );
 CREATE INDEX IF NOT EXISTS idx_couple_wishes ON couple_wishes(couple_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_couple_locations_couple ON couple_locations(couple_id, reporter, reported_at);
+
+-- 好友聊天消息：seq 服务端自增作同步游标（客户端按 seq 增量拉取），
+-- id 客户端生成作去重键（重发/多设备幂等），read_at 为空即未读，
+-- 会话为 (from_user,to_user) 双向并集，靠 (from,to) 复合索引扫描
+CREATE TABLE IF NOT EXISTS messages (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  id         TEXT NOT NULL UNIQUE,
+  from_user  TEXT NOT NULL,
+  to_user    TEXT NOT NULL,
+  text       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  read_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(from_user, to_user, seq);
+CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(to_user, read_at) WHERE read_at IS NULL;
 `;
 
 /**

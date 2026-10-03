@@ -21,11 +21,12 @@ internal fun initialOf(name: String): String {
     return s.first().toString().uppercase()
 }
 
-/** 好友列表适配器：在线状态点 + 一键发起共享 + 长按改备注 + 点击进详情 */
+/** 好友列表适配器：在线状态点 + 一键发起共享 + 未读角标 + 长按进详情 + 单击进聊天 */
 class FriendsAdapter(
     private val onStartShare: (AccountClient.FriendItem) -> Unit,
     private val onEditRemark: (AccountClient.FriendItem) -> Unit = {},
-    private val onItemClick: (AccountClient.FriendItem) -> Unit = {}
+    private val onItemClick: (AccountClient.FriendItem) -> Unit = {},
+    private val onLongClick: (AccountClient.FriendItem) -> Unit = {}
 ) : ListAdapter<AccountClient.FriendItem, FriendsAdapter.VH>(DIFF) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -57,10 +58,17 @@ class FriendsAdapter(
         }
         holder.b.btnStartShare.setOnClickListener { onStartShare(item) }
         holder.itemView.setOnClickListener { onItemClick(item) }
+        // 未读角标：0 隐藏；超过 9 显示 9+
+        if (item.unread > 0) {
+            holder.b.tvUnread.visibility = View.VISIBLE
+            holder.b.tvUnread.text = if (item.unread > 9) "9+" else item.unread.toString()
+        } else {
+            holder.b.tvUnread.visibility = View.GONE
+        }
         // 离线也可发起：邀请会存服务端并推送，对方上线后补投。按钮保持可点，仅用透明度区分
         holder.b.btnStartShare.isEnabled = true
         holder.b.btnStartShare.alpha = if (item.online) 1f else 0.6f
-        holder.itemView.setOnLongClickListener { onEditRemark(item); true }
+        holder.itemView.setOnLongClickListener { onLongClick(item); true }
     }
 
     class VH(val b: ItemFriendCardBinding) : RecyclerView.ViewHolder(b.root)
@@ -68,8 +76,8 @@ class FriendsAdapter(
     companion object {
         private val DIFF = object : DiffUtil.ItemCallback<AccountClient.FriendItem>() {
             override fun areItemsTheSame(o: AccountClient.FriendItem, n: AccountClient.FriendItem) = o.userId == n.userId
-            override fun areContentsTheSame(o: AccountClient.FriendItem, n: AccountClient.FriendItem) =
-                o.userId == n.userId && o.online == n.online && o.nickname == n.nickname && o.remark == n.remark
+            // 必须包含 unread：未读角标刷新只 copy 该字段，漏掉则 DiffUtil 判定无变化、不重绘
+            override fun areContentsTheSame(o: AccountClient.FriendItem, n: AccountClient.FriendItem) = o == n
         }
     }
 }

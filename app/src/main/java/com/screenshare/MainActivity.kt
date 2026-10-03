@@ -69,8 +69,8 @@ import org.webrtc.*
  * 5. 远程视频渲染
  *
  * 操作流程：
- * Host 端：快速会议 → 自动生成 4 位会议号 → 等待对方输入会议号加入
- * Join 端：加入会议 → 输入 Host 的 4 位会议号 → 连接建立
+ * Host 端：快速会议 → 自动生成 6 位会议号 → 等待对方输入会议号加入
+ * Join 端：加入会议 → 输入 Host 的 6 位会议号 → 连接建立
  */
 class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
 
@@ -87,6 +87,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         /** 好友共享邀请：建房成功后定向投递的好友 id（FriendsFragment 传入） */
         const val EXTRA_INVITE_FRIEND_ID = "extra_invite_friend_id"
         const val EXTRA_INVITE_FRIEND_NAME = "extra_invite_friend_name"
+        /** 情侣共享房间：建房时标记 couple，服务端据此校验情侣关系（CoupleShareStarter 传入） */
+        const val EXTRA_COUPLE_ROOM = "extra_couple_room"
         const val EXTRA_MEETING_TOKEN = "extra_meeting_token"
         const val ACTION_CREATE = "create"
         const val ACTION_JOIN = "join"
@@ -162,6 +164,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
     // 好友共享邀请：建房成功后投递的好友信息（FriendsFragment 传入，建房前邀请会被服务端拒绝）
     private var pendingInviteFriendId = ""
     private var pendingInviteFriendName = ""
+    // 情侣共享房间：建房标记 couple，created 后保存房间号供下次预填
+    private var coupleRoom = false
     // 本次会话是否已发起屏幕授权请求（避免重复弹授权框）
     private var authorizationRequested = false
     // Trickle ICE：SDP 是否已通过信令发出，之后的候选才单独增量发送
@@ -664,7 +668,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             updateUI("正在创建会议...")
             pendingInviteFriendId = intent.getStringExtra(EXTRA_INVITE_FRIEND_ID) ?: ""
             pendingInviteFriendName = intent.getStringExtra(EXTRA_INVITE_FRIEND_NAME) ?: ""
-            connectSignal(code, asHost = true)
+            coupleRoom = intent.getBooleanExtra(EXTRA_COUPLE_ROOM, false)
+            connectSignal(code, asHost = true, coupleRoom = coupleRoom)
             return
         }
         if (action == ACTION_JOIN && !code.isNullOrEmpty()) {
@@ -740,11 +745,12 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         // 兼容不同浏览器解析：intent:// 唤起时部分解析会把 query 并入 host，
         // 因此先从 query 取，取不到再从完整字符串兜底提取
         val code = uri.getQueryParameter("code")?.trim()?.takeIf { it.isNotEmpty() }
-            ?: Regex("code=([0-9]{4})").find(uri.toString())?.groupValues?.get(1) ?: ""
+            // v1.414: 分享链接房间号兼容 4-6 位（新版生成 6 位，旧版 App 发出的历史 4 位链接仍需可打开）
+            ?: Regex("code=([0-9]{4,6})").find(uri.toString())?.groupValues?.get(1) ?: ""
         // 房间口令：分享链接自动携带（服务器 REQUIRE_TOKEN=1 时必需）
         val token = uri.getQueryParameter("token")?.trim()?.takeIf { it.isNotEmpty() }
             ?: Regex("token=([A-Za-z0-9]{4,16})").find(uri.toString())?.groupValues?.get(1) ?: ""
-        if (!Regex("^[0-9]{4}$").matches(code)) {
+        if (!Regex("^[0-9]{4,6}$").matches(code)) {
             Toast.makeText(this, "无效的分享链接", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1995,6 +2001,11 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                     if (fill) RendererCommon.ScalingType.SCALE_ASPECT_FILL
                     else RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
+                // v1.413: 等比布局就位后才显示（见创建处的 GONE 注释）
+                if (visibility != View.VISIBLE) {
+                    visibility = View.VISIBLE
+                    AppLogger.app("renderer 显示（等比布局已就位 ${lp.width}x${lp.height}）")
+                }
                 AppLogger.app("[UI] 画面适配 v=${vw}x${vh} 容器=${cw}x${ch} 模式=${if (fill) "FILL" else "FIT"} 视图=${lp.width}x${lp.height}")
             }
             currentVideoScale = 1f
@@ -2443,17 +2454,18 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         connectSignal(code, asHost = false, joinToken = token)
     }
 
-    /** 生成 4 位数字会议号（不重复，忽略极小概率碰撞） */
+    /** 生成 6 位数字会议号（不重复，忽略极小概率碰撞） */
     private fun generateMeetingCode(): String {
         val sb = StringBuilder()
         val random = java.security.SecureRandom()
-        repeat(4) { sb.append(random.nextInt(10)) }
+        repeat(6) { sb.append(random.nextInt(10)) }
         return sb.toString()
     }
 
     private fun validateSignalCode(code: String): Boolean {
-        if (!Regex("^[0-9]{4}$").matches(code)) {
-            Toast.makeText(this, "会议号为 4 位数字", Toast.LENGTH_SHORT).show()
+        // v1.414: 只接受 6 位（与 MeetingActivity/HomeFragment 统一口径，本端只生成 6 位）
+        if (!Regex("^[0-9]{6}$").matches(code)) {
+            Toast.makeText(this, "会议号为 6 位数字", Toast.LENGTH_SHORT).show()
             return false
         }
         return true
@@ -2487,7 +2499,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         }, 10_000L)
     }
 
-    private fun connectSignal(code: String, asHost: Boolean, joinToken: String = "") {
+    private fun connectSignal(code: String, asHost: Boolean, joinToken: String = "", coupleRoom: Boolean = false) {
         if (BuildConfig.SIGNAL_URL.isNullOrEmpty()) {
             updateUI("❌ 未配置信令服务器地址（gradle.properties: screenshare.signal.url）")
             leavingMeeting = true
@@ -2506,6 +2518,8 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
                         // 服务器签发的房间口令：分享给观看方（分享链接自动携带），断线重连复用
                         signalRoomToken = token
                         if (token.isNotEmpty()) saveMeetingResumeToken(token)
+                        // 情侣房间：记住本次房间号，下次在情侣空间页预填
+                        if (coupleRoom) signalCode?.let { CoupleShareStarter.saveCode(this@MainActivity, it) }
                         updateUI("✅ 会议已创建，等待对方加入...")
                         val tokenHint =
                             if (token.isNotEmpty()) "\n房间口令: $token（分享链接已自带，无需手动告知）" else ""
@@ -2674,7 +2688,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             }
         })
         signalClient = client
-        client.connect(code, asHost, if (asHost) "" else joinToken)
+        client.connect(code, asHost, if (asHost) "" else joinToken, coupleRoom)
     }
 
     /**
@@ -3269,10 +3283,17 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
             old.release()
         }
 
-        val renderer = SurfaceViewRenderer(this)
+        val renderer = DiagnosticSurfaceRenderer(this)
         renderer.init(eglBaseContext, null)
         // 默认完整显示（等比，不裁切），用户可点右上角按钮切铺满
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+        // v1.413: 视频到达前彻底隐藏（GONE 而非 INVISIBLE）：renderer 初始布局是
+        // MATCH_PARENT（撑满容器），连接建立瞬间的布局重测（实测 2245→2400→2293
+        // 三级跳）会让 surface 尺寸跟着连跳，硬件合成器逐次重缩放整幅画面。
+        // INVISIBLE 时 SurfaceView 仍会创建 surface 并触发 surfaceChanged，部分
+        // 设备的合成层仍可见；GONE 不测量不布局不合成。首帧到达后 applyModeScale
+        // 已把布局缩到等比尺寸，此时再 GONE→VISIBLE，一步到位无中间帧。
+        renderer.visibility = View.GONE
         renderer.layoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
@@ -3767,7 +3788,7 @@ class MainActivity : AppCompatActivity(), WebRTCPeer.Listener {
         val track = remoteVideoTrack ?: return
         if (fullscreenRenderer != null) return
 
-        val renderer = SurfaceViewRenderer(this)
+        val renderer = DiagnosticSurfaceRenderer(this)
         renderer.init(eglBaseContext, null)
         renderer.setScalingType(
             if (isFitMode) RendererCommon.ScalingType.SCALE_ASPECT_FIT

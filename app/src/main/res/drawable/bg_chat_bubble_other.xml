@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 对方消息气泡（左侧）：灰白玻璃 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:startColor="#22FFFFFF" android:endColor="#12FFFFFF" android:angle="270" />
+    <corners android:radius="16dp" />
+    <stroke android:width="0.8dp" android:color="#1FFFFFFF" />
+</shape>

@@ -49,6 +49,8 @@ class App : Application() {
             it.connect(token)
             AppLogger.app("[APP] 建立 PresenceClient url=${BuildConfig.SIGNAL_URL}")
         }
+        // 登录态可能变化（切账号），同步当前用户供聊天未读与去重使用
+        SessionStore.getProfile(this)?.userId?.let { ChatSync.setMe(it) }
     }
 
     /** 登出时调用：断开账号长连接 */
@@ -62,6 +64,8 @@ class App : Application() {
         super.onCreate()
         instance = this
         AppLogger.init(this)
+        // 聊天本地库与同步中心（进程级，未登录时 me 为空不产生行为）
+        ChatSync.init(this)
         // 极光推送：隐私授权后初始化（App 无隐私弹窗，直接启用）
         try {
             cn.jpush.android.api.JPushInterface.setDebugMode(BuildConfig.DEBUG)
