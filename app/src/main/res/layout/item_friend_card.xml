@@ -7,7 +7,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:padding="14dp"
-    android:background="@drawable/bg_card"
+    android:background="@drawable/bg_liquid_card"
     android:elevation="4dp">
 
     <!-- 头像（代码切换粉/紫/青渐变 + 白色首字；右下角状态点） -->

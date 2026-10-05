@@ -1,15 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  玻璃药丸（v1.387 导航条重构）
-  导航条框架圆角 22dp，药丸内缩 4dp、固定 16dp 圆角，二者圆角永不相交，
-  从设计上消除「玻璃探出框架」的对齐问题。半透明白底 + 描边 + 顶部高光，
-  叠加 LiquidGlass 的背景模糊与透镜折射后即液态玻璃观感。
+  玻璃药丸 · 降级叠层（v1.387 导航条重构，v1.416 弱化）
+  导航条框架圆角 22dp，药丸内缩 4dp、固定 18dp 圆角，二者圆角永不相交，
+  从设计上消除「玻璃探出框架」的对齐问题。
+  v1.416：Android 13+ 的物理玻璃由 AGSL shader 渲染（折射+高光+阴影），
+  本 drawable 只作低版本/装配失败的降级叠层。白底进一步压低（2E→20），
+  描边减弱（4D→3F），避免半透明白底白边的塑料感。
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
             <corners android:radius="18dp" />
-            <solid android:color="#2EFFFFFF" />
+            <solid android:color="#20FFFFFF" />
         </shape>
     </item>
     <item>
@@ -17,7 +19,7 @@
             <corners android:radius="18dp" />
             <stroke
                 android:width="1dp"
-                android:color="#4DFFFFFF" />
+                android:color="#3FFFFFFF" />
         </shape>
     </item>
     <item

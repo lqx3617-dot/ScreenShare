@@ -136,7 +136,7 @@
             android:paddingEnd="24dp"
             android:paddingTop="44dp"
             android:paddingBottom="44dp"
-            android:background="@drawable/bg_card"
+            android:background="@drawable/bg_liquid_card"
             android:visibility="gone">
 
             <ImageView

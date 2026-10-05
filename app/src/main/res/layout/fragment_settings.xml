@@ -14,17 +14,18 @@
         android:orientation="vertical"
         android:paddingTop="40dp"
         android:paddingBottom="120dp"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp">
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
 
         <!-- 标题区 -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="设置"
-            android:textSize="28sp"
+            android:textSize="23sp"
             android:textStyle="bold"
             android:textColor="#FFFFFFFF"
+            android:letterSpacing="0.02"
             android:shadowColor="#CC000000"
             android:shadowDx="0"
             android:shadowDy="2"
@@ -56,7 +57,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/bg_card"
+            android:background="@drawable/bg_liquid_card"
             android:padding="6dp">
 
             <!-- 当前账号（点击进入个人资料编辑） -->
@@ -157,7 +158,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/bg_card"
+            android:background="@drawable/bg_liquid_card"
             android:padding="6dp">
 
             <!-- 音频设置 -->
@@ -427,7 +428,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/bg_card"
+            android:background="@drawable/bg_liquid_card"
             android:padding="6dp">
 
             <!-- 导出运行日志 -->

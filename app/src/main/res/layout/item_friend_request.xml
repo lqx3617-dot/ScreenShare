@@ -7,7 +7,7 @@
     android:orientation="horizontal"
     android:gravity="center_vertical"
     android:padding="14dp"
-    android:background="@drawable/bg_card"
+    android:background="@drawable/bg_liquid_card"
     android:elevation="4dp">
 
     <FrameLayout

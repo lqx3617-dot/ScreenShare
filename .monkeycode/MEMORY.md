@@ -1064,3 +1064,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - **诊断日志上传链路**：客户端 SettingsFragment 切片（lastIndexOf 分隔线）+ gzip + HTTP 头 X-App-Version → 服务端 download-server.js:484 的 /api/upload-log，文件名 `log-{ts}-v{HTTP头版本}-{诊断ID md5 前 8 位}.log`。**文件名版本来自 HTTP 头（上传时真实版本），文件内容首行分隔线来自切片（可能残留旧版本）**——两者矛盾即本文所述 bug 的特征。排查日志时以 [Update] local= 行为准，不要信分隔线
   - **arm64 拆包压缩方式修正**：此前记录"用 `zip -q -0 -r -X` 存储不压缩提速"，但 -0 全存储会让 arm64 包膨胀到 32MB（下载页标注"快速版约 15MB"）。正确做法=解包后删 lib/armeabi-v7a、lib/x86、lib/x86_64，用**默认 deflate 压缩**重打（14MB），耗时用充足 timeout 的后台终端承接即可（约 2-3 分钟，未超时）。zipalign+apksigner 流程不变
   - 产物：allarch md5=50e0b1e566b181950d30ea3d85198ff6（28992364B）、arm64 md5=48f2ad3ea67077939d66a6b3b3bbc231（14090931B）；version.json 已刷新（407/1.402，min=400，forced=false）；8090 经 restart-8090.py 重启后下发新 changelog；两个 APK 下载 206 可达
+
+[Project Knowledge Summary]
+- Date: 2026-10-04
+- Context: Discovered by Agent while 重构底部导航栏液态玻璃（v1.416 物理 AGSL 玻璃）
+- Category: Testing Methods
+- Instructions:
+  - AGSL（RuntimeShader）着色器是**运行时编译**：`./gradlew assembleDebug/assembleRelease` 不会做任何语法检查，语法错误只在真机 `RuntimeShader(source)` 构造时抛异常。本环境无模拟器/真机（adb devices 空），AGSL 只能靠静态审查 + try/catch 回退兜底（LiquidGlass.buildGlass 失败即回退模糊+叠层，不崩溃）
+  - AGSL 规避要点（已踩过/规避）：向量和标量混用的内置函数（`max(float2,0.0)`、`clamp(float2,0.0,1.0)`、`half4(0.0)`）用显式向量构造代替；函数必须先声明后使用；不支持可变循环边界
+  - RenderEffect 链顺序：`createChainEffect(outer, inner)`，内层先执行（blur 内层、RuntimeShader 外层）；更新 RuntimeShader 的 uniform 后调 `view.invalidate()` 即可重跑效果（无需重建 RenderEffect），动画用 Choreographer 推进 time uniform，`layer.isShown()==false` 时自停避免后台空转
+  - elevation 硬件阴影技巧：透明背景的 View 配自定义 OutlineProvider（`outline.alpha=1f`）即可投下真实模糊落影，drawable 本身不必可见；父链需 `clipChildren=false/clipToPadding=false` 才能让影子溢出视图边界
+  - LiquidTabBar 三层结构（绘制顺序）：投影层（shadowView，负 margin 向下溢出 10dp+elevation）→ 玻璃主体层（blurLayer，tag=LiquidGlass.TAG_GLASS_LAYER，LiquidGlass 按标记认领，勿用 getChildAt(0) 定位——第 0 位已是投影层）→ 降级叠层（glassOverlay，仅 Android 12- 或装配失败时显示）
