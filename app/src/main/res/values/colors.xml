@@ -14,6 +14,7 @@
     <!-- ==================== 功能色（语义） ==================== -->
     <color name="success">#FF2F9E77</color>
     <color name="success_light">#FF43B892</color>
+    <color name="status_online">#FF34D399</color>      <!-- 在线状态点/文字 -->
     <color name="danger">#FFE05566</color>
     <color name="danger_deep">#FFD63B3B</color>
     <color name="danger_bright">#FFEF5252</color>

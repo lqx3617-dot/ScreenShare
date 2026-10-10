@@ -286,7 +286,7 @@ class FriendsFragment : Fragment() {
             orientation = android.widget.LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
             setPadding(40, 48, 40, 48)
-            setBackgroundResource(R.drawable.bg_card)
+            setBackgroundResource(R.drawable.bg_liquid_card)
         }
         val codeText = android.widget.TextView(ctx).apply {
             text = "我的好友码 ${profile.friendCode}"

@@ -66,7 +66,7 @@
             android:paddingEnd="14dp"
             android:paddingTop="11dp"
             android:paddingBottom="11dp"
-            android:background="@drawable/bg_friend_search">
+            android:background="@drawable/bg_liquid_input">
 
             <ImageView
                 android:layout_width="18dp"

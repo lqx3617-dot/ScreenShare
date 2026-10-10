@@ -72,7 +72,7 @@
                 android:layout_marginTop="2dp"
                 android:text="在线"
                 android:textSize="11sp"
-                android:textColor="#FF34D399" />
+                android:textColor="@color/status_online" />
         </LinearLayout>
 
         <!-- 发起共享 -->

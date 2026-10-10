@@ -1067,7 +1067,7 @@ Entries discovered by the Agent during task execution should follow this format:
 
 [Project Knowledge Summary]
 - Date: 2026-10-04
-- Context: Discovered by Agent while 重构底部导航栏液态玻璃（v1.416 物理 AGSL 玻璃）
+- Context: Discovered by Agent while 液态玻璃 AGSL shader 方案预研（v1.416 物理玻璃未采用，已回退）
 - Category: Testing Methods
 - Instructions:
   - AGSL（RuntimeShader）着色器是**运行时编译**：`./gradlew assembleDebug/assembleRelease` 不会做任何语法检查，语法错误只在真机 `RuntimeShader(source)` 构造时抛异常。本环境无模拟器/真机（adb devices 空），AGSL 只能靠静态审查 + try/catch 回退兜底（LiquidGlass.buildGlass 失败即回退模糊+叠层，不崩溃）

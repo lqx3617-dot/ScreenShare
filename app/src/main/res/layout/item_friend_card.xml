@@ -90,7 +90,7 @@
                 android:layout_height="wrap_content"
                 android:text="在线"
                 android:textSize="11.5sp"
-                android:textColor="#FF34D399" />
+                android:textColor="@color/status_online" />
         </LinearLayout>
     </LinearLayout>
 

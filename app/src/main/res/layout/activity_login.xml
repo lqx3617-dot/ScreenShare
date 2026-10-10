@@ -40,7 +40,7 @@
         android:paddingEnd="14dp"
         android:paddingTop="13dp"
         android:paddingBottom="13dp"
-        android:background="@drawable/bg_friend_search">
+        android:background="@drawable/bg_liquid_input">
 
         <EditText
             android:id="@+id/etNickname"
@@ -68,7 +68,7 @@
         android:paddingEnd="14dp"
         android:paddingTop="13dp"
         android:paddingBottom="13dp"
-        android:background="@drawable/bg_friend_search">
+        android:background="@drawable/bg_liquid_input">
 
         <EditText
             android:id="@+id/etPassword"
@@ -104,7 +104,7 @@
             android:paddingEnd="14dp"
             android:paddingTop="13dp"
             android:paddingBottom="13dp"
-            android:background="@drawable/bg_friend_search">
+            android:background="@drawable/bg_liquid_input">
 
             <EditText
                 android:id="@+id/etCode"

@@ -28,6 +28,7 @@
 
 ## 主 App (ScreenShare)
 
+- **v1.416 (versionCode 421)** — UI 统一优化（续轮）：个人资料页纯黑背景改透明（对齐其它二级页）、深紫背景页输入框统一 bg_liquid_input（登录/好友搜索）、二维码弹窗bg_card→bg_liquid_card、AlertDialog 主题背景对齐弹窗体系；颜色语义化（status_online token，硬编码色→brand_rose/status_online）；清理死资源：bg_card/bg_dialog drawable、dialog_settings_audio 死布局、CardBg/BtnRounded 死样式
 - **v1.415 (versionCode 420)** — UI 全局统一优化：
   - 【卡片语言】**淘汰旧玻璃卡片**：`bg_card`（蓝灰/品红渐变描边，在深紫底上显杂）全部替换为新版 `bg_liquid_card`（单色白细描边 + 分层玻璃 + 顶部高光），覆盖好友卡片、好友申请、最近共享、空态引导、设置/音频设置分组卡片共 6 文件 10 处，同一深紫背景上的卡片语言收敛为一套
   - 【标题字号】**页面标题层级统一**：设置页 28sp→23sp（对齐首页/好友/情侣空间 Tab 页），音频设置 28sp→22sp（对齐个人资料/好友详情/心愿单二级页）
